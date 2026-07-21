@@ -344,6 +344,96 @@ body {
   background: var(--accent-soft);
 }
 
+/* ===== Крок «Кімнати» ===== */
+.rooms {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.counter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.counter__label {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.counter__controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.counter__btn {
+  width: 32px;
+  height: 32px;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--ink);
+}
+
+.counter__btn:not(:disabled):hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.counter__btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.counter__value {
+  min-width: 22px;
+  text-align: center;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.rooms__group-title {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-soft);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chip {
+  padding: 8px 14px;
+  border: 1.5px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.chip:hover {
+  border-color: var(--accent);
+}
+
+.chip--on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
 /* ===== Ціна внизу панелі ===== */
 .panel__price {
   padding: 18px 24px;

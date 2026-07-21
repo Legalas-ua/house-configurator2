@@ -8,12 +8,12 @@ import { ALL_SHAPES } from './availability'
 // show3D визначає, чи видно 3D-вьюпорт на цьому кроці.
 // ============================================================
 
-export type StepId = 'budget' | 'constructionType' | 'shape'
+export type StepId = 'budget' | 'constructionType' | 'shape' | 'rooms'
 
 export interface StepDef {
   id: StepId
-  kind: 'slider' | 'cards' // майбутнє: 'toggle', 'form'…
-  configKey: ConfigKey
+  kind: 'slider' | 'cards' | 'rooms' // майбутнє: 'toggle', 'form'…
+  configKey?: ConfigKey // композитні кроки (rooms) працюють з кількома ключами
   show3D: boolean
   slider?: { min: number; max: number; step: number }
   // Опції кроку можуть залежати від попередніх виборів —
@@ -28,7 +28,7 @@ export const STEPS: StepDef[] = [
     kind: 'slider',
     configKey: 'budget',
     show3D: false,
-    slider: { min: 500_000, max: 10_000_000, step: 50_000 },
+    slider: { min: 500_000, max: 10_000_000, step: 100_000 },
     isComplete: () => true, // бюджет завжди має значення
   },
   {
@@ -39,10 +39,20 @@ export const STEPS: StepDef[] = [
     getOptions: () => ALL_SHAPES,
     isComplete: (c) => c.shape !== null,
   },
+  {
+    id: 'rooms',
+    kind: 'rooms',
+    show3D: true,
+    isComplete: (c) => c.kitchenType !== null,
+  },
 ]
 
 export const DEFAULT_CONFIG: HouseConfig = {
   budget: 2_500_000,
   constructionType: null,
   shape: null,
+  bedrooms: 2,
+  bathrooms: 1,
+  kitchenType: null,
+  extras: [],
 }

@@ -2,12 +2,18 @@
 
 export type ConstructionType = 'frame' | 'modular' | 'brick'
 export type HouseShape = 'rect' | 'square' | 'l-shape'
+export type KitchenType = 'separate' | 'open'
+export type ExtraRoom = 'office' | 'wardrobe' | 'pantry'
 
 // null = «ще не обрано» або «скинуто, бо змінився попередній крок»
 export interface HouseConfig {
   budget: number
   constructionType: ConstructionType | null
   shape: HouseShape | null
+  bedrooms: number
+  bathrooms: number
+  kitchenType: KitchenType | null
+  extras: ExtraRoom[]
   // майбутні кроки додають поля сюди
 }
 

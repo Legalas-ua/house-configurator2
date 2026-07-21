@@ -12,7 +12,7 @@ const WALL_LOOK: Record<ConstructionType, { color: string; roughness: number }> 
   brick: { color: '#b65c3d', roughness: 0.9 }, // теракотова цегла
 }
 
-const DEFAULT_LOOK = { color: '#d8cfc3', roughness: 0.8 } // нейтральна штукатурка
+const DEFAULT_LOOK = { color: '#ece7e0', roughness: 0.8 } // тепло-біла штукатурка
 
 function WingMesh({ wing, look }: { wing: Wing; look: { color: string; roughness: number } }) {
   const matRef = useRef<MeshStandardMaterial>(null)

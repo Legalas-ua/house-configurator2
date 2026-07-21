@@ -3,6 +3,7 @@ import { STEPS } from '../config/steps'
 import { t } from '../locales'
 import BudgetSlider from './fields/BudgetSlider'
 import OptionCards from './fields/OptionCards'
+import RoomsField from './fields/RoomsField'
 
 // Рендерить поточний крок за його описом (StepDef) — без знання про конкретику.
 // Новий тип кроку = новий case тут + компонент у fields/.
@@ -23,6 +24,7 @@ export default function StepContent() {
       <div className="step__field">
         {step.kind === 'slider' && <BudgetSlider step={step} />}
         {step.kind === 'cards' && <OptionCards step={step} />}
+        {step.kind === 'rooms' && <RoomsField />}
       </div>
 
       <div className="step__nav">

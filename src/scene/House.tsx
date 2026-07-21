@@ -8,17 +8,19 @@ import HouseBody from './HouseBody'
 // Міст між станом і 3D: читає конфігурацію, будує крила, показує будинок.
 // key={shape} перезапускає анімацію появи при зміні форми.
 export default function House() {
-  const shape = useConfigurator((s) => s.config.shape)
-  const constructionType = useConfigurator((s) => s.config.constructionType)
+  const config = useConfigurator((s) => s.config)
 
-  const wings = useMemo(
-    () => buildFootprint({ budget: 0, constructionType, shape }),
-    [constructionType, shape],
-  )
+  const wings = useMemo(() => buildFootprint(config), [config])
 
   if (wings.length === 0) return null
 
-  return <AnimatedHouse key={shape} wings={wings} constructionType={constructionType} />
+  return (
+    <AnimatedHouse
+      key={config.shape}
+      wings={wings}
+      constructionType={config.constructionType}
+    />
+  )
 }
 
 function AnimatedHouse({

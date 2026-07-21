@@ -30,7 +30,7 @@ interface ConfiguratorState {
   currentStep: number // індекс у STEPS
   maxStepReached: number // до якого кроку дійшов користувач (для 3D і навігації)
   start: () => void
-  setValue: (key: ConfigKey, value: string | number | null) => void
+  setValue: (key: ConfigKey, value: string | number | string[] | null) => void
   nextStep: () => void
   prevStep: () => void
   goToStep: (index: number) => void

@@ -11,7 +11,7 @@ export default function OptionCards({ step }: { step: StepDef }) {
   const setValue = useConfigurator((s) => s.setValue)
 
   const options = step.getOptions?.(config) ?? []
-  const selected = config[step.configKey]
+  const selected = config[step.configKey!]
   const labels = (t.steps[step.id] as { options?: Record<string, string> }).options ?? {}
 
   return (
@@ -21,7 +21,7 @@ export default function OptionCards({ step }: { step: StepDef }) {
           key={value}
           type="button"
           className={`card${selected === value ? ' card--selected' : ''}`}
-          onClick={() => setValue(step.configKey, value)}
+          onClick={() => setValue(step.configKey!, value)}
         >
           {OPTION_ICONS[value] && <span className="card__icon">{OPTION_ICONS[value]}</span>}
           <span>{labels[value] ?? value}</span>
