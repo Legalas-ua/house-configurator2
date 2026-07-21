@@ -1,32 +1,43 @@
-# React + TypeScript + Vite
+# Конфігуратор будинку (v2)
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+3D-конфігуратор для будівельної компанії: клієнт крок за кроком збирає будинок,
+бачить живу орієнтовну ціну і (в майбутньому) лишає заявку.
 
-Currently, two official plugins are available:
+**Стек:** React 19 · TypeScript · Vite · Three.js (react-three-fiber + drei) · zustand
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Команди
 
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+npm install        # встановити залежності (один раз)
+npm run dev        # запустити локально → http://localhost:5173
+npm run build      # зібрати продакшн-версію в dist/
+npm run preview    # подивитись зібрану версію локально
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+## Як влаштований код
+
+| Папка | Що там | Правило |
+|---|---|---|
+| `src/config/` | **Тільки дані**: кроки, форми, матриця доступності, ціни | Більшість правок — тут |
+| `src/locales/` | Усі тексти інтерфейсу (українська) | Жодного тексту в компонентах |
+| `src/state/` | zustand-store: конфігурація, поточний крок, каскадне скидання | |
+| `src/lib/` | Чисті функції: геометрія (`footprint`), ціна (`price`) | Без React і Three.js |
+| `src/components/` | DOM-інтерфейс: панель, степер, картки, ціна | |
+| `src/scene/` | Все, що всередині `<Canvas>`: світло, земля, будинок | |
+
+### Як додати новий крок
+
+1. Додай запис у `src/config/steps.ts` (масив `STEPS`)
+2. Додай тексти в `src/locales/uk.ts` (`steps.<id>`)
+3. Якщо опції залежать від попередніх виборів — опиши це у функції `getOptions`
+
+Компоненти UI і 3D-сцена підхоплять новий крок автоматично.
+
+### Ціни
+
+`src/config/pricing.ts` — **тестові заглушки, не реальні ціни**.
+Реальні дані підключаються через інтерфейс `PriceSource` без зміни решти коду.
+
+## Референси дизайну
+
+`docs/reference/` — стиль: світлий мінімалізм, чорна типографіка, теракотовий акцент.
