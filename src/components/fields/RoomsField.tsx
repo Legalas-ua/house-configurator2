@@ -7,6 +7,8 @@ import { t } from '../../locales'
 export default function RoomsField() {
   const config = useConfigurator((s) => s.config)
   const setValue = useConfigurator((s) => s.setValue)
+  const viewFloor = useConfigurator((s) => s.viewFloor)
+  const setViewFloor = useConfigurator((s) => s.setViewFloor)
   const texts = t.steps.rooms
 
   const toggleExtra = (extra: ExtraRoom) => {
@@ -18,6 +20,21 @@ export default function RoomsField() {
 
   return (
     <div className="rooms">
+      {config.floors === 2 && (
+        <div className="floor-tabs">
+          {[1, 2].map((n) => (
+            <button
+              key={n}
+              type="button"
+              className={`floor-tab${viewFloor === n ? ' floor-tab--active' : ''}`}
+              onClick={() => setViewFloor(n)}
+            >
+              {t.plan.floorTab(n)}
+            </button>
+          ))}
+        </div>
+      )}
+
       <Counter
         label={texts.bedrooms}
         value={config.bedrooms}

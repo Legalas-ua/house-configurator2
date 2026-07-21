@@ -29,8 +29,12 @@ interface ConfiguratorState {
   config: HouseConfig
   currentStep: number // індекс у STEPS
   maxStepReached: number // до якого кроку дійшов користувач (для 3D і навігації)
+  topView: boolean // камера летить у вид зверху; обертання мишею вимикає
+  viewFloor: number // який поверх показувати на плані (1 або 2)
   start: () => void
   setValue: (key: ConfigKey, value: string | number | string[] | null) => void
+  setTopView: (on: boolean) => void
+  setViewFloor: (floor: number) => void
   nextStep: () => void
   prevStep: () => void
   goToStep: (index: number) => void
@@ -41,11 +45,20 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
   config: DEFAULT_CONFIG,
   currentStep: 0,
   maxStepReached: 0,
+  topView: false,
+  viewFloor: 1,
 
   start: () => set({ started: true }),
 
   setValue: (key, value) =>
-    set((s) => ({ config: sanitize({ ...s.config, [key]: value }) })),
+    set((s) => {
+      const config = sanitize({ ...s.config, [key]: value })
+      // Якщо будинок став одноповерховим — показуємо 1-й поверх
+      return { config, viewFloor: Math.min(s.viewFloor, config.floors) }
+    }),
+
+  setTopView: (on) => set({ topView: on }),
+  setViewFloor: (floor) => set({ viewFloor: floor }),
 
   nextStep: () =>
     set((s) => {

@@ -51,6 +51,7 @@ export const DEFAULT_CONFIG: HouseConfig = {
   budget: 2_500_000,
   constructionType: null,
   shape: null,
+  floors: 1,
   bedrooms: 2,
   bathrooms: 1,
   kitchenType: null,

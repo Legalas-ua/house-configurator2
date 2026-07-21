@@ -1,9 +1,9 @@
 import type { HouseConfig } from '../config/types'
 import type { PriceConfig } from '../config/pricing'
-import { buildFootprint } from './footprint'
+import { generateHousePlan } from './floorplan'
 
 // Чистий розрахунок ціни: конфігурація + прайс -> кошторис.
-// Жодного стану, жодного UI — легко тестувати і замінювати.
+// ЗАРАЗ НЕ ПОКАЗУЄТЬСЯ В UI — чекає на реальні ціни (див. config/pricing.ts).
 
 export type BudgetStatus = 'within' | 'over' | 'incomplete'
 
@@ -19,8 +19,7 @@ export function calculatePrice(config: HouseConfig, prices: PriceConfig): PriceE
     return { total: 0, areaM2: 0, budgetStatus: 'incomplete', overBy: 0 }
   }
 
-  // Площа = сума площ усіх крил
-  const areaM2 = buildFootprint(config).reduce((sum, w) => sum + w.width * w.depth, 0)
+  const areaM2 = generateHousePlan(config).totalArea
 
   const base = areaM2 * prices.basePricePerM2
   const total = Math.round(base * prices.shapeMultiplier[config.shape])

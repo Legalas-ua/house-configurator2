@@ -1,9 +1,33 @@
-import { Canvas } from '@react-three/fiber'
+import { useRef } from 'react'
+import { Canvas, useFrame } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
+import { easing } from 'maath'
+import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
+import { useConfigurator } from '../state/store'
 import Ground from './Ground'
-import House from './House'
+import PlanView from './PlanView'
+
+// Плавний переліт камери у вид зверху, поки topView активний.
+// Щойно користувач починає крутити мишею — режим вимикається
+// і камера знову вільна (перехід плавний, бо обертання стартує
+// з поточної позиції).
+function CameraRig({ controls }: { controls: React.RefObject<OrbitControlsImpl | null> }) {
+  const topView = useConfigurator((s) => s.topView)
+
+  useFrame((state, delta) => {
+    if (!topView || !controls.current) return
+    easing.damp3(state.camera.position, [0, 30, 0.4], 0.45, delta)
+    easing.damp3(controls.current.target, [0, 0, 0], 0.45, delta)
+    controls.current.update()
+  })
+
+  return null
+}
 
 export default function SceneRoot() {
+  const setTopView = useConfigurator((s) => s.setTopView)
+  const controlsRef = useRef<OrbitControlsImpl>(null)
+
   return (
     <Canvas
       shadows
@@ -26,18 +50,19 @@ export default function SceneRoot() {
       />
 
       <Ground />
-
-      <House />
+      <PlanView />
 
       <OrbitControls
+        ref={controlsRef}
         target={[0, 1.2, 0]}
         enablePan={false}
         minDistance={10}
         maxDistance={35}
-        minPolarAngle={0.35}
+        minPolarAngle={0}
         maxPolarAngle={Math.PI / 2 - 0.12}
+        onStart={() => setTopView(false)}
       />
+      <CameraRig controls={controlsRef} />
     </Canvas>
   )
 }
-

@@ -40,7 +40,7 @@ export const uk = {
     },
     rooms: {
       title: 'Кімнати',
-      hint: 'Складіть набір приміщень — будинок підлаштує розмір',
+      hint: 'Додавайте кімнати — вони прибудовуються на плані у правильному місці',
       bedrooms: 'Спальні',
       bathrooms: 'Санвузли',
       kitchen: {
@@ -60,8 +60,30 @@ export const uk = {
       },
     },
   },
-  summary: {
-    areaLabel: 'Орієнтовна площа',
-    incomplete: 'Оберіть форму будинку',
+  floors: {
+    title: 'Поверхи',
+    options: { 1: '1 поверх', 2: '2 поверхи' },
+  },
+  plan: {
+    legendTitle: 'Приміщення',
+    total: 'Загальна площа',
+    floorTab: (n: number) => `${n}-й поверх`,
+    roomNames: {
+      livingKitchen: 'Кухня-вітальня',
+      living: 'Вітальня',
+      kitchen: 'Кухня',
+      hall: 'Прихожа',
+      corridor: 'Коридор',
+      bedroom: 'Спальня',
+      bathroom: 'Санвузол',
+      office: 'Кабінет',
+      wardrobe: 'Гардеробна',
+      pantry: 'Комора',
+      stairs: 'Сходи',
+      terrace: 'Тераса',
+    },
+  },
+  viewport: {
+    topView: 'Вид зверху',
   },
 } as const

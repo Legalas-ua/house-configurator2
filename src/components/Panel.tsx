@@ -1,7 +1,6 @@
 import { t } from '../locales'
-import Stepper from './Stepper'
 import StepContent from './StepContent'
-import SummaryBar from './SummaryBar'
+import Legend from './Legend'
 
 export default function Panel() {
   return (
@@ -12,11 +11,10 @@ export default function Panel() {
       </header>
 
       <div className="panel__content">
-        <Stepper />
         <StepContent />
       </div>
 
-      <SummaryBar />
+      <Legend />
     </aside>
   )
 }
