@@ -1,6 +1,7 @@
 import { Canvas } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
 import Ground from './Ground'
+import House from './House'
 
 export default function SceneRoot() {
   return (
@@ -26,11 +27,7 @@ export default function SceneRoot() {
 
       <Ground />
 
-      {/* Тимчасовий будинок-заглушка — замінимо у Фазі 6 */}
-      <mesh position={[0, 1.5, 0]} castShadow>
-        <boxGeometry args={[8, 3, 6]} />
-        <meshStandardMaterial color="#d9d4cc" />
-      </mesh>
+      <House />
 
       <OrbitControls
         target={[0, 1.2, 0]}
