@@ -1,4 +1,4 @@
-import type { ConstructionType, HouseShape } from './types'
+import type { HouseShape } from './types'
 
 // ============================================================
 // УВАГА: усі числа тут — ТЕСТОВІ ЗАГЛУШКИ, не реальні ціни!
@@ -9,18 +9,16 @@ import type { ConstructionType, HouseShape } from './types'
 
 export interface PriceConfig {
   currency: 'UAH'
-  basePricePerM2: Record<ConstructionType, number> // грн за м² площі будинку
+  basePricePerM2: number // усереднена ставка, грн за м² площі будинку
   shapeMultiplier: Record<HouseShape, number> // складніша форма = дорожче
+  // Коли повернеться крок вибору конструкції — ставка знову стане
+  // Record<ConstructionType, number> (каркас ~18k, модуль ~15k, цегла ~26k).
   // майбутнє: roofPricePerM2, windowSurcharge, foundationPerM2…
 }
 
 export const PLACEHOLDER_PRICES: PriceConfig = {
   currency: 'UAH',
-  basePricePerM2: {
-    frame: 18_000,
-    modular: 15_000,
-    brick: 26_000,
-  },
+  basePricePerM2: 20_000,
   shapeMultiplier: {
     rect: 1,
     square: 1,

@@ -5,12 +5,14 @@ import type { MeshStandardMaterial } from 'three'
 import type { ConstructionType, Wing } from '../config/types'
 
 // Вигляд стін для кожного типу конструкції (Фаза 1: колір/шорсткість,
-// текстури — пізніше).
+// текстури — пізніше). Поки тип конструкції не обирається — DEFAULT_LOOK.
 const WALL_LOOK: Record<ConstructionType, { color: string; roughness: number }> = {
   frame: { color: '#c9a06b', roughness: 0.8 }, // тепле дерево
   modular: { color: '#d3d6d8', roughness: 0.5 }, // світлі панелі
   brick: { color: '#b65c3d', roughness: 0.9 }, // теракотова цегла
 }
+
+const DEFAULT_LOOK = { color: '#d8cfc3', roughness: 0.8 } // нейтральна штукатурка
 
 function WingMesh({ wing, look }: { wing: Wing; look: { color: string; roughness: number } }) {
   const matRef = useRef<MeshStandardMaterial>(null)
@@ -37,7 +39,7 @@ export default function HouseBody({
   wings: Wing[]
   constructionType: ConstructionType | null
 }) {
-  const look = WALL_LOOK[constructionType ?? 'frame']
+  const look = constructionType ? WALL_LOOK[constructionType] : DEFAULT_LOOK
   return (
     <>
       {wings.map((wing, i) => (

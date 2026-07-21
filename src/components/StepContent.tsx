@@ -26,12 +26,8 @@ export default function StepContent() {
       </div>
 
       <div className="step__nav">
-        <button
-          type="button"
-          className="btn btn--ghost"
-          onClick={prevStep}
-          disabled={currentStep === 0}
-        >
+        {/* З першого кроку «Назад» повертає на стартовий екран */}
+        <button type="button" className="btn btn--ghost" onClick={prevStep}>
           {t.nav.back}
         </button>
         <button

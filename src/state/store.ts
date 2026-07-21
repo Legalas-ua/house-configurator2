@@ -25,9 +25,11 @@ function sanitize(config: HouseConfig): HouseConfig {
 }
 
 interface ConfiguratorState {
+  started: boolean // false = стартовий екран
   config: HouseConfig
   currentStep: number // індекс у STEPS
   maxStepReached: number // до якого кроку дійшов користувач (для 3D і навігації)
+  start: () => void
   setValue: (key: ConfigKey, value: string | number | null) => void
   nextStep: () => void
   prevStep: () => void
@@ -35,9 +37,12 @@ interface ConfiguratorState {
 }
 
 export const useConfigurator = create<ConfiguratorState>((set) => ({
+  started: false,
   config: DEFAULT_CONFIG,
   currentStep: 0,
   maxStepReached: 0,
+
+  start: () => set({ started: true }),
 
   setValue: (key, value) =>
     set((s) => ({ config: sanitize({ ...s.config, [key]: value }) })),
@@ -49,7 +54,11 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
       return { currentStep: next, maxStepReached: Math.max(s.maxStepReached, next) }
     }),
 
-  prevStep: () => set((s) => ({ currentStep: Math.max(s.currentStep - 1, 0) })),
+  // З першого кроку «Назад» повертає на стартовий екран
+  prevStep: () =>
+    set((s) =>
+      s.currentStep === 0 ? { started: false } : { currentStep: s.currentStep - 1 },
+    ),
 
   // Перейти можна лише на пройдений крок або наступний після завершених
   goToStep: (index) =>

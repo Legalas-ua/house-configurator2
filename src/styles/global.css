@@ -34,6 +34,77 @@ body {
   overflow: hidden;
 }
 
+/* ===== Стартовий екран ===== */
+.landing {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  background: linear-gradient(180deg, #eceae6 0%, #f5f4f2 100%);
+}
+
+.landing__inner {
+  max-width: 640px;
+  padding: 40px;
+  text-align: center;
+}
+
+.landing__title {
+  font-size: 52px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+}
+
+.landing__dot {
+  color: var(--accent);
+}
+
+.landing__tagline {
+  margin: 20px auto 32px;
+  max-width: 460px;
+  font-size: 16px;
+  line-height: 1.6;
+  color: var(--ink-soft);
+}
+
+.btn--big {
+  padding: 14px 44px;
+  font-size: 16px;
+}
+
+/* ===== Крок без 3D: картка по центру ===== */
+.stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  background: linear-gradient(180deg, #eceae6 0%, #f5f4f2 100%);
+}
+
+.stage__card {
+  width: min(560px, calc(100% - 48px));
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 36px 40px;
+  box-shadow: 0 12px 40px rgba(17, 17, 17, 0.06);
+}
+
+.stage__progress {
+  display: block;
+  margin-bottom: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+}
+
+.stage .step__nav {
+  justify-content: center;
+  margin-top: 20px;
+}
+
 /* ===== Каркас: сцена + права панель ===== */
 .app {
   display: grid;
@@ -229,6 +300,9 @@ body {
 }
 
 .card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
   padding: 14px 16px;
   border: 1.5px solid var(--border);
   border-radius: var(--radius);
@@ -239,6 +313,26 @@ body {
   text-align: left;
   cursor: pointer;
   transition: border-color 0.15s, background 0.15s;
+}
+
+.card__icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--ink-soft);
+}
+
+.card__icon svg {
+  fill: currentColor;
+  opacity: 0.55;
+}
+
+.card--selected .card__icon,
+.card:hover .card__icon {
+  color: var(--accent);
+}
+
+.card--selected .card__icon svg {
+  opacity: 0.9;
 }
 
 .card:hover {

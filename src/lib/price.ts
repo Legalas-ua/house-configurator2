@@ -15,14 +15,14 @@ export interface PriceEstimate {
 }
 
 export function calculatePrice(config: HouseConfig, prices: PriceConfig): PriceEstimate {
-  if (!config.constructionType || !config.shape) {
+  if (!config.shape) {
     return { total: 0, areaM2: 0, budgetStatus: 'incomplete', overBy: 0 }
   }
 
   // Площа = сума площ усіх крил
   const areaM2 = buildFootprint(config).reduce((sum, w) => sum + w.width * w.depth, 0)
 
-  const base = areaM2 * prices.basePricePerM2[config.constructionType]
+  const base = areaM2 * prices.basePricePerM2
   const total = Math.round(base * prices.shapeMultiplier[config.shape])
 
   const over = total - config.budget
