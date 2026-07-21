@@ -1,9 +1,5 @@
 import type { ExtraRoom } from './types'
 
-// Діапазони лічильників кроку «Кімнати». Площі кімнат — у config/plan.ts.
-export const ROOM_LIMITS = {
-  bedrooms: { min: 1, max: 5 },
-  bathrooms: { min: 1, max: 3 },
-}
-
+// Список усіх додаткових кімнат (чи доступні вони в конкретному
+// плануванні — вирішує каталог config/layouts.ts).
 export const ALL_EXTRAS: ExtraRoom[] = ['office', 'wardrobe', 'pantry']

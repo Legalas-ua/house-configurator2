@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { ConfigKey, ConfigValue, HouseConfig } from '../config/types'
 import { DEFAULT_CONFIG, STEPS } from '../config/steps'
+import { findTemplate, nearestBedrooms } from '../config/layouts'
 
 // ============================================================
 // Єдине джерело правди про стан конфігуратора (zustand).
@@ -15,10 +16,22 @@ import { DEFAULT_CONFIG, STEPS } from '../config/steps'
 function sanitize(config: HouseConfig): HouseConfig {
   const next = { ...config }
   for (const step of STEPS) {
-    if (!step.getOptions) continue
+    if (!step.getOptions || !step.configKey) continue
     const value = next[step.configKey]
     if (value !== null && !step.getOptions(next).includes(value as string)) {
       ;(next as Record<ConfigKey, ConfigValue>)[step.configKey] = null
+    }
+  }
+
+  // Підганяємо вибір кімнат під каталог планувань:
+  // спальні — до найближчого наявного плану, санвузли — зі шаблону,
+  // додаткові кімнати — тільки ті, що план підтримує.
+  if (next.shape) {
+    next.bedrooms = nearestBedrooms(next.shape, next.floors, next.bedrooms)
+    const template = findTemplate(next.shape, next.floors, next.bedrooms)
+    if (template) {
+      next.bathrooms = template.bathrooms
+      next.extras = next.extras.filter((e) => template.extras.includes(e))
     }
   }
   return next

@@ -52,6 +52,7 @@ export const uk = {
       },
       extras: {
         title: 'Додатково',
+        unavailable: 'Недоступно в цьому плануванні',
         options: {
           office: 'Кабінет',
           wardrobe: 'Гардеробна',

@@ -1,4 +1,5 @@
 import type {
+  ExtraRoom,
   FloorPlan,
   HouseConfig,
   HousePlan,
@@ -6,247 +7,168 @@ import type {
   RoomType,
   RoomZone,
 } from '../config/types'
-import { ROOM_AREA, SHAPE_BANDS, STAIRS_WIDTH, STRETCH_CAP } from '../config/plan'
+import { findTemplate, LAYOUTS, type LayoutTemplate } from '../config/layouts'
 
 // ============================================================
-// Чистий генератор поверхового плану: конфігурація -> зони кімнат.
-//
-// Схема — класичний котеджний план з центральним коридором:
-//   [передній ряд: прихожа, вітальня/кухня + частина кімнат]
-//   [коридор]
-//   [задній ряд: спальні, санвузли, ... , сходи]
-// Кожна кімната тримає СВОЮ цільову площу (config/plan.ts).
-// Нова кімната додається у менш заповнений ряд — будинок
-// прибудовується вшир, а існуючі кімнати не роздуваються.
-// Кожна кімната відкривається у коридор або вітальню.
-// При 2 поверхах сходи стоять в одному місці на обох поверхах.
+// Парсер каталогу планувань: текстова сітка -> зони кімнат.
+// 1 символ = 1×1 м. Однакові символи = одна кімната (прямокутник).
+// План завжди центрується відносно (0,0) — будинок по центру ділянки.
 // ============================================================
 
-interface RoomSpec {
-  type: RoomType
-  area?: number // м² — ширина виводиться з глибини ряду
-  fixedWidth?: number // сходи: фіксована ширина
+const CHAR_TYPE: Record<string, RoomType> = {
+  H: 'hall',
+  L: 'living', // або livingKitchen — вирішується конфігурацією
+  K: 'kitchen',
+  C: 'corridor',
+  R: 'stairs',
+  S: 'bathroom',
+  T: 'bathroom',
+  U: 'bathroom',
+  O: 'office',
+  W: 'wardrobe',
+  P: 'pantry',
+  E: 'terrace',
+  '1': 'bedroom',
+  '2': 'bedroom',
+  '3': 'bedroom',
+  '4': 'bedroom',
+  '5': 'bedroom',
 }
 
-// Кімнати, які мають бути у передньому ряді (фасад, вхід)
-const FRONT_ONLY: RoomType[] = ['hall', 'living', 'livingKitchen', 'kitchen']
-
-// ---- Розподіл кімнат по поверхах ----
-
-function roomsForFloor(config: HouseConfig, floor: number): { front: RoomSpec[]; back: RoomSpec[] } {
-  const front: RoomSpec[] = []
-  const back: RoomSpec[] = []
-  const twoFloors = config.floors === 2
-
-  if (floor === 1) {
-    front.push({ type: 'hall', area: ROOM_AREA.hall })
-    if (config.kitchenType === 'separate') {
-      front.push({ type: 'kitchen', area: ROOM_AREA.kitchen })
-      front.push({ type: 'living', area: ROOM_AREA.living })
-    } else {
-      front.push({ type: 'livingKitchen', area: ROOM_AREA.livingKitchen })
-    }
-  }
-
-  if (!twoFloors || floor === 2) {
-    for (let i = 0; i < config.bedrooms; i++) back.push({ type: 'bedroom', area: ROOM_AREA.bedroom })
-  }
-
-  // Санвузли: на 1 поверсі завжди є один (гостьовий), решта — нагорі
-  const bathroomsHere = !twoFloors
-    ? config.bathrooms
-    : floor === 1
-      ? Math.min(1, config.bathrooms)
-      : config.bathrooms - Math.min(1, config.bathrooms)
-  for (let i = 0; i < bathroomsHere; i++) back.push({ type: 'bathroom', area: ROOM_AREA.bathroom })
-
-  // Додаткові кімнати: кабінет і комора внизу, гардеробна біля спалень
-  if (config.extras.includes('office') && (!twoFloors || floor === 1))
-    back.push({ type: 'office', area: ROOM_AREA.office })
-  if (config.extras.includes('wardrobe') && (!twoFloors || floor === 2))
-    back.push({ type: 'wardrobe', area: ROOM_AREA.wardrobe })
-  if (config.extras.includes('pantry') && (!twoFloors || floor === 1))
-    back.push({ type: 'pantry', area: ROOM_AREA.pantry })
-
-  if (twoFloors) back.push({ type: 'stairs', fixedWidth: STAIRS_WIDTH })
-
-  return { front, back }
+const CHAR_EXTRA: Record<string, ExtraRoom> = {
+  O: 'office',
+  W: 'wardrobe',
+  P: 'pantry',
 }
 
-// ---- Балансування рядів ----
+// Перемикачі конфігурації = перейменування символів ДО парсингу:
+// невибрана опційна кімната віддає клітинки за fallbacks,
+// кухня-вітальня вливає K у L.
+function applyToggles(rows: string[], config: HouseConfig, template: LayoutTemplate): string[] {
+  let result = rows
+  const replace = (from: string, to: string) =>
+    (result = result.map((row) => row.split(from).join(to)))
 
-const widthOf = (r: RoomSpec, depth: number) => r.fixedWidth ?? r.area! / depth
-const rowWidth = (row: RoomSpec[], depth: number) =>
-  row.reduce((s, r) => s + widthOf(r, depth), 0)
+  for (const [ch, target] of Object.entries(template.fallbacks)) {
+    const extra = CHAR_EXTRA[ch]
+    if (extra && !config.extras.includes(extra)) replace(ch, target)
+  }
+  if (config.kitchenType !== 'separate') replace('K', 'L')
+  return result
+}
 
-// Переносимо «рухомі» кімнати між рядами, поки різниця ширин зменшується.
-function balanceRows(front: RoomSpec[], back: RoomSpec[], dayD: number, nightD: number) {
-  const movable = (r: RoomSpec) => !FRONT_ONLY.includes(r.type) && r.type !== 'stairs'
+interface BBox {
+  minR: number
+  maxR: number
+  minC: number
+  maxC: number
+  count: number
+}
 
-  for (let guard = 0; guard < 20; guard++) {
-    const diff = rowWidth(back, nightD) - rowWidth(front, dayD)
-    const [src, dst, srcD, dstD] =
-      diff > 0
-        ? ([back, front, nightD, dayD] as const)
-        : ([front, back, dayD, nightD] as const)
-
-    let bestIdx = -1
-    let bestGain = 0.01
-    src.forEach((r, i) => {
-      if (!movable(r)) return
-      const newDiff = Math.abs(Math.abs(diff) - widthOf(r, srcD) - widthOf(r, dstD))
-      const gain = Math.abs(diff) - newDiff
-      if (gain > bestGain) {
-        bestGain = gain
-        bestIdx = i
+function parseFloor(
+  rows: string[],
+  floorNum: number,
+  cx: number,
+  cz: number,
+  livingType: RoomType,
+): FloorPlan {
+  // Обмежувальні прямокутники кожного символу
+  const boxes = new Map<string, BBox>()
+  rows.forEach((row, r) => {
+    ;[...row].forEach((ch, c) => {
+      if (ch === '.') return
+      const b = boxes.get(ch)
+      if (!b) {
+        boxes.set(ch, { minR: r, maxR: r, minC: c, maxC: c, count: 1 })
+      } else {
+        b.minR = Math.min(b.minR, r)
+        b.maxR = Math.max(b.maxR, r)
+        b.minC = Math.min(b.minC, c)
+        b.maxC = Math.max(b.maxC, c)
+        b.count++
       }
     })
-
-    if (bestIdx === -1) break
-    dst.push(src.splice(bestIdx, 1)[0])
-  }
-
-  // Сходи — завжди останні у задньому ряді (правий край, однаково на поверхах)
-  back.sort((a, b) => (a.type === 'stairs' ? 1 : 0) - (b.type === 'stairs' ? 1 : 0))
-}
-
-// ---- Розкладання ряду в зони ----
-
-// Ряд правовирівняний до xRight; нефіксовані кімнати трохи розтягуються
-// до W (не більше STRETCH_CAP), залишок ширини стає терасою зліва.
-function layoutRow(row: RoomSpec[], W: number, xRight: number, z: number, depth: number): RoomZone[] {
-  if (row.length === 0 || W <= 0) return []
-
-  const fixedW = row.filter((r) => r.fixedWidth).reduce((s, r) => s + r.fixedWidth!, 0)
-  const flexW = rowWidth(row, depth) - fixedW
-  let k = flexW > 0 ? (W - fixedW) / flexW : 1
-  let items = row
-  if (k > STRETCH_CAP) {
-    const fillerW = W - fixedW - flexW * STRETCH_CAP
-    k = STRETCH_CAP
-    if (fillerW > 0.4) items = [{ type: 'terrace', fixedWidth: fillerW }, ...row]
-  }
-
-  let x = xRight - W
-  return items.map((r) => {
-    const w = r.fixedWidth ?? widthOf(r, depth) * k
-    const zone: RoomZone = { type: r.type, x: x + w / 2, z, width: w, depth }
-    x += w
-    return zone
-  })
-}
-
-// ---- Прямокутний / квадратний план ----
-
-function bandFloors(config: HouseConfig, floorNums: number[], bands: { day: number; corridor: number; night: number }): FloorPlan[] {
-  const perFloor = floorNums.map((f) => {
-    const { front, back } = roomsForFloor(config, f)
-    balanceRows(front, back, bands.day, bands.night)
-    const W = Math.max(rowWidth(front, bands.day), rowWidth(back, bands.night))
-    return { floor: f, front, back, W }
   })
 
-  // Спільний правий край: сходи на поверхах стають один над одним
-  const Wg = Math.max(...perFloor.map((p) => p.W))
-  const xRight = Wg / 2
-  const D = bands.day + bands.corridor + bands.night
-
-  const frontZ = D / 2 - bands.day / 2
-  const corridorZ = D / 2 - bands.day - bands.corridor / 2
-  const backZ = -D / 2 + bands.night / 2
-
-  return perFloor.map(({ floor, front, back, W }) => {
-    const rooms: RoomZone[] = [
-      ...layoutRow(front, front.length ? W : 0, xRight, frontZ, bands.day),
-      { type: 'corridor', x: xRight - W / 2, z: corridorZ, width: W, depth: bands.corridor },
-      ...layoutRow(back, W, xRight, backZ, bands.night),
-    ]
-    const slab: PlanRect[] = [{ x: xRight - W / 2, z: 0, width: W, depth: D }]
-    return { floor, rooms, slab }
-  })
-}
-
-// ---- Г-подібний план: передній ряд + перпендикулярне крило ----
-
-function lShapeFloors(config: HouseConfig, floorNums: number[], bands: { day: number; corridor: number; night: number }): FloorPlan[] {
-  const wingW = bands.corridor + bands.night
-
-  const perFloor = floorNums.map((f) => {
-    const { front, back } = roomsForFloor(config, f)
-    // У Г-подібному плані не балансуємо: передній ряд = денна зона,
-    // крило = всі інші кімнати (стеком назад)
-    return { floor: f, front, back }
-  })
-
-  const dayW = Math.max(...perFloor.map((p) => rowWidth(p.front, bands.day)), wingW + 1)
-  const wingLen = Math.max(...perFloor.map((p) => rowWidth(p.back, bands.night)))
-
-  return perFloor.map(({ floor, front, back }) => {
-    const rooms: RoomZone[] = []
-    const dayZ = 0
-    const wingZ0 = dayZ - bands.day / 2
-
-    if (front.length) {
-      rooms.push(...layoutRow(front, dayW, dayW / 2, dayZ, bands.day))
+  const rooms: RoomZone[] = []
+  for (const [ch, b] of boxes) {
+    const width = b.maxC - b.minC + 1
+    const depth = b.maxR - b.minR + 1
+    if (import.meta.env.DEV && b.count !== width * depth) {
+      console.warn(`[layouts] кімната '${ch}' на поверсі ${floorNum} не прямокутна`)
     }
-
-    // Вертикальний коридор — внутрішній бік крила
-    const corridorX = -dayW / 2 + bands.night + bands.corridor / 2
+    const type = ch === 'L' ? livingType : CHAR_TYPE[ch]
+    if (!type) {
+      if (import.meta.env.DEV) console.warn(`[layouts] невідомий символ '${ch}'`)
+      continue
+    }
     rooms.push({
-      type: 'corridor',
-      x: corridorX,
-      z: wingZ0 - wingLen / 2,
-      width: bands.corridor,
-      depth: wingLen,
+      type,
+      x: (b.minC + b.maxC + 1) / 2 - cx,
+      z: (b.minR + b.maxR + 1) / 2 - cz,
+      width,
+      depth,
     })
+  }
 
-    // Кімнати крила — зовнішній бік; сходи біля стику (першими)
-    const ordered = [...back].sort(
-      (a, b) => (a.type === 'stairs' ? 0 : 1) - (b.type === 'stairs' ? 0 : 1),
-    )
-    let z = wingZ0
-    const roomX = -dayW / 2 + bands.night / 2
-    for (const r of ordered) {
-      const d = r.fixedWidth ?? r.area! / bands.night
-      rooms.push({ type: r.type, x: roomX, z: z - d / 2, width: bands.night, depth: d })
-      z -= d
+  // Плита поверху: зайняті клітинки -> горизонтальні смуги -> злиття по вертикалі
+  const strips: { r0: number; r1: number; c0: number; c1: number }[] = []
+  rows.forEach((row, r) => {
+    let c = 0
+    while (c < row.length) {
+      if (row[c] === '.') {
+        c++
+        continue
+      }
+      let end = c
+      while (end + 1 < row.length && row[end + 1] !== '.') end++
+      const prev = strips.find((s) => s.r1 === r - 1 && s.c0 === c && s.c1 === end)
+      if (prev) prev.r1 = r
+      else strips.push({ r0: r, r1: r, c0: c, c1: end })
+      c = end + 1
     }
-    // Якщо крило на цьому поверсі коротше за спільну довжину — залишок стає терасою
-    const usedLen = wingZ0 - z
-    if (wingLen - usedLen > 0.4) {
-      const d = wingLen - usedLen
-      rooms.push({ type: 'terrace', x: roomX, z: z - d / 2, width: bands.night, depth: d })
-    }
-
-    const wingSlab: PlanRect = {
-      x: -dayW / 2 + wingW / 2,
-      z: wingZ0 - wingLen / 2,
-      width: wingW,
-      depth: wingLen,
-    }
-    const slab: PlanRect[] =
-      floor === 1
-        ? [{ x: 0, z: dayZ, width: dayW, depth: bands.day }, wingSlab]
-        : [wingSlab]
-
-    return { floor, rooms, slab }
   })
-}
+  const slab: PlanRect[] = strips.map((s) => ({
+    x: (s.c0 + s.c1 + 1) / 2 - cx,
+    z: (s.r0 + s.r1 + 1) / 2 - cz,
+    width: s.c1 - s.c0 + 1,
+    depth: s.r1 - s.r0 + 1,
+  }))
 
-// ---- Головна функція ----
+  return { floor: floorNum, rooms, slab }
+}
 
 export function generateHousePlan(config: HouseConfig): HousePlan {
   if (!config.shape) return { floors: [], totalArea: 0 }
 
-  const bands = SHAPE_BANDS[config.shape]
-  const floorNums = config.floors === 2 ? [1, 2] : [1]
+  const template = findTemplate(config.shape, config.floors, config.bedrooms)
+  if (!template) return { floors: [], totalArea: 0 }
 
-  const floors =
-    config.shape === 'l-shape'
-      ? lShapeFloors(config, floorNums, bands)
-      : bandFloors(config, floorNums, bands)
+  // Центр зайнятої області 1-го поверху -> (0,0); однаковий зсув
+  // для всіх поверхів (контур у них спільний)
+  const rows0 = template.grid[0]
+  let minR = Infinity,
+    maxR = -Infinity,
+    minC = Infinity,
+    maxC = -Infinity
+  rows0.forEach((row, r) => {
+    ;[...row].forEach((ch, c) => {
+      if (ch === '.') return
+      minR = Math.min(minR, r)
+      maxR = Math.max(maxR, r)
+      minC = Math.min(minC, c)
+      maxC = Math.max(maxC, c)
+    })
+  })
+  const cx = (minC + maxC + 1) / 2
+  const cz = (minR + maxR + 1) / 2
 
-  // Тераса не входить у загальну (опалювану) площу будинку
+  const livingType: RoomType = config.kitchenType === 'separate' ? 'living' : 'livingKitchen'
+
+  const floors = template.grid
+    .slice(0, config.floors)
+    .map((rows, i) => parseFloor(applyToggles(rows, config, template), i + 1, cx, cz, livingType))
+
   const totalArea = floors.reduce(
     (sum, fl) =>
       sum +
@@ -258,3 +180,26 @@ export function generateHousePlan(config: HouseConfig): HousePlan {
 
   return { floors, totalArea: Math.round(totalArea) }
 }
+
+// ---- Dev-валідація всього каталогу (ловить помилки в сітках) ----
+
+function validateLayouts() {
+  for (const t of LAYOUTS) {
+    for (const [f, rows] of t.grid.entries()) {
+      const widths = new Set(rows.map((r) => r.length))
+      if (widths.size !== 1)
+        console.warn(`[layouts] ${t.id}: рядки поверху ${f + 1} різної довжини`)
+    }
+    if (t.grid.length === 2) {
+      const [a, b] = t.grid
+      const contour = (rows: string[]) => rows.map((r) => [...r].map((c) => (c === '.' ? '.' : '#')).join(''))
+      if (contour(a).join('\n') !== contour(b).join('\n'))
+        console.warn(`[layouts] ${t.id}: контури поверхів різні`)
+      const stairs = (rows: string[]) =>
+        rows.map((r) => [...r].map((c) => (c === 'R' ? 'R' : '.')).join('')).join('\n')
+      if (stairs(a) !== stairs(b)) console.warn(`[layouts] ${t.id}: сходи не збігаються`)
+    }
+  }
+}
+
+if (import.meta.env.DEV) validateLayouts()
