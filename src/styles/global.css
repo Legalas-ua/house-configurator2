@@ -270,3 +270,33 @@ body {
   font-size: 24px;
   font-weight: 700;
 }
+
+.price__area {
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--ink-soft);
+}
+
+.price__incomplete {
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+
+.price__badge {
+  align-self: flex-start;
+  margin-top: 4px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.price__badge--ok {
+  background: #e3f2e9;
+  color: var(--ok);
+}
+
+.price__badge--over {
+  background: #fbe9e7;
+  color: var(--danger);
+}

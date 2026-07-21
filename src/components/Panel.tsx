@@ -1,6 +1,7 @@
 import { t } from '../locales'
 import Stepper from './Stepper'
 import StepContent from './StepContent'
+import PriceBar from './PriceBar'
 
 export default function Panel() {
   return (
@@ -15,10 +16,7 @@ export default function Panel() {
         <StepContent />
       </div>
 
-      <footer className="panel__price">
-        <span className="price__label">{t.price.label}</span>
-        <span className="price__value">—</span>
-      </footer>
+      <PriceBar />
     </aside>
   )
 }
