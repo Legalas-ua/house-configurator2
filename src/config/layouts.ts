@@ -481,7 +481,7 @@ export function nearestBedrooms(shape: HouseShape, floors: Floors, wanted: numbe
 
 // Скільки санвузлів закладено в планування (для лічильника, що заблокований)
 export function planBathrooms(shape: HouseShape, floors: Floors, bedrooms: number): number {
-  if (shape === 'l-shape') return bedrooms >= 2 ? 3 : 2 // санвузол + ванна (+ ensuite майстра)
+  if (shape === 'l-shape') return bedrooms >= 2 ? 2 : 1 // санвузол (+ ванна майстра)
   return findTemplate(shape, floors, bedrooms)?.bathrooms ?? 1
 }
 
