@@ -1,7 +1,7 @@
 import { useConfigurator } from '../../state/store'
 import type { ExtraRoom, KitchenType } from '../../config/types'
 import { ALL_EXTRAS } from '../../config/rooms'
-import { availableBedrooms, findTemplate } from '../../config/layouts'
+import { availableBedrooms, supportedExtras } from '../../config/layouts'
 import { t } from '../../locales'
 
 // Композитний крок «Кімнати». Межі лічильників і доступність опцій
@@ -17,7 +17,7 @@ export default function RoomsField() {
   if (!config.shape) return null
 
   const bedroomOptions = availableBedrooms(config.shape, config.floors)
-  const template = findTemplate(config.shape, config.floors, config.bedrooms)
+  const allowedExtras = supportedExtras(config.shape, config.floors, config.bedrooms)
 
   const toggleExtra = (extra: ExtraRoom) => {
     const next = config.extras.includes(extra)
@@ -77,7 +77,7 @@ export default function RoomsField() {
         <span className="rooms__group-title">{texts.extras.title}</span>
         <div className="chips">
           {ALL_EXTRAS.map((extra) => {
-            const supported = template?.extras.includes(extra) ?? false
+            const supported = allowedExtras.includes(extra)
             return (
               <button
                 key={extra}

@@ -8,6 +8,7 @@ import type {
   RoomZone,
 } from '../config/types'
 import { findTemplate, LAYOUTS, type LayoutTemplate } from '../config/layouts'
+import { generateLShapePlan } from './lshape'
 
 // ============================================================
 // Парсер каталогу планувань: текстова сітка -> зони кімнат.
@@ -140,6 +141,9 @@ function parseFloor(
 
 export function generateHousePlan(config: HouseConfig): HousePlan {
   if (!config.shape) return { floors: [], totalArea: 0 }
+
+  // Г-подібне планування — параметричне (не з каталогу сіток)
+  if (config.shape === 'l-shape') return generateLShapePlan(config)
 
   const template = findTemplate(config.shape, config.floors, config.bedrooms)
   if (!template) return { floors: [], totalArea: 0 }

@@ -64,6 +64,7 @@ export const uk = {
   floors: {
     title: 'Поверхи',
     options: { 1: '1 поверх', 2: '2 поверхи' },
+    soon: 'Для цієї форми — скоро',
   },
   plan: {
     legendTitle: 'Приміщення',
@@ -82,6 +83,7 @@ export const uk = {
       pantry: 'Комора',
       stairs: 'Сходи',
       terrace: 'Тераса',
+      storage: 'Шафи',
     },
   },
   viewport: {

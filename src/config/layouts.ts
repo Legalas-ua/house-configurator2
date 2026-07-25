@@ -1,4 +1,5 @@
 import type { ExtraRoom, Floors, HouseShape } from './types'
+export type { ExtraRoom }
 
 // ============================================================
 // КАТАЛОГ ГОТОВИХ ПЛАНУВАНЬ.
@@ -439,12 +440,25 @@ export const LAYOUTS: LayoutTemplate[] = [
   },
 ]
 
-// ---- Запити до каталогу ----
+// ---- Запити (каталог для rect/square; параметрика для l-shape) ----
+
+// Г-подібне планування будується параметрично (lib/lshape.ts), а не з каталогу.
+// 2 поверхи для нього поки не реалізовані.
+const L_BEDROOMS: Record<Floors, number[]> = {
+  1: [1, 2, 3, 4, 5],
+  2: [],
+}
 
 export function availableBedrooms(shape: HouseShape, floors: Floors): number[] {
+  if (shape === 'l-shape') return L_BEDROOMS[floors]
   return LAYOUTS.filter((l) => l.shape === shape && l.floors === floors)
     .map((l) => l.bedrooms)
     .sort((a, b) => a - b)
+}
+
+export function floorsAvailable(shape: HouseShape): Floors[] {
+  if (shape === 'l-shape') return [1] // 2 поверхи для Г-подібної — у наступній ітерації
+  return [1, 2]
 }
 
 export function findTemplate(
@@ -459,7 +473,24 @@ export function findTemplate(
 
 export function nearestBedrooms(shape: HouseShape, floors: Floors, wanted: number): number {
   const options = availableBedrooms(shape, floors)
+  if (options.length === 0) return wanted
   return options.reduce((best, o) =>
     Math.abs(o - wanted) < Math.abs(best - wanted) ? o : best,
   )
+}
+
+// Скільки санвузлів закладено в планування (для лічильника, що заблокований)
+export function planBathrooms(shape: HouseShape, floors: Floors, bedrooms: number): number {
+  if (shape === 'l-shape') return bedrooms >= 2 ? 3 : 2 // санвузол + ванна (+ ensuite майстра)
+  return findTemplate(shape, floors, bedrooms)?.bathrooms ?? 1
+}
+
+// Які додаткові кімнати підтримує планування
+export function supportedExtras(
+  shape: HouseShape,
+  floors: Floors,
+  bedrooms: number,
+): ExtraRoom[] {
+  if (shape === 'l-shape') return bedrooms >= 2 ? ['office'] : [] // кабінет = один зі слотів
+  return findTemplate(shape, floors, bedrooms)?.extras ?? []
 }
