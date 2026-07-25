@@ -3,16 +3,16 @@ import type { RoomType } from './types'
 // Кольори зон на плані (пастельні, добре розрізняються).
 // Самі планування — у config/layouts.ts.
 export const ROOM_COLORS: Record<RoomType, string> = {
-  livingKitchen: '#e8c15a',
-  living: '#e8c15a',
-  kitchen: '#e08d4e',
-  hall: '#cbbfae',
-  corridor: '#b8b2a6',
-  bedroom: '#8fb8dd',
-  bathroom: '#72c5bb',
-  office: '#a996d6',
-  wardrobe: '#d9a3c3',
-  pantry: '#b3c98a',
-  stairs: '#8a857c',
-  terrace: '#d6c6a8',
+  livingKitchen: '#f2c23e',
+  living: '#f2c23e',
+  kitchen: '#ee8534',
+  hall: '#d3c4ac',
+  corridor: '#c2baa8',
+  bedroom: '#6ba6e0',
+  bathroom: '#4bc6b8',
+  office: '#a482e0',
+  wardrobe: '#e293c0',
+  pantry: '#a8cd6f',
+  stairs: '#847d70',
+  terrace: '#d8c39a',
 }

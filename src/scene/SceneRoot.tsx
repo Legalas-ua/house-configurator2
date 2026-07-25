@@ -1,6 +1,7 @@
 import { useRef } from 'react'
 import { Canvas, useFrame } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
+import { ACESFilmicToneMapping } from 'three'
 import { easing } from 'maath'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import { useConfigurator } from '../state/store'
@@ -30,24 +31,38 @@ export default function SceneRoot() {
 
   return (
     <Canvas
-      shadows
+      shadows="soft"
+      dpr={[1, 2]}
+      gl={{ antialias: true }}
       camera={{ fov: 40, position: [14, 10, 14] }}
       style={{ position: 'absolute', inset: 0 }}
+      onCreated={({ gl }) => {
+        gl.toneMapping = ACESFilmicToneMapping
+        gl.toneMappingExposure = 1.1
+      }}
     >
-      <color attach="background" args={['#eef0ee']} />
-      <fog attach="fog" args={['#eef0ee', 40, 90]} />
+      <color attach="background" args={['#f4f6f2']} />
+      <fog attach="fog" args={['#f4f6f2', 55, 120]} />
 
-      <hemisphereLight args={['#ffffff', '#c8c2b8', 0.9]} />
+      {/* Небо + земля як два джерела кольору — дає об'єм і теплі тіні */}
+      <hemisphereLight args={['#fdfbf5', '#9aa789', 0.75]} />
+      <ambientLight intensity={0.35} />
+
+      {/* Головне «сонце» — тепле, дає чіткі м'які тіні */}
       <directionalLight
-        position={[10, 14, 6]}
-        intensity={1.4}
+        position={[12, 16, 8]}
+        intensity={2.4}
+        color="#fff4e2"
         castShadow
         shadow-mapSize={[2048, 2048]}
-        shadow-camera-left={-15}
-        shadow-camera-right={15}
-        shadow-camera-top={15}
-        shadow-camera-bottom={-15}
+        shadow-bias={-0.0004}
+        shadow-camera-left={-16}
+        shadow-camera-right={16}
+        shadow-camera-top={16}
+        shadow-camera-bottom={-16}
       />
+      {/* Заповнююче світло з протилежного боку — прибирає чорні тіні */}
+      <directionalLight position={[-10, 8, -6]} intensity={0.5} color="#cfe0ff" />
 
       <Ground />
       <PlanView />

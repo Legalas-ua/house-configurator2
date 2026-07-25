@@ -27,32 +27,32 @@ export default function PlanView() {
     <group ref={entranceRef} scale={0} key={config.shape}>
       {/* Окантовка-підсвітка: трохи більша плита акцентного кольору */}
       {floor.slab.map((r, i) => (
-        <mesh key={`edge-${i}`} position={[r.x, 0.03, r.z]}>
-          <boxGeometry args={[r.width + 0.35, 0.06, r.depth + 0.35]} />
-          <meshStandardMaterial color="#e05c2a" />
+        <mesh key={`edge-${i}`} position={[r.x, 0.04, r.z]} castShadow>
+          <boxGeometry args={[r.width + 0.3, 0.16, r.depth + 0.3]} />
+          <meshStandardMaterial color="#e05c2a" roughness={0.5} />
         </mesh>
       ))}
 
-      {/* Плита поверху */}
+      {/* Плита поверху — майже біла, ловить світло */}
       {floor.slab.map((r, i) => (
-        <mesh key={`slab-${i}`} position={[r.x, 0.09, r.z]}>
-          <boxGeometry args={[r.width, 0.08, r.depth]} />
-          <meshStandardMaterial color="#f2ede4" />
+        <mesh key={`slab-${i}`} position={[r.x, 0.14, r.z]} receiveShadow>
+          <boxGeometry args={[r.width, 0.12, r.depth]} />
+          <meshStandardMaterial color="#faf7f0" roughness={0.6} />
         </mesh>
       ))}
 
-      {/* Зони кімнат */}
+      {/* Зони кімнат — з бортиком, щоб читались об'ємно */}
       {showZones &&
         floor.rooms.map((room, i) => (
-          <mesh key={`room-${i}`} position={[room.x, 0.16, room.z]}>
+          <mesh key={`room-${i}`} position={[room.x, 0.24, room.z]} castShadow>
             <boxGeometry
               args={[
                 Math.max(room.width - ZONE_GAP, 0.2),
-                0.07,
+                0.14,
                 Math.max(room.depth - ZONE_GAP, 0.2),
               ]}
             />
-            <meshStandardMaterial color={ROOM_COLORS[room.type]} />
+            <meshStandardMaterial color={ROOM_COLORS[room.type]} roughness={0.55} />
           </mesh>
         ))}
     </group>
