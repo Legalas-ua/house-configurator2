@@ -1,23 +1,41 @@
-import { useRef } from 'react'
+import { useMemo, useRef } from 'react'
 import { Canvas, useFrame } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
 import { ACESFilmicToneMapping } from 'three'
 import { easing } from 'maath'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import { useConfigurator } from '../state/store'
+import { generateHousePlan } from '../lib/floorplan'
 import Ground from './Ground'
 import PlanView from './PlanView'
 
+const FOV = 40
+
 // Плавний переліт камери у вид зверху, поки topView активний.
-// Щойно користувач починає крутити мишею — режим вимикається
-// і камера знову вільна (перехід плавний, бо обертання стартує
-// з поточної позиції).
+// Висота підбирається під розмір плану, щоб великі будинки (5 спалень)
+// повністю вмістились у кадр. Щойно користувач починає крутити —
+// режим вимикається і камера знову вільна.
 function CameraRig({ controls }: { controls: React.RefObject<OrbitControlsImpl | null> }) {
   const topView = useConfigurator((s) => s.topView)
+  const config = useConfigurator((s) => s.config)
+  const viewFloor = useConfigurator((s) => s.viewFloor)
+
+  const fitHeight = useMemo(() => {
+    const plan = generateHousePlan(config)
+    const floor = plan.floors[Math.min(viewFloor, plan.floors.length) - 1]
+    if (!floor) return 26
+    let ext = 0
+    for (const s of floor.slab) {
+      ext = Math.max(ext, Math.abs(s.x) + s.width / 2, Math.abs(s.z) + s.depth / 2)
+    }
+    const maxDim = ext * 2
+    const h = (maxDim / 2) * 1.35 / Math.tan(((FOV / 2) * Math.PI) / 180)
+    return Math.max(22, h)
+  }, [config, viewFloor])
 
   useFrame((state, delta) => {
     if (!topView || !controls.current) return
-    easing.damp3(state.camera.position, [0, 30, 0.4], 0.45, delta)
+    easing.damp3(state.camera.position, [0, fitHeight, 0.4], 0.45, delta)
     easing.damp3(controls.current.target, [0, 0, 0], 0.45, delta)
     controls.current.update()
   })
@@ -34,7 +52,7 @@ export default function SceneRoot() {
       shadows="soft"
       dpr={[1, 2]}
       gl={{ antialias: true }}
-      camera={{ fov: 40, position: [14, 10, 14] }}
+      camera={{ fov: FOV, position: [14, 10, 14] }}
       style={{ position: 'absolute', inset: 0 }}
       onCreated={({ gl }) => {
         gl.toneMapping = ACESFilmicToneMapping
@@ -72,7 +90,7 @@ export default function SceneRoot() {
         target={[0, 1.2, 0]}
         enablePan={false}
         minDistance={10}
-        maxDistance={35}
+        maxDistance={60}
         minPolarAngle={0}
         maxPolarAngle={Math.PI / 2 - 0.12}
         onStart={() => setTopView(false)}

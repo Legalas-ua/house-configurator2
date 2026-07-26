@@ -1,4 +1,7 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
+import { useFrame, type ThreeEvent } from '@react-three/fiber'
+import { easing } from 'maath'
+import type { Mesh } from 'three'
 import { useConfigurator } from '../state/store'
 import { STEPS } from '../config/steps'
 import { ROOM_COLORS } from '../config/plan'
@@ -34,6 +37,57 @@ function hasNeighbor(
     if (side === 'front') return Math.abs(c.z1 - a.z0) < EPS && overlap(a.x0, a.x1, c.x0, c.x1)
     return Math.abs(c.z0 - a.z1) < EPS && overlap(a.x0, a.x1, c.x0, c.x1) // back
   })
+}
+
+// Одна зона кімнати. Плавно «виростає» з нуля при появі (mount),
+// і плавно піднімається при наведенні.
+function ZoneMesh({
+  w,
+  d,
+  cx,
+  cz,
+  color,
+  hovered,
+  onOver,
+  onMove,
+  onOut,
+}: {
+  w: number
+  d: number
+  cx: number
+  cz: number
+  color: string
+  hovered: boolean
+  onOver: (e: ThreeEvent<PointerEvent>) => void
+  onMove: (e: ThreeEvent<PointerEvent>) => void
+  onOut: (e: ThreeEvent<PointerEvent>) => void
+}) {
+  const ref = useRef<Mesh>(null)
+  useFrame((_, dt) => {
+    const m = ref.current
+    if (!m) return
+    easing.damp3(m.scale, [1, 1, 1], 0.22, dt) // поява з нуля
+    easing.damp(m.position, 'y', hovered ? 0.26 : 0.18, 0.15, dt) // підйом при наведенні
+  })
+  return (
+    <mesh
+      ref={ref}
+      scale={0}
+      position={[cx, 0.18, cz]}
+      castShadow
+      onPointerOver={onOver}
+      onPointerMove={onMove}
+      onPointerOut={onOut}
+    >
+      <boxGeometry args={[w, 0.14, d]} />
+      <meshStandardMaterial
+        color={color}
+        roughness={0.55}
+        emissive="#ffffff"
+        emissiveIntensity={hovered ? 0.28 : 0}
+      />
+    </mesh>
+  )
 }
 
 // План будинку на землі. На кроці «Кімнати» — кольорові зони.
@@ -82,48 +136,35 @@ export default function PlanView() {
           const r = hasNeighbor(floor.rooms, i, 'right') ? 0 : GAP / 2
           const f = hasNeighbor(floor.rooms, i, 'front') ? 0 : GAP / 2
           const bk = hasNeighbor(floor.rooms, i, 'back') ? 0 : GAP / 2
-          const w = Math.max(room.width - l - r, 0.15)
-          const d = Math.max(room.depth - f - bk, 0.15)
-          const cx = room.x + (l - r) / 2
-          const cz = room.z + (f - bk) / 2
+          const showTip = (e: ThreeEvent<PointerEvent>) => {
+            e.stopPropagation()
+            setHovered({
+              name: t.plan.roomNames[room.type],
+              area: Math.round(areaOf(room)),
+              mx: e.nativeEvent.clientX,
+              my: e.nativeEvent.clientY,
+            })
+          }
           return (
-            <mesh
+            <ZoneMesh
               key={`room-${i}`}
-              position={[cx, isHover ? 0.26 : 0.18, cz]}
-              castShadow
-              onPointerOver={(e) => {
-                e.stopPropagation()
+              w={Math.max(room.width - l - r, 0.15)}
+              d={Math.max(room.depth - f - bk, 0.15)}
+              cx={room.x + (l - r) / 2}
+              cz={room.z + (f - bk) / 2}
+              color={ROOM_COLORS[room.type]}
+              hovered={isHover}
+              onOver={(e) => {
                 setHoverKey(key)
-                setHovered({
-                  name: t.plan.roomNames[room.type],
-                  area: Math.round(areaOf(room)),
-                  mx: e.nativeEvent.clientX,
-                  my: e.nativeEvent.clientY,
-                })
+                showTip(e)
               }}
-              onPointerMove={(e) => {
-                e.stopPropagation()
-                setHovered({
-                  name: t.plan.roomNames[room.type],
-                  area: Math.round(areaOf(room)),
-                  mx: e.nativeEvent.clientX,
-                  my: e.nativeEvent.clientY,
-                })
-              }}
-              onPointerOut={(e) => {
+              onMove={showTip}
+              onOut={(e) => {
                 e.stopPropagation()
                 setHoverKey((cur) => (cur === key ? null : cur))
                 setHovered(null)
               }}
-            >
-              <boxGeometry args={[w, 0.14, d]} />
-              <meshStandardMaterial
-                color={ROOM_COLORS[room.type]}
-                roughness={0.55}
-                emissive="#ffffff"
-                emissiveIntensity={isHover ? 0.28 : 0}
-              />
-            </mesh>
+            />
           )
         })}
     </group>

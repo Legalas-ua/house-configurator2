@@ -582,3 +582,58 @@ body {
   background: #fbe9e7;
   color: var(--danger);
 }
+
+/* ===== Мобільна версія ===== */
+@media (max-width: 820px) {
+  /* Сцена зверху, панель знизу (замість «поруч») */
+  .app {
+    grid-template-columns: 1fr;
+    grid-template-rows: 44vh 1fr;
+  }
+
+  /* Панель прокручується цілком */
+  .panel {
+    border-left: none;
+    border-top: 1px solid var(--border);
+    overflow-y: auto;
+  }
+  .panel__content {
+    flex: 0 0 auto;
+    overflow: visible;
+    padding: 16px 18px;
+  }
+  .panel__header {
+    padding: 16px 18px 12px;
+  }
+  .panel__price {
+    padding: 14px 18px;
+  }
+
+  /* Міні-степер — горизонтальний ряд угорі над сценою */
+  .ministepper {
+    top: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    flex-direction: row;
+  }
+
+  /* Кнопка «Вид зверху» — у лівий кут */
+  .topview-btn {
+    left: 12px;
+    top: 12px;
+  }
+
+  /* Стартовий екран і картка кроку — компактніші */
+  .landing__inner {
+    padding: 24px;
+  }
+  .landing__title {
+    font-size: 34px;
+  }
+  .landing__tagline {
+    font-size: 15px;
+  }
+  .stage__card {
+    padding: 24px 20px;
+  }
+}
