@@ -1,5 +1,5 @@
 import { useConfigurator } from '../../state/store'
-import type { ExtraRoom, KitchenType } from '../../config/types'
+import type { ExtraRoom } from '../../config/types'
 import { ALL_EXTRAS } from '../../config/rooms'
 import { availableBedrooms, supportedExtras } from '../../config/layouts'
 import { t } from '../../locales'
@@ -56,22 +56,6 @@ export default function RoomsField() {
         limits={{ min: config.bathrooms, max: config.bathrooms }}
         onChange={() => {}}
       />
-
-      <div className="rooms__group">
-        <span className="rooms__group-title">{texts.kitchen.title}</span>
-        <div className="cards">
-          {(Object.keys(texts.kitchen.options) as KitchenType[]).map((value) => (
-            <button
-              key={value}
-              type="button"
-              className={`card${config.kitchenType === value ? ' card--selected' : ''}`}
-              onClick={() => setValue('kitchenType', value)}
-            >
-              <span>{texts.kitchen.options[value]}</span>
-            </button>
-          ))}
-        </div>
-      </div>
 
       <div className="rooms__group">
         <span className="rooms__group-title">{texts.extras.title}</span>

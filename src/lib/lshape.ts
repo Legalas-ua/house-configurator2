@@ -42,22 +42,26 @@ export function generateLShapePlan(config: HouseConfig): HousePlan {
   const rooms: RoomZone[] = []
 
   const hasOffice = config.extras.includes('office')
+  // Коридор потрібен, коли в нічному крилі більше однієї кімнати
+  // (кілька спалень АБО спальня + кабінет). Ванна майстра — лише 2+ спальні.
+  const hasCorridor = b >= 2 || hasOffice
 
   // ---- Майстер-спальня (зверху) ----
-  let masterLen: number
-  if (hasEnsuite) {
-    masterLen = MASTER_LEN
-    rooms.push(rect('bathroom', 0, 0, CORRIDOR_W, ENSUITE_LEN)) // ванна ≈5 м², у куті
-    rooms.push(rect('bedroom', CORRIDOR_W, 0, ROOM_W, masterLen)) // спальня праворуч
+  let z: number
+  let corridorTop: number
+  if (hasCorridor) {
+    if (hasEnsuite) rooms.push(rect('bathroom', 0, 0, CORRIDOR_W, ENSUITE_LEN)) // ванна ≈5 м²
+    rooms.push(rect('bedroom', CORRIDOR_W, 0, ROOM_W, MASTER_LEN)) // спальня праворуч
+    corridorTop = hasEnsuite ? ENSUITE_LEN : 0
+    z = MASTER_LEN
   } else {
-    // одна спальня: без коридору, на всю ширину крила, більша
-    masterLen = MASTER_SINGLE_LEN
-    rooms.push(rect('bedroom', 0, 0, NIGHT_W, masterLen))
+    // одна спальня без кабінету: без коридору, на всю ширину крила, більша
+    rooms.push(rect('bedroom', 0, 0, NIGHT_W, MASTER_SINGLE_LEN))
+    corridorTop = 0
+    z = MASTER_SINGLE_LEN
   }
-  const corridorTop = hasEnsuite ? ENSUITE_LEN : 0
 
   // ---- Решта спалень + кабінет (донизу) ----
-  let z = masterLen
   for (let i = 0; i < b - 1; i++) {
     rooms.push(rect('bedroom', CORRIDOR_W, z, ROOM_W, BEDROOM_LEN))
     z += BEDROOM_LEN
@@ -72,8 +76,8 @@ export function generateLShapePlan(config: HouseConfig): HousePlan {
   // ---- Денне крило ----
   const dz = nightLen
 
-  // Вертикальний коридор — лише коли є кілька кімнат (для 1 спальні його немає)
-  if (hasEnsuite) {
+  // Вертикальний коридор уздовж спалень (немає лише при 1 спальні без кабінету)
+  if (hasCorridor) {
     rooms.push(rect('corridor', 0, corridorTop, CORRIDOR_W, dz - corridorTop))
   }
 
@@ -92,12 +96,7 @@ export function generateLShapePlan(config: HouseConfig): HousePlan {
 
   // Кухня-вітальня (праворуч, на всю висоту денного крила)
   const kitchenX = leftW
-  if (config.kitchenType === 'separate') {
-    rooms.push(rect('living', kitchenX, dz, 3.6, DAY_DEPTH))
-    rooms.push(rect('kitchen', kitchenX + 3.6, dz, KITCHEN_W - 3.6, DAY_DEPTH))
-  } else {
-    rooms.push(rect('livingKitchen', kitchenX, dz, KITCHEN_W, DAY_DEPTH))
-  }
+  rooms.push(rect('livingKitchen', kitchenX, dz, KITCHEN_W, DAY_DEPTH))
 
   // ---- Плита (контур) ----
   const dayW = leftW + KITCHEN_W

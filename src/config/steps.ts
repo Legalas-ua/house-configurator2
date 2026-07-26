@@ -43,7 +43,7 @@ export const STEPS: StepDef[] = [
     id: 'rooms',
     kind: 'rooms',
     show3D: true,
-    isComplete: (c) => c.kitchenType !== null,
+    isComplete: () => true,
   },
 ]
 
@@ -54,6 +54,6 @@ export const DEFAULT_CONFIG: HouseConfig = {
   floors: 1,
   bedrooms: 2,
   bathrooms: 1,
-  kitchenType: null,
+  kitchenType: 'open', // вибір кухні прибрано — завжди кухня-вітальня
   extras: [],
 }
