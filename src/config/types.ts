@@ -51,6 +51,9 @@ export interface PlanRect {
 
 export interface RoomZone extends PlanRect {
   type: RoomType
+  // Кілька прямокутників з однаковим group — це одне приміщення
+  // (Г-подібне): рендеряться без внутрішнього шва.
+  group?: string
 }
 
 export interface FloorPlan {

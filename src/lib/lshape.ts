@@ -63,8 +63,8 @@ export function generateLShapePlan(config: HouseConfig): HousePlan {
     rooms.push(rect('bathroom', 0, 0, COL_W, SAN_BOX))
     rooms.push(rect('closet', 0, SAN_BOX, COL_W, CLO_BOX))
     const colBottom = SAN_BOX + CLO_BOX
-    rooms.push(rect('master', COL_W, 0, NIGHT_W - COL_W, MASTER_WC_LEN)) // праворуч від колони
-    rooms.push(rect('master', CORRIDOR_W, colBottom, COL_W - CORRIDOR_W, MASTER_WC_LEN - colBottom)) // під колоною
+    rooms.push({ ...rect('master', COL_W, 0, NIGHT_W - COL_W, MASTER_WC_LEN), group: 'master' }) // праворуч
+    rooms.push({ ...rect('master', CORRIDOR_W, colBottom, COL_W - CORRIDOR_W, MASTER_WC_LEN - colBottom), group: 'master' }) // під колоною
     corridorTop = colBottom
     z = MASTER_WC_LEN
   } else if (hasEnsuite) {
@@ -117,14 +117,14 @@ export function generateLShapePlan(config: HouseConfig): HousePlan {
   rooms.push(rect('wardrobe', 0, bz + BATH_LEN, SERVICE_W, DAY_DEPTH - HCORR_LEN - BATH_LEN)) // гардеробна
 
   // Прихожа — праворуч від кластера, вхід спереду
-  rooms.push(rect('hall', SERVICE_W, bz, HALL_W, DAY_DEPTH - HCORR_LEN))
+  rooms.push({ ...rect('hall', SERVICE_W, bz, HALL_W, DAY_DEPTH - HCORR_LEN), group: 'hall' })
 
   // Комора — коротша й ширша, спереду біля кухні; простір над нею
   // віддається прихожі як ніша (під шафу).
   if (hasPantry) {
     const pFrontZ = dz + DAY_DEPTH - PANTRY_LEN
     rooms.push(rect('pantry', leftW, pFrontZ, PANTRY_W, PANTRY_LEN))
-    rooms.push(rect('hall', leftW, bz, PANTRY_W, pFrontZ - bz)) // ніша прихожої над коморою
+    rooms.push({ ...rect('hall', leftW, bz, PANTRY_W, pFrontZ - bz), group: 'hall' }) // ніша над коморою
   }
 
   // Кухня-вітальня — суцільний блок праворуч на всю висоту денного крила
