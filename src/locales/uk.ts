@@ -85,6 +85,7 @@ export const uk = {
       terrace: 'Тераса',
       storage: 'Шафи',
       closet: 'Гардероб',
+      master: 'Майстер-спальня',
     },
   },
   viewport: {

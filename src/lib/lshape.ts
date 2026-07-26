@@ -18,10 +18,14 @@ const CORRIDOR_W = 1.5
 const ROOM_W = 3.8 // ширина кімнат (праворуч від коридору)
 const NIGHT_W = CORRIDOR_W + ROOM_W // 5.3
 
-const MASTER_LEN = 5.0 // майстер із ванною (≈19 м²)
+const MASTER_LEN = 5.0 // майстер із ванною, без гардероба (≈19 м²)
+const MASTER_WC_LEN = 5.6 // майстер, коли є кутова колона санвузол+гардероб
 const MASTER_SINGLE_LEN = 4.9 // одна спальня без коридору, на всю ширину (≈26 м²)
-const ENSUITE_LEN = 3.4 // ванна майстра у куті (≈5 м²)
-const CLOSET_LEN = 1.3 // гардероб у майстрі — смуга зверху спальні (≈5 м²)
+const ENSUITE_LEN = 3.4 // ванна майстра у куті (без гардероба)
+const COL_W = 2.2 // ширина кутової колони санвузол+гардероб (заходить у спальню)
+const SAN_BOX = 2.3 // санвузол у куті (≈5 м²)
+const CLO_BOX = 2.3 // гардероб у куті (≈5 м²)
+const CLOSET_STRIP = 1.3 // гардероб смугою (варіант 1 спальні)
 const BEDROOM_LEN = 3.6 // звичайна спальня (≈14 м²)
 const OFFICE_LEN = 2.6 // кабінет (≈10 м²)
 
@@ -31,7 +35,8 @@ const SERVICE_W = 2.4 // кластер санвузол+гардеробна (�
 const BATH_LEN = 2.6 // санвузол (згори кластера)
 const HALL_W = 1.8 // прихожа — вертикальна смуга праворуч від кластера
 const KITCHEN_W = 6.0
-const PANTRY_W = 1.2 // комора — вузька довга колона між прихожою і кухнею
+const PANTRY_W = 1.5 // комора біля кухні (ширина)
+const PANTRY_LEN = 3.5 // комора біля кухні (довжина, спереду)
 
 // Прямокутник за лівим-верхнім кутом; z росте «вниз» (до фасаду)
 function rect(type: RoomType, x0: number, z0: number, width: number, depth: number): RoomZone {
@@ -50,21 +55,29 @@ export function generateLShapePlan(config: HouseConfig): HousePlan {
   const hasCorridor = b >= 2 || hasOffice
 
   // ---- Майстер-спальня (зверху) ----
-  // За бажанням угорі спальні — смуга гардероба (≈5 м²), спальня трохи менша.
-  const cLen = hasCloset ? CLOSET_LEN : 0
   let z: number
   let corridorTop: number
-  if (hasEnsuite) {
-    // 2+ спальні: ванна в куті, майстер праворуч, коридор повз ванну
-    rooms.push(rect('bathroom', 0, 0, CORRIDOR_W, ENSUITE_LEN)) // ванна ≈5 м²
-    if (hasCloset) rooms.push(rect('closet', CORRIDOR_W, 0, ROOM_W, cLen))
-    rooms.push(rect('bedroom', CORRIDOR_W, cLen, ROOM_W, MASTER_LEN - cLen))
+  if (hasEnsuite && hasCloset) {
+    // Санвузол + гардероб — дві скриньки в куті (ширші за коридор,
+    // трохи заходять у спальню). Майстер — Г-подібний навколо колони.
+    rooms.push(rect('bathroom', 0, 0, COL_W, SAN_BOX))
+    rooms.push(rect('closet', 0, SAN_BOX, COL_W, CLO_BOX))
+    const colBottom = SAN_BOX + CLO_BOX
+    rooms.push(rect('master', COL_W, 0, NIGHT_W - COL_W, MASTER_WC_LEN)) // праворуч від колони
+    rooms.push(rect('master', CORRIDOR_W, colBottom, COL_W - CORRIDOR_W, MASTER_WC_LEN - colBottom)) // під колоною
+    corridorTop = colBottom
+    z = MASTER_WC_LEN
+  } else if (hasEnsuite) {
+    // Лише ванна у куті, майстер праворуч, коридор повз ванну
+    rooms.push(rect('bathroom', 0, 0, CORRIDOR_W, ENSUITE_LEN))
+    rooms.push(rect('master', CORRIDOR_W, 0, ROOM_W, MASTER_LEN))
     corridorTop = ENSUITE_LEN
     z = MASTER_LEN
   } else {
-    // майстер на всю ширину крила (більший); коридор — ЛИШЕ нижче нього
+    // Одна спальня — на всю ширину крила (більша); коридор лише нижче
+    const cLen = hasCloset ? CLOSET_STRIP : 0
     if (hasCloset) rooms.push(rect('closet', 0, 0, NIGHT_W, cLen))
-    rooms.push(rect('bedroom', 0, cLen, NIGHT_W, MASTER_SINGLE_LEN - cLen))
+    rooms.push(rect('master', 0, cLen, NIGHT_W, MASTER_SINGLE_LEN - cLen))
     corridorTop = MASTER_SINGLE_LEN
     z = MASTER_SINGLE_LEN
   }
@@ -106,9 +119,12 @@ export function generateLShapePlan(config: HouseConfig): HousePlan {
   // Прихожа — праворуч від кластера, вхід спереду
   rooms.push(rect('hall', SERVICE_W, bz, HALL_W, DAY_DEPTH - HCORR_LEN))
 
-  // Комора — між прихожою і кухнею, під горизонтальним коридором
+  // Комора — коротша й ширша, спереду біля кухні; простір над нею
+  // віддається прихожі як ніша (під шафу).
   if (hasPantry) {
-    rooms.push(rect('pantry', leftW, bz, PANTRY_W, DAY_DEPTH - HCORR_LEN))
+    const pFrontZ = dz + DAY_DEPTH - PANTRY_LEN
+    rooms.push(rect('pantry', leftW, pFrontZ, PANTRY_W, PANTRY_LEN))
+    rooms.push(rect('hall', leftW, bz, PANTRY_W, pFrontZ - bz)) // ніша прихожої над коморою
   }
 
   // Кухня-вітальня — суцільний блок праворуч на всю висоту денного крила
