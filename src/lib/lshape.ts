@@ -23,9 +23,9 @@ const ENSUITE_LEN = 2.2 // ванна майстра у верхньому ку�
 const BEDROOM_LEN = 3.6
 
 const DAY_DEPTH = 7.0
-const SERVICE_W = 2.8 // ширина колонки гардеробна/санвузол
-const GARD_LEN = 2.6
-const BATH_LEN = 2.4
+const SERVICE_W = 1.8 // кластер санвузол+гардеробна (праворуч від коридору)
+const BATH_LEN = 2.6 // санвузол (згори, ближче до спалень)
+const HALL_W = 1.5 // прихожа — вертикальна смуга праворуч від кластера
 const KITCHEN_W = 6.0
 
 // Прямокутник за лівим-верхнім кутом; z росте «вниз» (до фасаду)
@@ -56,21 +56,24 @@ export function generateLShapePlan(config: HouseConfig): HousePlan {
   }
   const nightLen = z
 
-  // ---- Денне крило ----
+  // ---- Денне крило (за референсом, зліва направо) ----
+  // [коридор] | [санвузол згори + гардеробна знизу] | [прихожа] | [кухня-вітальня]
   const dz = nightLen
-  rooms.push(rect('wardrobe', CORRIDOR_W, dz, SERVICE_W, GARD_LEN)) // гардеробна
-  rooms.push(rect('bathroom', CORRIDOR_W, dz + GARD_LEN, SERVICE_W, BATH_LEN)) // санвузол (об'єднаний)
 
-  // Прихожа — спереду, на всю ширину лівої частини
-  const hallZ = dz + GARD_LEN + BATH_LEN
-  const hallLen = DAY_DEPTH - GARD_LEN - BATH_LEN
-  rooms.push(rect('hall', 0, hallZ, CORRIDOR_W + SERVICE_W, hallLen))
+  // Суцільний коридор-спина: від ванни майстра донизу до фасаду
+  rooms.push(rect('corridor', 0, corridorTop, CORRIDOR_W, dz + DAY_DEPTH - corridorTop))
 
-  // Суцільний коридор: від ванни майстра донизу до прихожої
-  rooms.push(rect('corridor', 0, corridorTop, CORRIDOR_W, hallZ - corridorTop))
+  // Кластер праворуч від коридору: санвузол (згори) + гардеробна (знизу, до входу)
+  const clusterX = CORRIDOR_W
+  rooms.push(rect('bathroom', clusterX, dz, SERVICE_W, BATH_LEN)) // санвузол (об'єднаний)
+  rooms.push(rect('wardrobe', clusterX, dz + BATH_LEN, SERVICE_W, DAY_DEPTH - BATH_LEN)) // гардеробна
+
+  // Прихожа — вертикальна смуга праворуч від кластера, вхід спереду
+  const hallX = clusterX + SERVICE_W
+  rooms.push(rect('hall', hallX, dz, HALL_W, DAY_DEPTH))
 
   // Кухня-вітальня (праворуч)
-  const kitchenX = CORRIDOR_W + SERVICE_W
+  const kitchenX = hallX + HALL_W
   if (config.kitchenType === 'separate') {
     rooms.push(rect('living', kitchenX, dz, 3.6, DAY_DEPTH))
     rooms.push(rect('kitchen', kitchenX + 3.6, dz, KITCHEN_W - 3.6, DAY_DEPTH))
@@ -79,7 +82,7 @@ export function generateLShapePlan(config: HouseConfig): HousePlan {
   }
 
   // ---- Плита (контур) ----
-  const dayW = CORRIDOR_W + SERVICE_W + KITCHEN_W
+  const dayW = CORRIDOR_W + SERVICE_W + HALL_W + KITCHEN_W
   const slab: PlanRect[] = [
     { x: NIGHT_W / 2, z: nightLen / 2, width: NIGHT_W, depth: nightLen },
     { x: dayW / 2, z: dz + DAY_DEPTH / 2, width: dayW, depth: DAY_DEPTH },

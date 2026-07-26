@@ -49,10 +49,12 @@ interface ConfiguratorState {
   maxStepReached: number // до якого кроку дійшов користувач (для 3D і навігації)
   topView: boolean // камера летить у вид зверху; обертання мишею вимикає
   viewFloor: number // який поверх показувати на плані (1 або 2)
+  hovered: { name: string; area: number; mx: number; my: number } | null // підказка кімнати
   start: () => void
   setValue: (key: ConfigKey, value: string | number | string[] | null) => void
   setTopView: (on: boolean) => void
   setViewFloor: (floor: number) => void
+  setHovered: (h: ConfiguratorState['hovered']) => void
   nextStep: () => void
   prevStep: () => void
   goToStep: (index: number) => void
@@ -65,8 +67,11 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
   maxStepReached: 0,
   topView: false,
   viewFloor: 1,
+  hovered: null,
 
   start: () => set({ started: true }),
+
+  setHovered: (h) => set({ hovered: h }),
 
   setValue: (key, value) =>
     set((s) => {

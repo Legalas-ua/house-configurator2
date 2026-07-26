@@ -244,6 +244,32 @@ body {
   color: #fff;
 }
 
+/* ===== Підказка кімнати (наведення на 3D) ===== */
+.room-tip {
+  position: fixed;
+  z-index: 20;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(17, 17, 17, 0.88);
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2);
+  white-space: nowrap;
+}
+
+.room-tip strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.room-tip span {
+  font-size: 11px;
+  opacity: 0.8;
+}
+
 /* ===== Легенда плану ===== */
 .legend__list {
   list-style: none;

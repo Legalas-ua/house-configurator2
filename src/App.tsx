@@ -5,6 +5,7 @@ import Landing from './components/Landing'
 import Panel from './components/Panel'
 import StepContent from './components/StepContent'
 import MiniStepper from './components/MiniStepper'
+import RoomTooltip from './components/RoomTooltip'
 import SceneRoot from './scene/SceneRoot'
 
 // Три режими екрана:
@@ -46,6 +47,7 @@ export default function App() {
       </main>
       <MiniStepper />
       <Panel />
+      <RoomTooltip />
     </div>
   )
 }
