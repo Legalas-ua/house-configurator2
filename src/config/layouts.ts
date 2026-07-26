@@ -491,6 +491,6 @@ export function supportedExtras(
   floors: Floors,
   bedrooms: number,
 ): ExtraRoom[] {
-  if (shape === 'l-shape') return ['office'] // кабінет — додається окремою кімнатою
+  if (shape === 'l-shape') return ['office', 'pantry'] // кабінет + комора — окремі кімнати
   return findTemplate(shape, floors, bedrooms)?.extras ?? []
 }

@@ -37,7 +37,8 @@ export default function Legend() {
             <span className="legend__swatch" style={{ background: ROOM_COLORS[type] }} />
             <span className="legend__name">
               {t.plan.roomNames[type]}
-              {count > 1 ? ` ×${count}` : ''}
+              {/* «×N» лише для тих кімнат, що логічно рахувати */}
+              {count > 1 && (type === 'bedroom' || type === 'bathroom') ? ` ×${count}` : ''}
             </span>
             <span className="legend__area">{Math.round(area)} м²</span>
           </li>

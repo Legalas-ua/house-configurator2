@@ -30,6 +30,8 @@ const SERVICE_W = 2.4 // кластер санвузол+гардеробна (�
 const BATH_LEN = 2.6 // санвузол (згори кластера)
 const HALL_W = 1.8 // прихожа — вертикальна смуга праворуч від кластера
 const KITCHEN_W = 6.0
+const PANTRY_W = 1.6 // комора біля кухні (≈3.5 м²)
+const PANTRY_LEN = 2.2
 
 // Прямокутник за лівим-верхнім кутом; z росте «вниз» (до фасаду)
 function rect(type: RoomType, x0: number, z0: number, width: number, depth: number): RoomZone {
@@ -43,21 +45,23 @@ export function generateLShapePlan(config: HouseConfig): HousePlan {
 
   const hasOffice = config.extras.includes('office')
   // Коридор потрібен, коли в нічному крилі більше однієї кімнати
-  // (кілька спалень АБО спальня + кабінет). Ванна майстра — лише 2+ спальні.
+  // (кілька спалень АБО спальня + кабінет).
   const hasCorridor = b >= 2 || hasOffice
 
   // ---- Майстер-спальня (зверху) ----
   let z: number
   let corridorTop: number
-  if (hasCorridor) {
-    if (hasEnsuite) rooms.push(rect('bathroom', 0, 0, CORRIDOR_W, ENSUITE_LEN)) // ванна ≈5 м²
-    rooms.push(rect('bedroom', CORRIDOR_W, 0, ROOM_W, MASTER_LEN)) // спальня праворуч
-    corridorTop = hasEnsuite ? ENSUITE_LEN : 0
+  if (hasEnsuite) {
+    // 2+ спальні: ванна в куті, майстер праворуч, коридор повз ванну
+    rooms.push(rect('bathroom', 0, 0, CORRIDOR_W, ENSUITE_LEN)) // ванна ≈5 м²
+    rooms.push(rect('bedroom', CORRIDOR_W, 0, ROOM_W, MASTER_LEN))
+    corridorTop = ENSUITE_LEN
     z = MASTER_LEN
   } else {
-    // одна спальня без кабінету: без коридору, на всю ширину крила, більша
+    // майстер на всю ширину крила (більший); коридор — ЛИШЕ нижче нього
+    // (потрібен тільки коли додається кабінет)
     rooms.push(rect('bedroom', 0, 0, NIGHT_W, MASTER_SINGLE_LEN))
-    corridorTop = 0
+    corridorTop = MASTER_SINGLE_LEN
     z = MASTER_SINGLE_LEN
   }
 
@@ -94,9 +98,18 @@ export function generateLShapePlan(config: HouseConfig): HousePlan {
   // Прихожа — праворуч від кластера, вхід спереду
   rooms.push(rect('hall', SERVICE_W, bz, HALL_W, DAY_DEPTH - HCORR_LEN))
 
-  // Кухня-вітальня (праворуч, на всю висоту денного крила)
+  // Кухня-вітальня (праворуч, на всю висоту денного крила).
+  // Комора (за бажанням) — маленька, у передньому лівому куті кухні,
+  // біля прихожої; кухня при цьому обходить її буквою «Г».
   const kitchenX = leftW
-  rooms.push(rect('livingKitchen', kitchenX, dz, KITCHEN_W, DAY_DEPTH))
+  if (config.extras.includes('pantry')) {
+    const pFrontZ = dz + DAY_DEPTH - PANTRY_LEN
+    rooms.push(rect('pantry', kitchenX, pFrontZ, PANTRY_W, PANTRY_LEN))
+    rooms.push(rect('livingKitchen', kitchenX, dz, KITCHEN_W, DAY_DEPTH - PANTRY_LEN)) // верх
+    rooms.push(rect('livingKitchen', kitchenX + PANTRY_W, pFrontZ, KITCHEN_W - PANTRY_W, PANTRY_LEN)) // низ праворуч
+  } else {
+    rooms.push(rect('livingKitchen', kitchenX, dz, KITCHEN_W, DAY_DEPTH))
+  }
 
   // ---- Плита (контур) ----
   const dayW = leftW + KITCHEN_W
