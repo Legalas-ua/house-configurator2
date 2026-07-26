@@ -18,9 +18,11 @@ const CORRIDOR_W = 1.5
 const ROOM_W = 3.8 // ширина кімнат (праворуч від коридору)
 const NIGHT_W = CORRIDOR_W + ROOM_W // 5.3
 
-const MASTER_LEN = 4.4
-const ENSUITE_LEN = 2.2 // ванна майстра у верхньому куті
-const BEDROOM_LEN = 3.6
+const MASTER_LEN = 4.7 // майстер із ванною (≈18 м²)
+const MASTER_SINGLE_LEN = 4.9 // одна спальня без коридору, на всю ширину (≈26 м²)
+const ENSUITE_LEN = 3.4 // ванна майстра у куті (≈5 м²)
+const BEDROOM_LEN = 3.6 // звичайна спальня (≈14 м²)
+const OFFICE_LEN = 2.6 // кабінет (≈10 м²)
 
 const DAY_DEPTH = 7.0
 const HCORR_LEN = 1.4 // горизонтальний коридор угорі денного крила
@@ -39,29 +41,41 @@ export function generateLShapePlan(config: HouseConfig): HousePlan {
   const hasEnsuite = b >= 2
   const rooms: RoomZone[] = []
 
+  const hasOffice = config.extras.includes('office')
+
   // ---- Майстер-спальня (зверху) ----
-  const masterLen = hasEnsuite ? MASTER_LEN : MASTER_LEN + 1.4
-  rooms.push(rect('bedroom', CORRIDOR_W, 0, ROOM_W, masterLen)) // сама спальня праворуч
+  let masterLen: number
   if (hasEnsuite) {
-    rooms.push(rect('bathroom', 0, 0, CORRIDOR_W, ENSUITE_LEN)) // ванна — маленька, у куті
+    masterLen = MASTER_LEN
+    rooms.push(rect('bathroom', 0, 0, CORRIDOR_W, ENSUITE_LEN)) // ванна ≈5 м², у куті
+    rooms.push(rect('bedroom', CORRIDOR_W, 0, ROOM_W, masterLen)) // спальня праворуч
+  } else {
+    // одна спальня: без коридору, на всю ширину крила, більша
+    masterLen = MASTER_SINGLE_LEN
+    rooms.push(rect('bedroom', 0, 0, NIGHT_W, masterLen))
   }
   const corridorTop = hasEnsuite ? ENSUITE_LEN : 0
 
-  // ---- Решта спалень (донизу) ----
+  // ---- Решта спалень + кабінет (донизу) ----
   let z = masterLen
-  const extraRooms = b - 1
-  for (let i = 0; i < extraRooms; i++) {
-    const isOffice = config.extras.includes('office') && i === extraRooms - 1
-    rooms.push(rect(isOffice ? 'office' : 'bedroom', CORRIDOR_W, z, ROOM_W, BEDROOM_LEN))
+  for (let i = 0; i < b - 1; i++) {
+    rooms.push(rect('bedroom', CORRIDOR_W, z, ROOM_W, BEDROOM_LEN))
     z += BEDROOM_LEN
+  }
+  // Кабінет — окрема кімната в кінці (додається, а не замінює спальню)
+  if (hasOffice) {
+    rooms.push(rect('office', CORRIDOR_W, z, ROOM_W, OFFICE_LEN))
+    z += OFFICE_LEN
   }
   const nightLen = z
 
   // ---- Денне крило ----
   const dz = nightLen
 
-  // Вертикальний коридор — ЛИШЕ в нічному крилі (до денного не тягнемо)
-  rooms.push(rect('corridor', 0, corridorTop, CORRIDOR_W, dz - corridorTop))
+  // Вертикальний коридор — лише коли є кілька кімнат (для 1 спальні його немає)
+  if (hasEnsuite) {
+    rooms.push(rect('corridor', 0, corridorTop, CORRIDOR_W, dz - corridorTop))
+  }
 
   // Горизонтальний коридор угорі денного крила:
   // з'єднує коридор спалень (ліворуч), прихожу та кухню-вітальню (праворуч)
