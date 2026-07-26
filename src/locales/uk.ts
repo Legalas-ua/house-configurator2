@@ -55,7 +55,7 @@ export const uk = {
         unavailable: 'Недоступно в цьому плануванні',
         options: {
           office: 'Кабінет',
-          wardrobe: 'Гардеробна',
+          wardrobe: 'Гардероб',
           pantry: 'Комора',
         },
       },
@@ -84,6 +84,7 @@ export const uk = {
       stairs: 'Сходи',
       terrace: 'Тераса',
       storage: 'Шафи',
+      closet: 'Гардероб',
     },
   },
   viewport: {

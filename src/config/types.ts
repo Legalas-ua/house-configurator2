@@ -38,6 +38,7 @@ export type RoomType =
   | 'stairs'
   | 'terrace'
   | 'storage'
+  | 'closet'
 
 // Прямокутник на плані (x/z — центр, метри)
 export interface PlanRect {

@@ -16,4 +16,5 @@ export const ROOM_COLORS: Record<RoomType, string> = {
   stairs: '#847d70',
   terrace: '#d8c39a',
   storage: '#c9a9bd',
+  closet: '#e0aad0',
 }
