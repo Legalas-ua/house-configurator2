@@ -1,19 +1,18 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useFrame, type ThreeEvent } from '@react-three/fiber'
 import { easing } from 'maath'
-import type { Mesh } from 'three'
+import type { Mesh, MeshStandardMaterial } from 'three'
 import { useConfigurator } from '../state/store'
 import { STEPS } from '../config/steps'
 import { ROOM_COLORS } from '../config/plan'
-import type { RoomZone } from '../config/types'
+import type { RoomType, RoomZone } from '../config/types'
 import { generateHousePlan } from '../lib/floorplan'
 import { t } from '../locales'
-import { useEntrance } from './useEntrance'
 
 const GAP = 0.08 // зазор між РІЗНИМИ кімнатами
 const EPS = 0.01
+const EASE = 0.5 // тривалість плавних переходів (більше = повільніше)
 
-// Межі прямокутника зони
 function box(r: RoomZone) {
   return { x0: r.x - r.width / 2, x1: r.x + r.width / 2, z0: r.z - r.depth / 2, z1: r.z + r.depth / 2 }
 }
@@ -21,11 +20,7 @@ const overlap = (a0: number, a1: number, b0: number, b1: number) =>
   Math.min(a1, b1) - Math.max(a0, b0) > EPS
 
 // Чи є сусід тієї ж групи через задану сторону (тоді шва між ними немає)
-function hasNeighbor(
-  rooms: RoomZone[],
-  i: number,
-  side: 'left' | 'right' | 'front' | 'back',
-): boolean {
+function hasNeighbor(rooms: RoomZone[], i: number, side: 'left' | 'right' | 'front' | 'back'): boolean {
   const a = box(rooms[i])
   const g = rooms[i].group
   if (!g) return false
@@ -35,64 +30,92 @@ function hasNeighbor(
     if (side === 'left') return Math.abs(c.x1 - a.x0) < EPS && overlap(a.z0, a.z1, c.z0, c.z1)
     if (side === 'right') return Math.abs(c.x0 - a.x1) < EPS && overlap(a.z0, a.z1, c.z0, c.z1)
     if (side === 'front') return Math.abs(c.z1 - a.z0) < EPS && overlap(a.x0, a.x1, c.x0, c.x1)
-    return Math.abs(c.z0 - a.z1) < EPS && overlap(a.x0, a.x1, c.x0, c.x1) // back
+    return Math.abs(c.z0 - a.z1) < EPS && overlap(a.x0, a.x1, c.x0, c.x1)
   })
 }
 
-// Одна зона кімнати. Плавно «виростає» з нуля при появі (mount),
-// і плавно піднімається при наведенні.
-function ZoneMesh({
-  w,
-  d,
-  cx,
-  cz,
-  color,
-  hovered,
-  onOver,
-  onMove,
-  onOut,
-}: {
+// Опис зони для рендера. key — СТАБІЛЬНИЙ (тип+порядок), тому кімната,
+// яка вже була, не перемонтовується (і не переанімовується) при зміні.
+interface Item {
+  key: string
+  base: string // для підсвітки всієї кімнати (група або тип)
+  type: RoomType
+  color: string
+  area: number
   w: number
   d: number
   cx: number
   cz: number
-  color: string
+  exiting: boolean
+}
+
+// ---- Плита фундаменту: плавно росте/змінює розмір ----
+function SlabMesh({ w, d, cx, cz }: { w: number; d: number; cx: number; cz: number }) {
+  const ref = useRef<Mesh>(null)
+  useFrame((_, dt) => {
+    const m = ref.current
+    if (!m) return
+    easing.damp3(m.scale, [w, 0.1, d], EASE, dt)
+    easing.damp3(m.position, [cx, 0.05, cz], EASE, dt)
+  })
+  return (
+    <mesh ref={ref} scale={[0.001, 0.1, 0.001]} position={[cx, 0.05, cz]} receiveShadow>
+      <boxGeometry args={[1, 1, 1]} />
+      <meshStandardMaterial color="#faf7f0" roughness={0.7} />
+    </mesh>
+  )
+}
+
+// ---- Зона кімнати: плавна поява/зникнення/зміна розміру ----
+function ZoneMesh({
+  item,
+  hovered,
+  onExited,
+  onOver,
+  onMove,
+  onOut,
+}: {
+  item: Item
   hovered: boolean
+  onExited: () => void
   onOver: (e: ThreeEvent<PointerEvent>) => void
   onMove: (e: ThreeEvent<PointerEvent>) => void
   onOut: (e: ThreeEvent<PointerEvent>) => void
 }) {
   const ref = useRef<Mesh>(null)
+  const mat = useRef<MeshStandardMaterial>(null)
   useFrame((_, dt) => {
     const m = ref.current
     if (!m) return
-    easing.damp3(m.scale, [1, 1, 1], 0.22, dt) // поява з нуля
-    easing.damp(m.position, 'y', hovered ? 0.26 : 0.18, 0.15, dt) // підйом при наведенні
+    const tx = item.exiting ? 0.001 : item.w
+    const tz = item.exiting ? 0.001 : item.d
+    easing.damp3(m.scale, [tx, 0.14, tz], EASE, dt)
+    easing.damp3(m.position, [item.cx, hovered ? 0.26 : 0.18, item.cz], EASE, dt)
+    if (mat.current) easing.damp(mat.current, 'emissiveIntensity', hovered ? 0.28 : 0, 0.2, dt)
+    if (item.exiting && m.scale.x < 0.03) onExited()
   })
   return (
     <mesh
       ref={ref}
-      scale={0}
-      position={[cx, 0.18, cz]}
+      scale={[0.001, 0.14, 0.001]}
+      position={[item.cx, 0.18, item.cz]}
       castShadow
       onPointerOver={onOver}
       onPointerMove={onMove}
       onPointerOut={onOut}
     >
-      <boxGeometry args={[w, 0.14, d]} />
+      <boxGeometry args={[1, 1, 1]} />
       <meshStandardMaterial
-        color={color}
+        ref={mat}
+        color={item.color}
         roughness={0.55}
         emissive="#ffffff"
-        emissiveIntensity={hovered ? 0.28 : 0}
+        emissiveIntensity={0}
       />
     </mesh>
   )
 }
 
-// План будинку на землі. На кроці «Кімнати» — кольорові зони.
-// Частини однієї кімнати (group) стикуються без шва; при наведенні
-// підсвічується вся кімната, а DOM-підказка показує назву й площу.
 export default function PlanView() {
   const config = useConfigurator((s) => s.config)
   const currentStep = useConfigurator((s) => s.currentStep)
@@ -100,73 +123,97 @@ export default function PlanView() {
   const setHovered = useConfigurator((s) => s.setHovered)
 
   const [hoverKey, setHoverKey] = useState<string | null>(null)
+  const [items, setItems] = useState<Item[]>([])
   const plan = useMemo(() => generateHousePlan(config), [config])
-  const entranceRef = useEntrance()
 
-  if (plan.floors.length === 0) return null
-
+  const floor = plan.floors[Math.min(viewFloor, Math.max(plan.floors.length, 1)) - 1]
   const showZones = STEPS[currentStep].id === 'rooms'
-  const floor = plan.floors[Math.min(viewFloor, plan.floors.length) - 1]
 
-  // Площа приміщення (сума частин однієї групи)
-  const areaOf = (room: RoomZone) => {
-    if (!room.group) return room.width * room.depth
-    return floor.rooms
-      .filter((r) => r.group === room.group)
-      .reduce((s, r) => s + r.width * r.depth, 0)
-  }
+  // Цільовий набір зон зі стабільними ключами (тип+порядок)
+  const target = useMemo<Item[]>(() => {
+    if (!floor || !showZones) return []
+    const counts = new Map<string, number>()
+    return floor.rooms.map((room, i) => {
+      const l = hasNeighbor(floor.rooms, i, 'left') ? 0 : GAP / 2
+      const r = hasNeighbor(floor.rooms, i, 'right') ? 0 : GAP / 2
+      const f = hasNeighbor(floor.rooms, i, 'front') ? 0 : GAP / 2
+      const bk = hasNeighbor(floor.rooms, i, 'back') ? 0 : GAP / 2
+      const base = room.group ?? room.type
+      const n = counts.get(base) ?? 0
+      counts.set(base, n + 1)
+      const area = room.group
+        ? floor.rooms.filter((r2) => r2.group === room.group).reduce((s, r2) => s + r2.width * r2.depth, 0)
+        : room.width * room.depth
+      return {
+        key: `${base}#${n}`,
+        base,
+        type: room.type,
+        color: ROOM_COLORS[room.type],
+        area: Math.round(area),
+        w: Math.max(room.width - l - r, 0.15),
+        d: Math.max(room.depth - f - bk, 0.15),
+        cx: room.x + (l - r) / 2,
+        cz: room.z + (f - bk) / 2,
+        exiting: false,
+      }
+    })
+  }, [floor, showZones])
+
+  const signature = useMemo(
+    () => target.map((i) => `${i.key}:${i.w.toFixed(2)},${i.d.toFixed(2)},${i.cx.toFixed(2)},${i.cz.toFixed(2)},${i.color}`).join('|'),
+    [target],
+  )
+
+  // Звірка: нові зони з'являються, зайві позначаються exiting (плавно зникають)
+  useEffect(() => {
+    setItems((prev) => {
+      const tmap = new Map(target.map((t2) => [t2.key, t2]))
+      const result = target.map((t2) => ({ ...t2, exiting: false }))
+      for (const p of prev) if (!tmap.has(p.key)) result.push({ ...p, exiting: true })
+      return result
+    })
+  }, [signature, target])
+
+  const removeKey = (key: string) => setItems((prev) => prev.filter((i) => i.key !== key))
+
+  if (!floor) return null
 
   return (
-    <group ref={entranceRef} scale={0} key={config.shape}>
-      {/* Плита поверху */}
+    <group>
+      {/* Фундамент (плита) */}
       {floor.slab.map((r, i) => (
-        <mesh key={`slab-${i}`} position={[r.x, 0.09, r.z]} receiveShadow>
-          <boxGeometry args={[r.width, 0.16, r.depth]} />
-          <meshStandardMaterial color="#faf7f0" roughness={0.6} />
-        </mesh>
+        <SlabMesh key={`slab-${i}`} w={r.width} d={r.depth} cx={r.x} cz={r.z} />
       ))}
 
       {/* Зони кімнат */}
-      {showZones &&
-        floor.rooms.map((room, i) => {
-          const key = room.group ?? `__${i}`
-          const isHover = hoverKey === key
-          // Зазор лише там, де межа з ІНШОЮ кімнатою (не всередині групи)
-          const l = hasNeighbor(floor.rooms, i, 'left') ? 0 : GAP / 2
-          const r = hasNeighbor(floor.rooms, i, 'right') ? 0 : GAP / 2
-          const f = hasNeighbor(floor.rooms, i, 'front') ? 0 : GAP / 2
-          const bk = hasNeighbor(floor.rooms, i, 'back') ? 0 : GAP / 2
-          const showTip = (e: ThreeEvent<PointerEvent>) => {
-            e.stopPropagation()
-            setHovered({
-              name: t.plan.roomNames[room.type],
-              area: Math.round(areaOf(room)),
-              mx: e.nativeEvent.clientX,
-              my: e.nativeEvent.clientY,
-            })
-          }
-          return (
-            <ZoneMesh
-              key={`room-${i}`}
-              w={Math.max(room.width - l - r, 0.15)}
-              d={Math.max(room.depth - f - bk, 0.15)}
-              cx={room.x + (l - r) / 2}
-              cz={room.z + (f - bk) / 2}
-              color={ROOM_COLORS[room.type]}
-              hovered={isHover}
-              onOver={(e) => {
-                setHoverKey(key)
-                showTip(e)
-              }}
-              onMove={showTip}
-              onOut={(e) => {
-                e.stopPropagation()
-                setHoverKey((cur) => (cur === key ? null : cur))
-                setHovered(null)
-              }}
-            />
-          )
-        })}
+      {items.map((item) => {
+        const showTip = (e: ThreeEvent<PointerEvent>) => {
+          e.stopPropagation()
+          setHovered({ name: t.plan.roomNames[item.type], area: item.area, mx: e.nativeEvent.clientX, my: e.nativeEvent.clientY })
+        }
+        return (
+          <ZoneMesh
+            key={item.key}
+            item={item}
+            hovered={hoverKey === item.base && !item.exiting}
+            onExited={() => removeKey(item.key)}
+            onOver={(e) => {
+              if (item.exiting) return
+              setHoverKey(item.base)
+              showTip(e)
+            }}
+            onMove={(e) => {
+              if (item.exiting) return
+              showTip(e)
+            }}
+            onOut={(e) => {
+              e.stopPropagation()
+              setHoverKey((cur) => (cur === item.base ? null : cur))
+              setHovered(null)
+            }}
+          />
+        )
+      })}
     </group>
   )
 }
