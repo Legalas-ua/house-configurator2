@@ -443,10 +443,16 @@ export const LAYOUTS: LayoutTemplate[] = [
 // ---- Запити (каталог для rect/square; параметрика для l-shape) ----
 
 // Г-подібне планування будується параметрично (lib/lshape.ts), а не з каталогу.
-// 2 поверхи для нього поки не реалізовані.
+// Спальні 1-го поверху — 1..5 незалежно від кількості поверхів.
 const L_BEDROOMS: Record<Floors, number[]> = {
   1: [1, 2, 3, 4, 5],
-  2: [],
+  2: [1, 2, 3, 4, 5],
+}
+
+// Додаткові кімнати 2-го поверху (Г-подібний): комора недоступна; гардероб і
+// кабінет — лише коли є майстер (спалень 2-го поверху 3+).
+export function supportedExtrasFloor2(bedrooms2: number): ExtraRoom[] {
+  return bedrooms2 >= 3 ? ['wardrobe', 'office'] : []
 }
 
 export function availableBedrooms(shape: HouseShape, floors: Floors): number[] {
@@ -456,9 +462,8 @@ export function availableBedrooms(shape: HouseShape, floors: Floors): number[] {
     .sort((a, b) => a - b)
 }
 
-export function floorsAvailable(shape: HouseShape): Floors[] {
-  if (shape === 'l-shape') return [1] // 2 поверхи для Г-подібної — у наступній ітерації
-  return [1, 2]
+export function floorsAvailable(_shape: HouseShape): Floors[] {
+  return [1, 2] // усі форми підтримують 1 і 2 поверхи
 }
 
 export function findTemplate(

@@ -16,6 +16,10 @@ export interface HouseConfig {
   bathrooms: number
   kitchenType: KitchenType | null
   extras: ExtraRoom[]
+  // 2-й поверх (Г-подібний, коли floors === 2): свої кімнати, незалежні від 1-го,
+  // але не більше спалень, ніж на 1-му. Комора на 2-му недоступна.
+  bedrooms2: number
+  extras2: ExtraRoom[]
   // майбутні кроки додають поля сюди
 }
 

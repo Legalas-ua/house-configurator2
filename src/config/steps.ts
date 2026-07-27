@@ -56,4 +56,6 @@ export const DEFAULT_CONFIG: HouseConfig = {
   bathrooms: 1,
   kitchenType: 'open', // вибір кухні прибрано — завжди кухня-вітальня
   extras: [],
+  bedrooms2: 1,
+  extras2: [],
 }

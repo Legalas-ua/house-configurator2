@@ -1,7 +1,7 @@
 import { useConfigurator } from '../../state/store'
 import type { ExtraRoom } from '../../config/types'
 import { ALL_EXTRAS } from '../../config/rooms'
-import { availableBedrooms, supportedExtras } from '../../config/layouts'
+import { availableBedrooms, supportedExtras, supportedExtrasFloor2 } from '../../config/layouts'
 import { t } from '../../locales'
 
 // Композитний крок «Кімнати». Межі лічильників і доступність опцій
@@ -16,14 +16,29 @@ export default function RoomsField() {
 
   if (!config.shape) return null
 
+  // Г-подібний 2-й поверх має власні кімнати (bedrooms2/extras2); решта форм і
+  // 1-й поверх працюють зі спільним конфігом (bedrooms/extras).
+  const editingF2 = config.shape === 'l-shape' && config.floors === 2 && viewFloor === 2
+
   const bedroomOptions = availableBedrooms(config.shape, config.floors)
-  const allowedExtras = supportedExtras(config.shape, config.floors, config.bedrooms)
+  const bedroomsValue = editingF2 ? config.bedrooms2 : config.bedrooms
+  const bedroomsKey = editingF2 ? 'bedrooms2' : 'bedrooms'
+  const bedroomLimits = editingF2
+    ? { min: 1, max: config.bedrooms } // 2-й поверх — не більше спалень, ніж 1-й
+    : { min: Math.min(...bedroomOptions), max: Math.max(...bedroomOptions) }
+
+  const bathroomsValue = editingF2 ? 1 : config.bathrooms
+  const currentExtras = editingF2 ? config.extras2 : config.extras
+  const extrasKey = editingF2 ? 'extras2' : 'extras'
+  const allowedExtras = editingF2
+    ? supportedExtrasFloor2(config.bedrooms2)
+    : supportedExtras(config.shape, config.floors, config.bedrooms)
 
   const toggleExtra = (extra: ExtraRoom) => {
-    const next = config.extras.includes(extra)
-      ? config.extras.filter((e) => e !== extra)
-      : [...config.extras, extra]
-    setValue('extras', next)
+    const next = currentExtras.includes(extra)
+      ? currentExtras.filter((e) => e !== extra)
+      : [...currentExtras, extra]
+    setValue(extrasKey, next)
   }
 
   return (
@@ -45,15 +60,15 @@ export default function RoomsField() {
 
       <Counter
         label={texts.bedrooms}
-        value={config.bedrooms}
-        limits={{ min: Math.min(...bedroomOptions), max: Math.max(...bedroomOptions) }}
-        onChange={(v) => setValue('bedrooms', v)}
+        value={bedroomsValue}
+        limits={bedroomLimits}
+        onChange={(v) => setValue(bedroomsKey, v)}
       />
       {/* Санвузли закладені в планування — лічильник показує їх кількість */}
       <Counter
         label={texts.bathrooms}
-        value={config.bathrooms}
-        limits={{ min: config.bathrooms, max: config.bathrooms }}
+        value={bathroomsValue}
+        limits={{ min: bathroomsValue, max: bathroomsValue }}
         onChange={() => {}}
       />
 
@@ -66,7 +81,7 @@ export default function RoomsField() {
               <button
                 key={extra}
                 type="button"
-                className={`chip${config.extras.includes(extra) ? ' chip--on' : ''}`}
+                className={`chip${currentExtras.includes(extra) ? ' chip--on' : ''}`}
                 onClick={() => toggleExtra(extra)}
                 disabled={!supported}
                 title={supported ? undefined : texts.extras.unavailable}

@@ -6,6 +6,7 @@ import {
   nearestBedrooms,
   planBathrooms,
   supportedExtras,
+  supportedExtrasFloor2,
 } from '../config/layouts'
 
 // ============================================================
@@ -38,6 +39,12 @@ function sanitize(config: HouseConfig): HouseConfig {
     next.bathrooms = planBathrooms(next.shape, next.floors, next.bedrooms)
     const allowed = supportedExtras(next.shape, next.floors, next.bedrooms)
     next.extras = next.extras.filter((e) => allowed.includes(e))
+
+    // 2-й поверх (Г-подібний): спалень не більше, ніж на 1-му; доступні
+    // додаткові кімнати залежать від того, чи є майстер (3+ спальні).
+    next.bedrooms2 = Math.min(Math.max(1, next.bedrooms2), next.bedrooms)
+    const allowed2 = supportedExtrasFloor2(next.bedrooms2)
+    next.extras2 = next.extras2.filter((e) => allowed2.includes(e))
   }
   return next
 }
@@ -48,12 +55,14 @@ interface ConfiguratorState {
   currentStep: number // індекс у STEPS
   maxStepReached: number // до якого кроку дійшов користувач (для 3D і навігації)
   topView: boolean // камера летить у вид зверху; обертання мишею вимикає
-  viewFloor: number // який поверх показувати на плані (1 або 2)
+  viewFloor: number // який поверх РЕДАГУЄМО/активний (1 або 2)
+  hideFloor2: boolean // сховати 2-й поверх у 3D (галочка на кроці «Кімнати»)
   hovered: { name: string; area: number; mx: number; my: number } | null // підказка кімнати
   start: () => void
   setValue: (key: ConfigKey, value: string | number | string[] | null) => void
   setTopView: (on: boolean) => void
   setViewFloor: (floor: number) => void
+  setHideFloor2: (on: boolean) => void
   setHovered: (h: ConfiguratorState['hovered']) => void
   nextStep: () => void
   prevStep: () => void
@@ -67,6 +76,7 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
   maxStepReached: 0,
   topView: false,
   viewFloor: 1,
+  hideFloor2: false,
   hovered: null,
 
   start: () => set({ started: true }),
@@ -82,6 +92,7 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
 
   setTopView: (on) => set({ topView: on }),
   setViewFloor: (floor) => set({ viewFloor: floor }),
+  setHideFloor2: (on) => set({ hideFloor2: on }),
 
   nextStep: () =>
     set((s) => {
