@@ -43,8 +43,12 @@ export default function RoomsField() {
     if (currentExtras.includes(extra)) return true
     if (extra === 'office') return f2lim!.canOffice
     if (extra === 'wardrobe') return f2lim!.canWardrobe
+    if (extra === 'terrace') return f2lim!.canTerrace
     return false // комора на 2-му поверсі недоступна
   }
+
+  // На 2-му поверсі замість комори — тераса (на даху 1-го, за майстром).
+  const extrasList: ExtraRoom[] = editingF2 ? ['office', 'wardrobe', 'terrace'] : ALL_EXTRAS
 
   const toggleExtra = (extra: ExtraRoom) => {
     const next = currentExtras.includes(extra)
@@ -69,14 +73,16 @@ export default function RoomsField() {
               </button>
             ))}
           </div>
-          <label className="floor-hide">
-            <input
-              type="checkbox"
-              checked={hideFloor2}
-              onChange={(e) => setHideFloor2(e.target.checked)}
-            />
-            {t.plan.hideFloor2}
-          </label>
+          {viewFloor === 1 && (
+            <label className="floor-hide">
+              <input
+                type="checkbox"
+                checked={hideFloor2}
+                onChange={(e) => setHideFloor2(e.target.checked)}
+              />
+              {t.plan.hideFloor2}
+            </label>
+          )}
         </>
       )}
 
@@ -97,7 +103,7 @@ export default function RoomsField() {
       <div className="rooms__group">
         <span className="rooms__group-title">{texts.extras.title}</span>
         <div className="chips">
-          {ALL_EXTRAS.map((extra) => {
+          {extrasList.map((extra) => {
             const supported = extraSupported(extra)
             return (
               <button

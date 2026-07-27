@@ -3,7 +3,7 @@
 export type ConstructionType = 'frame' | 'modular' | 'brick'
 export type HouseShape = 'rect' | 'square' | 'l-shape'
 export type KitchenType = 'separate' | 'open'
-export type ExtraRoom = 'office' | 'wardrobe' | 'pantry'
+export type ExtraRoom = 'office' | 'wardrobe' | 'pantry' | 'terrace'
 export type Floors = 1 | 2
 
 // null = «ще не обрано» або «скинуто, бо змінився попередній крок»

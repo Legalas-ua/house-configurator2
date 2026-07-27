@@ -110,6 +110,7 @@ export function floor2Limits(config: HouseConfig): {
   maxBedrooms: number
   canOffice: boolean
   canWardrobe: boolean
+  canTerrace: boolean
 } {
   const b1 = Math.max(1, config.bedrooms)
   const cap = nightWingLen(b1, config.extras.includes('office'), config.extras.includes('wardrobe'))
@@ -122,7 +123,9 @@ export function floor2Limits(config: HouseConfig): {
   // Чи вміститься кабінет / гардероб при поточній к-сті спалень 2-го
   const canOffice = nightWingLen(b2, true, w2) <= cap + 0.01
   const canWardrobe = nightWingLen(b2, o2, true) <= cap + 0.01
-  return { maxBedrooms, canOffice, canWardrobe }
+  // Тераса доступна, коли основа 2-го МЕНША за 1-й (є вільне місце на даху)
+  const canTerrace = cap - nightWingLen(b2, o2, w2) > 0.01
+  return { maxBedrooms, canOffice, canWardrobe, canTerrace }
 }
 
 export function generateLShapePlan(config: HouseConfig): HousePlan {
@@ -208,10 +211,21 @@ export function generateLShapePlan(config: HouseConfig): HousePlan {
     // фасад. Генерація 2-го — компактна й незмінна; рухаємо лише позицію.
     const zOffset = nightLen - (f2.length - DAY_DEPTH)
     const shiftF2 = <T extends { x: number; z: number }>(o: T): T => ({ ...o, x: o.x - cx, z: o.z + zOffset - cz })
+    const f2rooms = f2.rooms.map(shiftF2)
+
+    // Тераса на даху 1-го поверху — за майстром, у «хвіст» до заднього краю 1-го.
+    // Розмір = різниця основ (zOffset). Доступна лише коли ця різниця > 0.
+    const hasTerrace = config.extras2.includes('terrace') && zOffset > 0.01
+    if (hasTerrace) {
+      f2rooms.push(shift(rect('f2-terrace', 'terrace', 0, 0, NIGHT_W, zOffset)))
+    }
+    // Плита 2-го: компактна; з терасою — на всю глибину лівого стовпця 1-го.
+    const backZ = hasTerrace ? 0 : zOffset
+    const frontZ = nightLen + DAY_DEPTH
     const f2slab: PlanRect[] = [
-      { x: NIGHT_W / 2, z: f2.length / 2, width: NIGHT_W, depth: f2.length },
+      shift({ x: NIGHT_W / 2, z: (backZ + frontZ) / 2, width: NIGHT_W, depth: frontZ - backZ }),
     ]
-    floors.push({ floor: 2, rooms: f2.rooms.map(shiftF2), slab: f2slab.map(shiftF2) })
+    floors.push({ floor: 2, rooms: f2rooms, slab: f2slab })
   }
 
   // Сумарна площа приміщень (сходи не рахуємо як житлову площу)

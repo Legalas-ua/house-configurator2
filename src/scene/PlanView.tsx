@@ -34,10 +34,6 @@ const LAZY_SHRINK_EASE = 0.28 // швидке стягування
 // ---- 3D-стос поверхів ----
 const FLOOR_H = 3.0 // висота поверху: на скільки 2-й поверх підіймається над 1-м
 const INACTIVE_OPACITY = 0.2 // прозорість неактивного (не редагованого) поверху
-const OPACITY_EASE = 0.3 // плавна зміна прозорості при перемиканні поверху
-// Неактивний поверх не бере участі у raycast — щоб ховер/клік проходили крізь
-// нього до активного поверху під ним.
-const noRaycast = () => null
 
 function box(r: RoomZone) {
   return { x0: r.x - r.width / 2, x1: r.x + r.width / 2, z0: r.z - r.depth / 2, z1: r.z + r.depth / 2 }
@@ -96,7 +92,6 @@ function SlabMesh({
   active: boolean
 }) {
   const ref = useRef<Mesh>(null)
-  const mat = useRef<MeshStandardMaterial>(null)
   const wait = useRef(0)
   // початкову позицію фіксуємо один раз (стабільний проп) — далі нею володіє
   // лише useFrame, тому плита ніколи не «перескакує».
@@ -107,7 +102,6 @@ function SlabMesh({
   useFrame((_, dt) => {
     const m = ref.current
     if (!m) return
-    if (mat.current) easing.damp(mat.current, 'opacity', active ? 1 : INACTIVE_OPACITY, OPACITY_EASE, dt)
     if (wait.current > 0) {
       wait.current -= dt
       return // тримаємо старий розмір/позицію, поки кімнати не заберуться
@@ -116,15 +110,16 @@ function SlabMesh({
     easing.damp3(m.position, [cx, 0.05, cz], SLAB_EASE, dt)
   })
   return (
-    <mesh
-      ref={ref}
-      scale={[0.001, 0.1, 0.001]}
-      position={[init.cx, 0.05, init.cz]}
-      receiveShadow
-      raycast={active ? undefined : noRaycast}
-    >
+    <mesh ref={ref} scale={[0.001, 0.1, 0.001]} position={[init.cx, 0.05, init.cz]}>
       <boxGeometry args={[1, 1, 1]} />
-      <meshStandardMaterial ref={mat} color="#faf7f0" roughness={0.7} transparent opacity={1} />
+      {/* Активний поверх непрозорий; неактивний — прозорий привид без depthWrite. Без тіней. */}
+      <meshStandardMaterial
+        color="#faf7f0"
+        roughness={0.7}
+        transparent={!active}
+        opacity={active ? 1 : INACTIVE_OPACITY}
+        depthWrite={active}
+      />
     </mesh>
   )
 }
@@ -189,11 +184,8 @@ function ZoneMesh({
     // зберігає ліниву швидкість (щоб коридор не наздоганяв майстер).
     easing.damp(m.position, 'x', item.cx, ROOM_EASE, dt)
     easing.damp(m.position, 'y', hovered ? 0.26 : 0.18, ROOM_EASE, dt)
-    easing.damp(m.position, 'z', posZ, ease, dt)
-    if (mat.current) {
-      easing.damp(mat.current, 'emissiveIntensity', hovered ? 0.28 : 0, 0.2, dt)
-      easing.damp(mat.current, 'opacity', active ? 1 : INACTIVE_OPACITY, OPACITY_EASE, dt)
-    }
+    easing.damp(m.position, 'z', posZ, ROOM_EASE, dt)
+    if (mat.current) easing.damp(mat.current, 'emissiveIntensity', hovered ? 0.28 : 0, 0.2, dt)
     if (item.exiting && m.scale.x < 0.03) onExited()
   })
   return (
@@ -201,21 +193,23 @@ function ZoneMesh({
       ref={ref}
       scale={[0.001, 0.14, 0.001]}
       position={[init.cx, 0.18, init.cz]}
-      castShadow
-      raycast={active ? undefined : noRaycast}
-      onPointerOver={onOver}
-      onPointerMove={onMove}
-      onPointerOut={onOut}
+      onPointerOver={active ? onOver : undefined}
+      onPointerMove={active ? onMove : undefined}
+      onPointerOut={active ? onOut : undefined}
     >
       <boxGeometry args={[1, 1, 1]} />
+      {/* Активний поверх — НЕПРОЗОРИЙ (без мерехтіння при обертанні). Неактивний
+          — прозорий «привид» без depthWrite (не перефарбовує сусідів). Без тіней.
+          Хендлери лише в активного → неактивний не бере ховер/клік і не блокує. */}
       <meshStandardMaterial
         ref={mat}
         color={item.color}
         roughness={0.55}
         emissive="#ffffff"
         emissiveIntensity={0}
-        transparent
-        opacity={1}
+        transparent={!active}
+        opacity={active ? 1 : INACTIVE_OPACITY}
+        depthWrite={active}
       />
     </mesh>
   )
@@ -355,8 +349,8 @@ export default function PlanView() {
     <group>
       {plan.floors.map((fl, idx) => {
         const floorNum = idx + 1
-        // 2-й поверх можна сховати галочкою на кроці «Кімнати»
-        if (floorNum === 2 && hideFloor2) return null
+        // 2-й поверх можна сховати галочкою — але не тоді, коли його ж редагуємо
+        if (floorNum === 2 && hideFloor2 && viewFloor !== 2) return null
         const active = plan.floors.length === 1 || viewFloor === floorNum
         return (
           <PlanFloor

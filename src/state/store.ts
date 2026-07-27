@@ -47,7 +47,13 @@ function sanitize(config: HouseConfig): HouseConfig {
     next.bedrooms2 = Math.min(Math.max(1, next.bedrooms2), lim.maxBedrooms)
     const lim2 = floor2Limits(next)
     next.extras2 = next.extras2.filter((e) =>
-      e === 'office' ? lim2.canOffice : e === 'wardrobe' ? lim2.canWardrobe : false,
+      e === 'office'
+        ? lim2.canOffice
+        : e === 'wardrobe'
+          ? lim2.canWardrobe
+          : e === 'terrace'
+            ? lim2.canTerrace
+            : false,
     )
   }
   return next

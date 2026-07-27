@@ -57,6 +57,7 @@ export const uk = {
           office: 'Кабінет',
           wardrobe: 'Гардероб',
           pantry: 'Комора',
+          terrace: 'Тераса',
         },
       },
     },
