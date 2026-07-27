@@ -244,6 +244,25 @@ body {
   color: #fff;
 }
 
+.floor-hide {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  cursor: pointer;
+  user-select: none;
+}
+
+.floor-hide input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
 /* ===== Підказка кімнати (наведення на 3D) ===== */
 .room-tip {
   position: fixed;

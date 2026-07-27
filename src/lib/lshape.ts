@@ -29,7 +29,7 @@ const CLOSET_STRIP = 1.3 // гардероб смугою (варіант 1 сп
 const BEDROOM_LEN = 3.6 // звичайна спальня (≈14 м²)
 const OFFICE_LEN = 2.6 // кабінет (≈10 м²)
 const STAIR_W = 3.0 // сходи: ширина (2-3 м), праворуч від коридору
-const STAIR_LEN = 3.4 // сходи: довжина (як кабінет/спальня)
+const STAIR_LEN = 2.5 // сходи: довжина (сторона 2.5 м)
 
 const DAY_DEPTH = 7.0
 const HCORR_LEN = 1.4 // горизонтальний коридор угорі денного крила
@@ -188,8 +188,8 @@ export function generateLShapePlan(config: HouseConfig): HousePlan {
 function buildFloor2(config: HouseConfig): { rooms: RoomZone[]; length: number } {
   const b2 = Math.min(Math.max(1, config.bedrooms2), Math.max(1, config.bedrooms))
   const isMaster = b2 >= 3
-  const hasCloset2 = isMaster && config.extras2.includes('wardrobe')
-  const hasOffice2 = isMaster && config.extras2.includes('office')
+  const hasCloset2 = isMaster && config.extras2.includes('wardrobe') // гардероб — у майстрі
+  const hasOffice2 = config.extras2.includes('office') // кабінет — окрема кімната, завжди
   const rooms: RoomZone[] = []
   let z: number
   let corridorTop: number

@@ -70,6 +70,7 @@ export const uk = {
     legendTitle: 'Приміщення',
     total: 'Загальна площа',
     floorTab: (n: number) => `${n}-й поверх`,
+    hideFloor2: 'Сховати 2-й поверх',
     roomNames: {
       livingKitchen: 'Кухня-вітальня',
       living: 'Вітальня',

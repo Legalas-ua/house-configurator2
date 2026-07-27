@@ -5,7 +5,7 @@ import type { Mesh, MeshStandardMaterial } from 'three'
 import { useConfigurator } from '../state/store'
 import { STEPS } from '../config/steps'
 import { ROOM_COLORS } from '../config/plan'
-import type { RoomType, RoomZone } from '../config/types'
+import type { FloorPlan, RoomType, RoomZone } from '../config/types'
 import { generateHousePlan } from '../lib/floorplan'
 import { t } from '../locales'
 
@@ -30,6 +30,14 @@ const SLAB_SHRINK_DELAY = 0.45 // фундамент стискається ли
 // відставати від сусіда, який рухається (майстер), і не колізити з ним.
 const LAZY_GROW_EASE = 0.75 // повільне розтягування
 const LAZY_SHRINK_EASE = 0.28 // швидке стягування
+
+// ---- 3D-стос поверхів ----
+const FLOOR_H = 3.0 // висота поверху: на скільки 2-й поверх підіймається над 1-м
+const INACTIVE_OPACITY = 0.2 // прозорість неактивного (не редагованого) поверху
+const OPACITY_EASE = 0.3 // плавна зміна прозорості при перемиканні поверху
+// Неактивний поверх не бере участі у raycast — щоб ховер/клік проходили крізь
+// нього до активного поверху під ним.
+const noRaycast = () => null
 
 function box(r: RoomZone) {
   return { x0: r.x - r.width / 2, x1: r.x + r.width / 2, z0: r.z - r.depth / 2, z1: r.z + r.depth / 2 }
@@ -72,8 +80,23 @@ interface Item {
 // ---- Плита фундаменту: плавно росте/змінює розмір ----
 // delay > 0 (при видаленні) — плита витримує паузу, поки кімнати зникнуть/
 // зменшаться, і лише потім стискається. При додаванні delay=0 → росте одразу.
-function SlabMesh({ w, d, cx, cz, delay }: { w: number; d: number; cx: number; cz: number; delay: number }) {
+function SlabMesh({
+  w,
+  d,
+  cx,
+  cz,
+  delay,
+  active,
+}: {
+  w: number
+  d: number
+  cx: number
+  cz: number
+  delay: number
+  active: boolean
+}) {
   const ref = useRef<Mesh>(null)
+  const mat = useRef<MeshStandardMaterial>(null)
   const wait = useRef(0)
   // початкову позицію фіксуємо один раз (стабільний проп) — далі нею володіє
   // лише useFrame, тому плита ніколи не «перескакує».
@@ -84,6 +107,7 @@ function SlabMesh({ w, d, cx, cz, delay }: { w: number; d: number; cx: number; c
   useFrame((_, dt) => {
     const m = ref.current
     if (!m) return
+    if (mat.current) easing.damp(mat.current, 'opacity', active ? 1 : INACTIVE_OPACITY, OPACITY_EASE, dt)
     if (wait.current > 0) {
       wait.current -= dt
       return // тримаємо старий розмір/позицію, поки кімнати не заберуться
@@ -92,9 +116,15 @@ function SlabMesh({ w, d, cx, cz, delay }: { w: number; d: number; cx: number; c
     easing.damp3(m.position, [cx, 0.05, cz], SLAB_EASE, dt)
   })
   return (
-    <mesh ref={ref} scale={[0.001, 0.1, 0.001]} position={[init.cx, 0.05, init.cz]} receiveShadow>
+    <mesh
+      ref={ref}
+      scale={[0.001, 0.1, 0.001]}
+      position={[init.cx, 0.05, init.cz]}
+      receiveShadow
+      raycast={active ? undefined : noRaycast}
+    >
       <boxGeometry args={[1, 1, 1]} />
-      <meshStandardMaterial color="#faf7f0" roughness={0.7} />
+      <meshStandardMaterial ref={mat} color="#faf7f0" roughness={0.7} transparent opacity={1} />
     </mesh>
   )
 }
@@ -103,6 +133,7 @@ function SlabMesh({ w, d, cx, cz, delay }: { w: number; d: number; cx: number; c
 function ZoneMesh({
   item,
   hovered,
+  active,
   onExited,
   onOver,
   onMove,
@@ -110,6 +141,7 @@ function ZoneMesh({
 }: {
   item: Item
   hovered: boolean
+  active: boolean
   onExited: () => void
   onOver: (e: ThreeEvent<PointerEvent>) => void
   onMove: (e: ThreeEvent<PointerEvent>) => void
@@ -153,7 +185,10 @@ function ZoneMesh({
           ? item.cz + item.d / 2 - m.scale.z / 2
           : item.cz
     easing.damp3(m.position, [item.cx, hovered ? 0.26 : 0.18, posZ], ease, dt)
-    if (mat.current) easing.damp(mat.current, 'emissiveIntensity', hovered ? 0.28 : 0, 0.2, dt)
+    if (mat.current) {
+      easing.damp(mat.current, 'emissiveIntensity', hovered ? 0.28 : 0, 0.2, dt)
+      easing.damp(mat.current, 'opacity', active ? 1 : INACTIVE_OPACITY, OPACITY_EASE, dt)
+    }
     if (item.exiting && m.scale.x < 0.03) onExited()
   })
   return (
@@ -162,6 +197,7 @@ function ZoneMesh({
       scale={[0.001, 0.14, 0.001]}
       position={[init.cx, 0.18, init.cz]}
       castShadow
+      raycast={active ? undefined : noRaycast}
       onPointerOver={onOver}
       onPointerMove={onMove}
       onPointerOut={onOut}
@@ -173,36 +209,43 @@ function ZoneMesh({
         roughness={0.55}
         emissive="#ffffff"
         emissiveIntensity={0}
+        transparent
+        opacity={1}
       />
     </mesh>
   )
 }
 
-export default function PlanView() {
-  const config = useConfigurator((s) => s.config)
-  const currentStep = useConfigurator((s) => s.currentStep)
-  const viewFloor = useConfigurator((s) => s.viewFloor)
+// ---- Один поверх: плита + анімовані зони кімнат ----
+// active=true → редагований поверх (непрозорий, клікабельний); false → «привид»
+// над/під ним (прозорий, не перехоплює ховер/клік).
+function PlanFloor({
+  floor,
+  showZones,
+  yOffset,
+  active,
+}: {
+  floor: FloorPlan
+  showZones: boolean
+  yOffset: number
+  active: boolean
+}) {
   const setHovered = useConfigurator((s) => s.setHovered)
-
   const [hoverKey, setHoverKey] = useState<string | null>(null)
   const [items, setItems] = useState<Item[]>([])
-  const plan = useMemo(() => generateHousePlan(config), [config])
-
-  const floor = plan.floors[Math.min(viewFloor, Math.max(plan.floors.length, 1)) - 1]
-  const showZones = STEPS[currentStep].id === 'rooms'
 
   // Напрям зміни фундаменту: якщо площа плити меншає — це видалення, тож плита
   // чекає (SLAB_SHRINK_DELAY), поки кімнати заберуться. Якщо росте — delay=0.
-  const slabArea = floor ? floor.slab.reduce((s, r) => s + r.width * r.depth, 0) : 0
+  const slabArea = floor.slab.reduce((s, r) => s + r.width * r.depth, 0)
   const prevSlabArea = useRef(slabArea)
   const slabDelay = slabArea < prevSlabArea.current - EPS ? SLAB_SHRINK_DELAY : 0
   useEffect(() => {
     prevSlabArea.current = slabArea
   }, [slabArea])
 
-  // Цільовий набір зон зі стабільними ключами (тип+порядок)
+  // Цільовий набір зон зі стабільними ключами (id ролі кімнати)
   const target = useMemo<Item[]>(() => {
-    if (!floor || !showZones) return []
+    if (!showZones) return []
     const counts = new Map<string, number>() // лише для запасного id
     return floor.rooms.map((room, i) => {
       const l = hasNeighbor(floor.rooms, i, 'left') ? 0 : GAP / 2
@@ -212,10 +255,7 @@ export default function PlanView() {
       const fallback = room.group ?? room.type
       const n = counts.get(fallback) ?? 0
       counts.set(fallback, n + 1)
-      // Стабільний id кімнати від генератора; запасний — тип+порядок.
       const id = room.id ?? `${fallback}#${n}`
-      // Разом підсвічуються лише частини ОДНОГО приміщення (спільний group);
-      // інакше кожна кімната має унікальний hoverId → окрема підсвітка.
       const hoverId = room.group ?? id
       const area = room.group
         ? floor.rooms.filter((r2) => r2.group === room.group).reduce((s, r2) => s + r2.width * r2.depth, 0)
@@ -254,13 +294,11 @@ export default function PlanView() {
 
   const removeKey = (key: string) => setItems((prev) => prev.filter((i) => i.key !== key))
 
-  if (!floor) return null
-
   return (
-    <group>
+    <group position={[0, yOffset, 0]}>
       {/* Фундамент (плита) */}
       {floor.slab.map((r, i) => (
-        <SlabMesh key={`slab-${i}`} w={r.width} d={r.depth} cx={r.x} cz={r.z} delay={slabDelay} />
+        <SlabMesh key={`slab-${i}`} w={r.width} d={r.depth} cx={r.x} cz={r.z} delay={slabDelay} active={active} />
       ))}
 
       {/* Зони кімнат */}
@@ -273,6 +311,7 @@ export default function PlanView() {
           <ZoneMesh
             key={item.key}
             item={item}
+            active={active}
             hovered={hoverKey === item.hoverId && !item.exiting}
             onExited={() => removeKey(item.key)}
             onOver={(e) => {
@@ -289,6 +328,38 @@ export default function PlanView() {
               setHoverKey((cur) => (cur === item.hoverId ? null : cur))
               setHovered(null)
             }}
+          />
+        )
+      })}
+    </group>
+  )
+}
+
+export default function PlanView() {
+  const config = useConfigurator((s) => s.config)
+  const currentStep = useConfigurator((s) => s.currentStep)
+  const viewFloor = useConfigurator((s) => s.viewFloor)
+  const hideFloor2 = useConfigurator((s) => s.hideFloor2)
+
+  const plan = useMemo(() => generateHousePlan(config), [config])
+  const showZones = STEPS[currentStep].id === 'rooms'
+
+  if (plan.floors.length === 0) return null
+
+  return (
+    <group>
+      {plan.floors.map((fl, idx) => {
+        const floorNum = idx + 1
+        // 2-й поверх можна сховати галочкою на кроці «Кімнати»
+        if (floorNum === 2 && hideFloor2) return null
+        const active = plan.floors.length === 1 || viewFloor === floorNum
+        return (
+          <PlanFloor
+            key={floorNum}
+            floor={fl}
+            showZones={showZones}
+            yOffset={(floorNum - 1) * FLOOR_H}
+            active={active}
           />
         )
       })}
