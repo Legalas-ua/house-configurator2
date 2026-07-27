@@ -184,7 +184,12 @@ function ZoneMesh({
         : item.anchorZ === 'max'
           ? item.cz + item.d / 2 - m.scale.z / 2
           : item.cz
-    easing.damp3(m.position, [item.cx, hovered ? 0.26 : 0.18, posZ], ease, dt)
+    // Горизонтальний рух (X) — ЗАВЖДИ синхронно з іншими кімнатами (ROOM_EASE),
+    // навіть для «лінивого» коридору. Лише рух/розтягування вперед-назад (Z)
+    // зберігає ліниву швидкість (щоб коридор не наздоганяв майстер).
+    easing.damp(m.position, 'x', item.cx, ROOM_EASE, dt)
+    easing.damp(m.position, 'y', hovered ? 0.26 : 0.18, ROOM_EASE, dt)
+    easing.damp(m.position, 'z', posZ, ease, dt)
     if (mat.current) {
       easing.damp(mat.current, 'emissiveIntensity', hovered ? 0.28 : 0, 0.2, dt)
       easing.damp(mat.current, 'opacity', active ? 1 : INACTIVE_OPACITY, OPACITY_EASE, dt)
