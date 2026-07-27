@@ -1,7 +1,8 @@
 import { useConfigurator } from '../../state/store'
 import type { ExtraRoom } from '../../config/types'
 import { ALL_EXTRAS } from '../../config/rooms'
-import { availableBedrooms, supportedExtras, supportedExtrasFloor2 } from '../../config/layouts'
+import { availableBedrooms, supportedExtras } from '../../config/layouts'
+import { floor2Limits } from '../../lib/lshape'
 import { t } from '../../locales'
 
 // Композитний крок «Кімнати». Межі лічильників і доступність опцій
@@ -21,20 +22,29 @@ export default function RoomsField() {
   // Г-подібний 2-й поверх має власні кімнати (bedrooms2/extras2); решта форм і
   // 1-й поверх працюють зі спільним конфігом (bedrooms/extras).
   const editingF2 = config.shape === 'l-shape' && config.floors === 2 && viewFloor === 2
+  const f2lim = editingF2 ? floor2Limits(config) : null
 
   const bedroomOptions = availableBedrooms(config.shape, config.floors)
   const bedroomsValue = editingF2 ? config.bedrooms2 : config.bedrooms
   const bedroomsKey = editingF2 ? 'bedrooms2' : 'bedrooms'
   const bedroomLimits = editingF2
-    ? { min: 1, max: config.bedrooms } // 2-й поверх — не більше спалень, ніж 1-й
+    ? { min: 1, max: f2lim!.maxBedrooms } // не більше, ніж вміщує основа 1-го поверху
     : { min: Math.min(...bedroomOptions), max: Math.max(...bedroomOptions) }
 
   const bathroomsValue = editingF2 ? 1 : config.bathrooms
   const currentExtras = editingF2 ? config.extras2 : config.extras
   const extrasKey = editingF2 ? 'extras2' : 'extras'
-  const allowedExtras = editingF2
-    ? supportedExtrasFloor2(config.bedrooms2)
-    : supportedExtras(config.shape, config.floors, config.bedrooms)
+  const allowedExtras1 = supportedExtras(config.shape, config.floors, config.bedrooms)
+
+  // Чи можна вмикати додаткову кімнату. На 2-му — лише якщо вона вміститься в межі
+  // 1-го поверху (комори немає); уже ввімкнену завжди можна вимкнути.
+  const extraSupported = (extra: ExtraRoom): boolean => {
+    if (!editingF2) return allowedExtras1.includes(extra)
+    if (currentExtras.includes(extra)) return true
+    if (extra === 'office') return f2lim!.canOffice
+    if (extra === 'wardrobe') return f2lim!.canWardrobe
+    return false // комора на 2-му поверсі недоступна
+  }
 
   const toggleExtra = (extra: ExtraRoom) => {
     const next = currentExtras.includes(extra)
@@ -88,7 +98,7 @@ export default function RoomsField() {
         <span className="rooms__group-title">{texts.extras.title}</span>
         <div className="chips">
           {ALL_EXTRAS.map((extra) => {
-            const supported = allowedExtras.includes(extra)
+            const supported = extraSupported(extra)
             return (
               <button
                 key={extra}

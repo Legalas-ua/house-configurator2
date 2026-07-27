@@ -449,12 +449,6 @@ const L_BEDROOMS: Record<Floors, number[]> = {
   2: [1, 2, 3, 4, 5],
 }
 
-// Додаткові кімнати 2-го поверху (Г-подібний) = як на 1-му, але без комори:
-// кабінет і гардероб доступні завжди (гардероб — у майстрі, як на 1-му поверсі).
-export function supportedExtrasFloor2(_bedrooms2: number): ExtraRoom[] {
-  return ['office', 'wardrobe']
-}
-
 export function availableBedrooms(shape: HouseShape, floors: Floors): number[] {
   if (shape === 'l-shape') return L_BEDROOMS[floors]
   return LAYOUTS.filter((l) => l.shape === shape && l.floors === floors)

@@ -97,6 +97,34 @@ function buildNightWing(
   return { rooms, endZ: z, corridorTop }
 }
 
+// Довжина нічного крила (без сходів) — для порівняння площ поверхів.
+function nightWingLen(b: number, hasOffice: boolean, hasCloset: boolean): number {
+  const masterLen = b >= 2 ? (hasCloset ? MASTER_WC_LEN : MASTER_LEN) : MASTER_SINGLE_LEN
+  const beds = b >= 2 ? (b - 1) * BEDROOM_LEN : 0
+  return masterLen + beds + (hasOffice ? OFFICE_LEN : 0)
+}
+
+// Ліміти 2-го поверху: не можна додати кімнат так, щоб основа 2-го стала БІЛЬШОЮ
+// за 1-й (бо звисатиме). Порівнюємо довжини нічного крила (денне крило однакове).
+export function floor2Limits(config: HouseConfig): {
+  maxBedrooms: number
+  canOffice: boolean
+  canWardrobe: boolean
+} {
+  const b1 = Math.max(1, config.bedrooms)
+  const cap = nightWingLen(b1, config.extras.includes('office'), config.extras.includes('wardrobe'))
+  const o2 = config.extras2.includes('office')
+  const w2 = config.extras2.includes('wardrobe')
+  // Найбільша к-сть спалень 2-го, що вміщується в межі 1-го (і не більше за 1-й)
+  let maxBedrooms = 1
+  while (maxBedrooms < b1 && nightWingLen(maxBedrooms + 1, o2, w2) <= cap + 0.01) maxBedrooms++
+  const b2 = Math.min(Math.max(1, config.bedrooms2), maxBedrooms)
+  // Чи вміститься кабінет / гардероб при поточній к-сті спалень 2-го
+  const canOffice = nightWingLen(b2, true, w2) <= cap + 0.01
+  const canWardrobe = nightWingLen(b2, o2, true) <= cap + 0.01
+  return { maxBedrooms, canOffice, canWardrobe }
+}
+
 export function generateLShapePlan(config: HouseConfig): HousePlan {
   const b = Math.max(1, config.bedrooms)
   const twoFloors = config.floors === 2
@@ -174,7 +202,7 @@ export function generateLShapePlan(config: HouseConfig): HousePlan {
 
   // ---- 2-й поверх (прямокутник над нічним крилом, без кухні-вітальні) ----
   if (twoFloors) {
-    const f2 = buildFloor2(config, nightLen)
+    const f2 = buildFloor2(config)
     const f2slab: PlanRect[] = [
       { x: NIGHT_W / 2, z: f2.length / 2, width: NIGHT_W, depth: f2.length },
     ]
@@ -198,31 +226,32 @@ export function generateLShapePlan(config: HouseConfig): HousePlan {
 // крайня зверху стає майстром при 2+ спальнях у крилі (тобто 3+ всього). Денне крило
 // внизу: горизонтальний коридор + санвузол (дубль 1:1) + одна ОБОВ'ЯЗКОВА спальня
 // замість прихожої+гардеробної. Ліміт спалень: 1-й поверх + 1 (щоб не звисало).
-function buildFloor2(config: HouseConfig, nightLen1: number): { rooms: RoomZone[]; length: number } {
+function buildFloor2(config: HouseConfig): { rooms: RoomZone[]; length: number } {
   // Нічне крило 2-го поверху — ТОЧНА копія 1-го (спальні/гардероб/кабінет/ensuite
-  // майстра, ті самі id-з-префіксом → ті самі анімації). Кількість спалень своя,
-  // але не більша за 1-й поверх.
-  const b2 = Math.min(Math.max(1, config.bedrooms2), Math.max(1, config.bedrooms))
+  // майстра, ті самі id-з-префіксом → ті самі анімації). КОМПАКТНО: усе за власним
+  // вмістом, без прив'язки висоти до 1-го (2-й поверх може бути меншим).
+  const b2 = Math.min(Math.max(1, config.bedrooms2), floor2Limits(config).maxBedrooms)
   const hasOffice2 = config.extras2.includes('office')
   const hasCloset2 = config.extras2.includes('wardrobe')
   const nw = buildNightWing(b2, hasOffice2, hasCloset2, 'f2-')
   const rooms: RoomZone[] = [...nw.rooms]
+  let z = nw.endZ
 
-  // Сходи — ЯКІР: та сама X,Z, що й на 1-му поверсі
-  const stairsZ0 = nightLen1 - STAIR_LEN
-  rooms.push(rect('f2-stairs', 'stairs', CORRIDOR_W, stairsZ0, STAIR_W, STAIR_LEN))
-  // Коридор — уздовж крила до денного крила (як на 1-му), lazyStretch — той самий
-  rooms.push({ ...rect('f2-corridor-v', 'corridor', 0, nw.corridorTop, CORRIDOR_W, nightLen1 - nw.corridorTop), lazyStretch: true })
+  // Сходи — одразу під нічним крилом (як на 1-му); коли поверхи однакові — збігаються
+  rooms.push(rect('f2-stairs', 'stairs', CORRIDOR_W, z, STAIR_W, STAIR_LEN))
+  z += STAIR_LEN
+  const nightLen2 = z
+  // Коридор — уздовж крила до денного крила (як на 1-му), той самий lazyStretch
+  rooms.push({ ...rect('f2-corridor-v', 'corridor', 0, nw.corridorTop, CORRIDOR_W, nightLen2 - nw.corridorTop), lazyStretch: true })
 
   // ---- Денне крило (без кухні): горизонтальний коридор + санвузол(дубль) + спальня ----
-  const dz = nightLen1
-  const bz = dz + HCORR_LEN
+  const bz = nightLen2 + HCORR_LEN
   const dayRest = DAY_DEPTH - HCORR_LEN
-  rooms.push(rect('f2-corridor-h', 'corridor', 0, dz, NIGHT_W, HCORR_LEN))
+  rooms.push(rect('f2-corridor-h', 'corridor', 0, nightLen2, NIGHT_W, HCORR_LEN))
   rooms.push(rect('f2-bath-day', 'bathroom', 0, bz, SERVICE_W, BATH_LEN)) // санвузол дубль 1:1
   // Обов'язкова спальня замість прихожої+гардеробної (Г-подібна навколо санвузла)
   rooms.push({ ...rect('f2-entry-bed-a', 'bedroom', SERVICE_W, bz, NIGHT_W - SERVICE_W, dayRest), group: 'f2-entry-bed' })
   rooms.push({ ...rect('f2-entry-bed-b', 'bedroom', 0, bz + BATH_LEN, SERVICE_W, dayRest - BATH_LEN), group: 'f2-entry-bed' })
 
-  return { rooms, length: dz + DAY_DEPTH }
+  return { rooms, length: nightLen2 + DAY_DEPTH }
 }

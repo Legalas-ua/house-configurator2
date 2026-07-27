@@ -6,8 +6,8 @@ import {
   nearestBedrooms,
   planBathrooms,
   supportedExtras,
-  supportedExtrasFloor2,
 } from '../config/layouts'
+import { floor2Limits } from '../lib/lshape'
 
 // ============================================================
 // Єдине джерело правди про стан конфігуратора (zustand).
@@ -40,11 +40,15 @@ function sanitize(config: HouseConfig): HouseConfig {
     const allowed = supportedExtras(next.shape, next.floors, next.bedrooms)
     next.extras = next.extras.filter((e) => allowed.includes(e))
 
-    // 2-й поверх (Г-подібний): нічне крило = копія 1-го; спалень не більше, ніж
-    // на 1-му (плюс завжди є обов'язкова спальня біля входу — вона поза лічильником).
-    next.bedrooms2 = Math.min(Math.max(1, next.bedrooms2), next.bedrooms)
-    const allowed2 = supportedExtrasFloor2(next.bedrooms2)
-    next.extras2 = next.extras2.filter((e) => allowed2.includes(e))
+    // 2-й поверх (Г-подібний): не можна додати кімнат так, щоб його основа стала
+    // більшою за 1-й. Клампимо спальні до ліміту, тоді прибираємо кабінет/гардероб,
+    // якщо вони вже не вміщуються (напр. після зменшення 1-го поверху).
+    const lim = floor2Limits(next)
+    next.bedrooms2 = Math.min(Math.max(1, next.bedrooms2), lim.maxBedrooms)
+    const lim2 = floor2Limits(next)
+    next.extras2 = next.extras2.filter((e) =>
+      e === 'office' ? lim2.canOffice : e === 'wardrobe' ? lim2.canWardrobe : false,
+    )
   }
   return next
 }
