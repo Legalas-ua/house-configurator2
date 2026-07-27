@@ -40,9 +40,10 @@ function sanitize(config: HouseConfig): HouseConfig {
     const allowed = supportedExtras(next.shape, next.floors, next.bedrooms)
     next.extras = next.extras.filter((e) => allowed.includes(e))
 
-    // 2-й поверх (Г-подібний): спалень не більше, ніж на 1-му; доступні
-    // додаткові кімнати залежать від того, чи є майстер (3+ спальні).
-    next.bedrooms2 = Math.min(Math.max(1, next.bedrooms2), next.bedrooms)
+    // 2-й поверх (Г-подібний): максимум = спальні 1-го + 1 обов'язкова (біля входу),
+    // щоб кімнати не звисали за контур. Доступні додаткові кімнати залежать від
+    // того, чи є майстер (3+ спальні всього).
+    next.bedrooms2 = Math.min(Math.max(1, next.bedrooms2), next.bedrooms + 1)
     const allowed2 = supportedExtrasFloor2(next.bedrooms2)
     next.extras2 = next.extras2.filter((e) => allowed2.includes(e))
   }

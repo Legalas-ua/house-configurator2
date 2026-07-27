@@ -26,7 +26,7 @@ export default function RoomsField() {
   const bedroomsValue = editingF2 ? config.bedrooms2 : config.bedrooms
   const bedroomsKey = editingF2 ? 'bedrooms2' : 'bedrooms'
   const bedroomLimits = editingF2
-    ? { min: 1, max: config.bedrooms } // 2-й поверх — не більше спалень, ніж 1-й
+    ? { min: 1, max: config.bedrooms + 1 } // 2-й поверх — макс. спальні 1-го + 1 обов'язкова
     : { min: Math.min(...bedroomOptions), max: Math.max(...bedroomOptions) }
 
   const bathroomsValue = editingF2 ? 1 : config.bathrooms
