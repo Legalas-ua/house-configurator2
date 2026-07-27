@@ -60,6 +60,7 @@ interface Item {
   d: number
   cx: number
   cz: number
+  anchorZ?: 'min' | 'max' // фіксована грань під час появи/зникнення (замість центру)
   exiting: boolean
 }
 
@@ -130,7 +131,15 @@ function ZoneMesh({
     const tx = grown ? item.w : 0.001
     const tz = grown ? item.d : 0.001
     easing.damp3(m.scale, [tx, 0.14, tz], ease, dt)
-    easing.damp3(m.position, [item.cx, hovered ? 0.26 : 0.18, item.cz], ROOM_EASE, dt)
+    // За замовчуванням позиція = центр. Якщо задано anchorZ — фіксуємо цю грань
+    // по Z, тому коробка росте/зникає ВІД грані (не з центру) і не залазить на сусіда.
+    const posZ =
+      item.anchorZ === 'min'
+        ? item.cz - item.d / 2 + m.scale.z / 2
+        : item.anchorZ === 'max'
+          ? item.cz + item.d / 2 - m.scale.z / 2
+          : item.cz
+    easing.damp3(m.position, [item.cx, hovered ? 0.26 : 0.18, posZ], ROOM_EASE, dt)
     if (mat.current) easing.damp(mat.current, 'emissiveIntensity', hovered ? 0.28 : 0, 0.2, dt)
     if (item.exiting && m.scale.x < 0.03) onExited()
   })
@@ -208,6 +217,7 @@ export default function PlanView() {
         d: Math.max(room.depth - f - bk, 0.15),
         cx: room.x + (l - r) / 2,
         cz: room.z + (f - bk) / 2,
+        anchorZ: room.anchorZ,
         exiting: false,
       }
     })

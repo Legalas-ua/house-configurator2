@@ -78,7 +78,9 @@ export function generateLShapePlan(config: HouseConfig): HousePlan {
   } else {
     // Одна спальня — на всю ширину крила (більша); коридор лише нижче
     const cLen = hasCloset ? CLOSET_STRIP : 0
-    if (hasCloset) rooms.push(rect('closet-strip', 'closet', 0, 0, NIGHT_W, cLen))
+    // anchorZ:'min' — смуга з'являється/зникає від ВЕРХНЬОЇ грані (не з центру),
+    // тому не наштовхується на майстер, що відсувається знизу.
+    if (hasCloset) rooms.push({ ...rect('closet-strip', 'closet', 0, 0, NIGHT_W, cLen), anchorZ: 'min' as const })
     // Той самий id 'master-a', що й у конфігураціях із 2+ спальнями, — тому
     // майстер не зникає, а той самий меш плавно морфить форму/позицію.
     rooms.push(rect('master-a', 'master', 0, cLen, NIGHT_W, MASTER_SINGLE_LEN - cLen))
