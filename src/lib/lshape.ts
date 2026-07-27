@@ -200,13 +200,18 @@ export function generateLShapePlan(config: HouseConfig): HousePlan {
 
   const floors: FloorPlan[] = [{ floor: 1, rooms: rooms.map(shift), slab: slab.map(shift) }]
 
-  // ---- 2-й поверх (прямокутник над нічним крилом, без кухні-вітальні) ----
+  // ---- 2-й поверх (без кухні-вітальні) ----
   if (twoFloors) {
     const f2 = buildFloor2(config)
+    // Прив'язка до СХОДІВ: посуваємо весь 2-й поверх по Z так, щоб його сходи
+    // стали рівно під сходами 1-го (різниця довжин нічних крил). Заодно збігається
+    // фасад. Генерація 2-го — компактна й незмінна; рухаємо лише позицію.
+    const zOffset = nightLen - (f2.length - DAY_DEPTH)
+    const shiftF2 = <T extends { x: number; z: number }>(o: T): T => ({ ...o, x: o.x - cx, z: o.z + zOffset - cz })
     const f2slab: PlanRect[] = [
       { x: NIGHT_W / 2, z: f2.length / 2, width: NIGHT_W, depth: f2.length },
     ]
-    floors.push({ floor: 2, rooms: f2.rooms.map(shift), slab: f2slab.map(shift) })
+    floors.push({ floor: 2, rooms: f2.rooms.map(shiftF2), slab: f2slab.map(shiftF2) })
   }
 
   // Сумарна площа приміщень (сходи не рахуємо як житлову площу)
