@@ -15,6 +15,9 @@ dist-ssr
 .env.*
 .vercel
 
+# graphify knowledge graph (generated locally, not part of the site)
+graphify-out
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

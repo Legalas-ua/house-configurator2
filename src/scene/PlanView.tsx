@@ -13,6 +13,16 @@ const GAP = 0.08 // зазор між РІЗНИМИ кімнатами
 const EPS = 0.01
 const EASE = 0.5 // тривалість плавних переходів (більше = повільніше)
 
+// ---- Правила анімації появи (діють для ВСІХ кімнат, теперішніх і майбутніх) ----
+// 1. Фундамент з'являється/розширюється ПЕРШИМ і трохи швидше за кімнати.
+// 2. Кімната виростає лише ПІСЛЯ того, як плита встигла лягти (ENTER_DELAY),
+//    тому нова кімната ніколи не накладається на план, що ще пере-центрується.
+// 3. Прибрана кімната швидко «здувається», щоб не перетинатися з сусідами,
+//    які з'їжджаються на її місце.
+const SLAB_EASE = 0.4 // фундамент росте трохи швидше за кімнати (веде)
+const ENTER_DELAY = 0.4 // пауза (сек), поки кімната чекає на фундамент
+const EXIT_EASE = 0.3 // прибрана кімната зникає швидше за звичайний перехід
+
 function box(r: RoomZone) {
   return { x0: r.x - r.width / 2, x1: r.x + r.width / 2, z0: r.z - r.depth / 2, z1: r.z + r.depth / 2 }
 }
@@ -55,8 +65,9 @@ function SlabMesh({ w, d, cx, cz }: { w: number; d: number; cx: number; cz: numb
   useFrame((_, dt) => {
     const m = ref.current
     if (!m) return
-    easing.damp3(m.scale, [w, 0.1, d], EASE, dt)
-    easing.damp3(m.position, [cx, 0.05, cz], EASE, dt)
+    // Плита росте/змінюється швидше за кімнати — вона завжди «веде».
+    easing.damp3(m.scale, [w, 0.1, d], SLAB_EASE, dt)
+    easing.damp3(m.position, [cx, 0.05, cz], SLAB_EASE, dt)
   })
   return (
     <mesh ref={ref} scale={[0.001, 0.1, 0.001]} position={[cx, 0.05, cz]} receiveShadow>
@@ -84,12 +95,22 @@ function ZoneMesh({
 }) {
   const ref = useRef<Mesh>(null)
   const mat = useRef<MeshStandardMaterial>(null)
+  // Вік меша в секундах. Нова кімната = новий стабільний ключ = новий меш,
+  // тож її age стартує з 0 і вона витримує ENTER_DELAY. Кімната, що вже була,
+  // зберігає той самий ключ/меш → великий age → росте/рухається без паузи.
+  const age = useRef(0)
   useFrame((_, dt) => {
     const m = ref.current
     if (!m) return
-    const tx = item.exiting ? 0.001 : item.w
-    const tz = item.exiting ? 0.001 : item.d
-    easing.damp3(m.scale, [tx, 0.14, tz], EASE, dt)
+    age.current += dt
+    // Поки не мине ENTER_DELAY — тримаємо кімнату «згорнутою», щоб фундамент
+    // ліг першим, а план встиг пере-центруватись без накладань.
+    const ready = age.current >= ENTER_DELAY
+    const grown = !item.exiting && ready
+    const ease = item.exiting ? EXIT_EASE : EASE
+    const tx = grown ? item.w : 0.001
+    const tz = grown ? item.d : 0.001
+    easing.damp3(m.scale, [tx, 0.14, tz], ease, dt)
     easing.damp3(m.position, [item.cx, hovered ? 0.26 : 0.18, item.cz], EASE, dt)
     if (mat.current) easing.damp(mat.current, 'emissiveIntensity', hovered ? 0.28 : 0, 0.2, dt)
     if (item.exiting && m.scale.x < 0.03) onExited()
