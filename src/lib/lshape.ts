@@ -105,7 +105,9 @@ export function generateLShapePlan(config: HouseConfig): HousePlan {
 
   // Вертикальний коридор уздовж спалень (немає лише при 1 спальні без кабінету)
   if (hasCorridor) {
-    rooms.push(rect('corridor-v', 'corridor', 0, corridorTop, CORRIDOR_W, dz - corridorTop))
+    // lazyStretch — коридор розтягується повільніше / стягується швидше за майстер,
+    // тому не наздоганяє його верхньою гранню при 1↔2 спальнях (без колізії).
+    rooms.push({ ...rect('corridor-v', 'corridor', 0, corridorTop, CORRIDOR_W, dz - corridorTop), lazyStretch: true })
   }
 
   // Комора (за бажанням) — вузька довга колона між прихожою і кухнею

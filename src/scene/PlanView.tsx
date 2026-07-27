@@ -26,6 +26,10 @@ const SLAB_EASE = 0.45 // плавний ріст / стискання фунд�
 const ENTER_DELAY = 0.35 // нове приміщення чекає, поки виросте фундамент
 const EXIT_EASE = 0.4 // приміщення, що зникає, плавно «здувається»
 const SLAB_SHRINK_DELAY = 0.45 // фундамент стискається лише коли кімнати вже прибрані
+// «Ліниве розтягування» (коридор): рости повільніше / стягуватись швидше, щоб
+// відставати від сусіда, який рухається (майстер), і не колізити з ним.
+const LAZY_GROW_EASE = 0.75 // повільне розтягування
+const LAZY_SHRINK_EASE = 0.28 // швидке стягування
 
 function box(r: RoomZone) {
   return { x0: r.x - r.width / 2, x1: r.x + r.width / 2, z0: r.z - r.depth / 2, z1: r.z + r.depth / 2 }
@@ -61,6 +65,7 @@ interface Item {
   cx: number
   cz: number
   anchorZ?: 'min' | 'max' // фіксована грань під час появи/зникнення (замість центру)
+  lazyStretch?: boolean // рости повільніше / стягуватись швидше (відставати від сусіда)
   exiting: boolean
 }
 
@@ -127,9 +132,17 @@ function ZoneMesh({
     // ліг першим, а план встиг стати на місце без накладань.
     const ready = age.current >= ENTER_DELAY
     const grown = !item.exiting && ready
-    const ease = item.exiting ? EXIT_EASE : ROOM_EASE
     const tx = grown ? item.w : 0.001
     const tz = grown ? item.d : 0.001
+    // Швидкість переходу. Для «лінивих» кімнат (коридор): розтягуватись
+    // повільніше, стягуватись швидше — щоб відставати від сусіда й не колізити.
+    const ease = item.exiting
+      ? EXIT_EASE
+      : item.lazyStretch
+        ? tz > m.scale.z
+          ? LAZY_GROW_EASE
+          : LAZY_SHRINK_EASE
+        : ROOM_EASE
     easing.damp3(m.scale, [tx, 0.14, tz], ease, dt)
     // За замовчуванням позиція = центр. Якщо задано anchorZ — фіксуємо цю грань
     // по Z, тому коробка росте/зникає ВІД грані (не з центру) і не залазить на сусіда.
@@ -139,7 +152,7 @@ function ZoneMesh({
         : item.anchorZ === 'max'
           ? item.cz + item.d / 2 - m.scale.z / 2
           : item.cz
-    easing.damp3(m.position, [item.cx, hovered ? 0.26 : 0.18, posZ], ROOM_EASE, dt)
+    easing.damp3(m.position, [item.cx, hovered ? 0.26 : 0.18, posZ], ease, dt)
     if (mat.current) easing.damp(mat.current, 'emissiveIntensity', hovered ? 0.28 : 0, 0.2, dt)
     if (item.exiting && m.scale.x < 0.03) onExited()
   })
@@ -218,6 +231,7 @@ export default function PlanView() {
         cx: room.x + (l - r) / 2,
         cz: room.z + (f - bk) / 2,
         anchorZ: room.anchorZ,
+        lazyStretch: room.lazyStretch,
         exiting: false,
       }
     })
