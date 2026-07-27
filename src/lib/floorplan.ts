@@ -104,6 +104,7 @@ function parseFloor(
       continue
     }
     rooms.push({
+      id: ch, // символ сітки — стабільний id кімнати (окрема підсвітка/анімація)
       type,
       x: (b.minC + b.maxC + 1) / 2 - cx,
       z: (b.minR + b.maxR + 1) / 2 - cz,
