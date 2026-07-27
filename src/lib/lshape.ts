@@ -63,7 +63,7 @@ export function generateLShapePlan(config: HouseConfig): HousePlan {
     // Санвузол + гардероб — дві скриньки в куті (ширші за коридор,
     // трохи заходять у спальню). Майстер — Г-подібний навколо колони.
     rooms.push(rect('ensuite-bath', 'bathroom', 0, 0, COL_W, SAN_BOX))
-    rooms.push(rect('master-closet', 'closet', 0, SAN_BOX, COL_W, CLO_BOX))
+    rooms.push(rect('closet-box', 'closet', 0, SAN_BOX, COL_W, CLO_BOX))
     const colBottom = SAN_BOX + CLO_BOX
     rooms.push({ ...rect('master-a', 'master', COL_W, 0, NIGHT_W - COL_W, MASTER_WC_LEN), group: 'master' }) // праворуч
     rooms.push({ ...rect('master-b', 'master', CORRIDOR_W, colBottom, COL_W - CORRIDOR_W, MASTER_WC_LEN - colBottom), group: 'master' }) // під колоною
@@ -78,8 +78,8 @@ export function generateLShapePlan(config: HouseConfig): HousePlan {
   } else {
     // Одна спальня — на всю ширину крила (більша); коридор лише нижче
     const cLen = hasCloset ? CLOSET_STRIP : 0
-    if (hasCloset) rooms.push(rect('master-closet', 'closet', 0, 0, NIGHT_W, cLen))
-    rooms.push(rect('master-a', 'master', 0, cLen, NIGHT_W, MASTER_SINGLE_LEN - cLen))
+    if (hasCloset) rooms.push(rect('closet-strip', 'closet', 0, 0, NIGHT_W, cLen))
+    rooms.push(rect('master-single', 'master', 0, cLen, NIGHT_W, MASTER_SINGLE_LEN - cLen))
     corridorTop = MASTER_SINGLE_LEN
     z = MASTER_SINGLE_LEN
   }
