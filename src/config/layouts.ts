@@ -449,10 +449,10 @@ const L_BEDROOMS: Record<Floors, number[]> = {
   2: [1, 2, 3, 4, 5],
 }
 
-// Додаткові кімнати 2-го поверху (Г-подібний): комора недоступна ніколи;
-// кабінет — доступний завжди (як на 1-му); гардероб — лише коли є майстер (3+).
-export function supportedExtrasFloor2(bedrooms2: number): ExtraRoom[] {
-  return bedrooms2 >= 3 ? ['office', 'wardrobe'] : ['office']
+// Додаткові кімнати 2-го поверху (Г-подібний) = як на 1-му, але без комори:
+// кабінет і гардероб доступні завжди (гардероб — у майстрі, як на 1-му поверсі).
+export function supportedExtrasFloor2(_bedrooms2: number): ExtraRoom[] {
+  return ['office', 'wardrobe']
 }
 
 export function availableBedrooms(shape: HouseShape, floors: Floors): number[] {
