@@ -113,6 +113,7 @@ export default function HouseShell() {
   const plates = useMemo(() => {
     const N = plan.floors.length
     const arr: { y: number; geo: ExtrudeGeometry }[] = []
+    if (N === 0) return arr // форму ще не обрано → плану немає
     for (let idx = 0; idx <= N; idx++) {
       const fl = plan.floors[Math.max(0, idx - 1)]
       const wantHole = idx >= 1 && idx <= N - 1
