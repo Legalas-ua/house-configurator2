@@ -14,6 +14,12 @@ import type { FloorPlan, HouseConfig, HousePlan, PlanRect, RoomType, RoomZone } 
 //   Нижній слот можна зробити кабінетом (extras.office).
 // ============================================================
 
+// Час згладжування ЛИШЕ для росту (передається у PlanView як growEase). Більший =
+// повільніший ріст. Дає коробці відставати від сусіда, що рухається, щоб довше не
+// перетинатись. Пор.: звичайний ROOM_EASE=0.45, лінивий ріст коридору=0.75.
+const LSHAPE_SLOW_GROW = 1.1 // коридор 2-го поверху росте помітно повільніше
+const CLOSET_SLOW_GROW = 0.9 // гардероб майстра «виповзає» повільно, не наздоганяючи майстер
+
 const CORRIDOR_W = 1.5
 const ROOM_W = 3.8 // ширина кімнат (праворуч від коридору)
 const NIGHT_W = CORRIDOR_W + ROOM_W // 5.3
@@ -63,7 +69,10 @@ function buildNightWing(
   if (hasEnsuite && hasCloset) {
     // Санвузол + гардероб — дві скриньки в куті; майстер Г-подібний навколо колони.
     rooms.push(rect(`${pfx}ensuite-bath`, 'bathroom', 0, 0, COL_W, SAN_BOX))
-    rooms.push(rect(`${pfx}closet-box`, 'closet', 0, SAN_BOX, COL_W, CLO_BOX))
+    // Гардероб виповзає від ВЕРХНЬОЇ грані (біля санвузла, НЕ біля майстра) і
+    // росте повільно вниз/у майстер — тож із майстром вони перетинаються якомога
+    // пізніше. anchorZ:'min' = зафіксована верхня (не суміжна з майстром) грань.
+    rooms.push({ ...rect(`${pfx}closet-box`, 'closet', 0, SAN_BOX, COL_W, CLO_BOX), anchorZ: 'min' as const, growEase: CLOSET_SLOW_GROW })
     const colBottom = SAN_BOX + CLO_BOX
     rooms.push({ ...rect(`${pfx}master-a`, 'master', COL_W, 0, NIGHT_W - COL_W, MASTER_WC_LEN), group: `${pfx}master` })
     rooms.push({ ...rect(`${pfx}master-b`, 'master', CORRIDOR_W, colBottom, COL_W - CORRIDOR_W, MASTER_WC_LEN - colBottom), group: `${pfx}master` })
@@ -78,8 +87,9 @@ function buildNightWing(
   } else {
     // Одна спальня — на всю ширину крила (більша); коридор лише нижче.
     const cLen = hasCloset ? CLOSET_STRIP : 0
-    // anchorZ:'min' — гардероб-смуга з'являється/зникає від ВЕРХНЬОЇ грані.
-    if (hasCloset) rooms.push({ ...rect(`${pfx}closet-strip`, 'closet', 0, 0, NIGHT_W, cLen), anchorZ: 'min' as const })
+    // anchorZ:'min' — гардероб-смуга виповзає від ВЕРХНЬОЇ (не суміжної з майстром)
+    // грані; growEase — повільно, щоб довше не перетинатися з майстром під нею.
+    if (hasCloset) rooms.push({ ...rect(`${pfx}closet-strip`, 'closet', 0, 0, NIGHT_W, cLen), anchorZ: 'min' as const, growEase: CLOSET_SLOW_GROW })
     rooms.push(rect(`${pfx}master-a`, 'master', 0, cLen, NIGHT_W, MASTER_SINGLE_LEN - cLen))
     corridorTop = MASTER_SINGLE_LEN
     z = MASTER_SINGLE_LEN
@@ -261,10 +271,10 @@ function buildFloor2(config: HouseConfig): { rooms: RoomZone[]; length: number }
   z += STAIR_LEN
   const nightLen2 = z
   // Коридор — уздовж крила до денного крила (як на 1-му), той самий lazyStretch.
-  // anchorZ:'min' — верхня грань (біля майстра) зафіксована, тож коридор росте/
-  // стягується від НИЖНЬОЇ грані й не «насідає» на майстер при 1↔2 спальнях
-  // (на 2-му поверсі це помітніше через зсув усього поверху за сходами).
-  rooms.push({ ...rect('f2-corridor-v', 'corridor', 0, nw.corridorTop, CORRIDOR_W, nightLen2 - nw.corridorTop), lazyStretch: true, anchorZ: 'min' as const })
+  // growEase — на 2-му поверсі коридор РОЗТЯГУЄТЬСЯ ПОВІЛЬНІШЕ (більше відстає від
+  // майстра, що рухається), тож не «насідає» при додаванні спальні. Стягування —
+  // як є (швидке через lazyStretch). На 2-му помітніше через зсув поверху за сходами.
+  rooms.push({ ...rect('f2-corridor-v', 'corridor', 0, nw.corridorTop, CORRIDOR_W, nightLen2 - nw.corridorTop), lazyStretch: true, growEase: LSHAPE_SLOW_GROW })
 
   // ---- Денне крило (без кухні): горизонтальний коридор + санвузол(дубль) + спальня ----
   const bz = nightLen2 + HCORR_LEN

@@ -33,15 +33,24 @@ const LAZY_SHRINK_EASE = 0.28 // швидке стягування
 
 // ---- 3D-стос поверхів ----
 const FLOOR_H = 3.0 // висота поверху: на скільки 2-й поверх підіймається над 1-м
-const INACTIVE_OPACITY = 0.2 // прозорість неактивного (не редагованого) поверху
-const OPACITY_EASE = 0.3 // плавна зміна прозорості при перемиканні поверху
+const INACTIVE_OPACITY = 0.2 // прозорість неактивного (не редагованого) поверху (зони)
+// Плита неактивного поверху — НЕВИДИМА. Майже-біла плита (#faf7f0) під
+// напівпрозорими зонами проступала суцільним білим полотном при перемиканні
+// поверхів. Ховаємо її → привидом лишаються тільки легкі кольорові зони.
+const INACTIVE_SLAB_OPACITY = 0
+const OPACITY_EASE = 0.2 // плавна (і швидша) зміна прозорості при перемиканні поверху
 
 // Плавно веде прозорість матеріалу до цілі. transparent перемикаємо ІМПЕРАТИВНО з
 // needsUpdate (three.js не застосовує зміну transparent через реактивний проп),
 // інакше неактивний поверх не стає прозорим. Активний (opacity≈1) → непрозорий
 // (без мерехтіння); неактивний → прозорий привид без depthWrite.
-function fadeMaterial(mat: MeshStandardMaterial, active: boolean, dt: number) {
-  easing.damp(mat, 'opacity', active ? 1 : INACTIVE_OPACITY, OPACITY_EASE, dt)
+function fadeMaterial(
+  mat: MeshStandardMaterial,
+  active: boolean,
+  dt: number,
+  inactiveOpacity = INACTIVE_OPACITY,
+) {
+  easing.damp(mat, 'opacity', active ? 1 : inactiveOpacity, OPACITY_EASE, dt)
   const opaque = mat.opacity > 0.98
   if (mat.transparent === opaque) {
     mat.transparent = !opaque
@@ -85,6 +94,7 @@ interface Item {
   cz: number
   anchorZ?: 'min' | 'max' // фіксована грань під час появи/зникнення (замість центру)
   lazyStretch?: boolean // рости повільніше / стягуватись швидше (відставати від сусіда)
+  growEase?: number // власний (повільніший) час згладжування лише для росту/появи
   exiting: boolean
 }
 
@@ -118,7 +128,7 @@ function SlabMesh({
   useFrame((_, dt) => {
     const m = ref.current
     if (!m) return
-    if (mat.current) fadeMaterial(mat.current, active, dt)
+    if (mat.current) fadeMaterial(mat.current, active, dt, INACTIVE_SLAB_OPACITY)
     if (wait.current > 0) {
       wait.current -= dt
       return // тримаємо старий розмір/позицію, поки кімнати не заберуться
@@ -172,15 +182,19 @@ function ZoneMesh({
     const grown = !item.exiting && ready
     const tx = grown ? item.w : 0.001
     const tz = grown ? item.d : 0.001
-    // Швидкість переходу. Для «лінивих» кімнат (коридор): розтягуватись
-    // повільніше, стягуватись швидше — щоб відставати від сусіда й не колізити.
+    // Швидкість переходу. Ріст (tz зростає) можна вповільнити власним growEase,
+    // щоб коробка відставала від сусіда й довше не колізила. Для «лінивих» кімнат
+    // (коридор) — ще й швидке стягування. Зменшення — звичайне (ROOM_EASE).
+    const growing = tz > m.scale.z
     const ease = item.exiting
       ? EXIT_EASE
       : item.lazyStretch
-        ? tz > m.scale.z
-          ? LAZY_GROW_EASE
+        ? growing
+          ? item.growEase ?? LAZY_GROW_EASE
           : LAZY_SHRINK_EASE
-        : ROOM_EASE
+        : growing && item.growEase != null
+          ? item.growEase
+          : ROOM_EASE
     easing.damp3(m.scale, [tx, 0.14, tz], ease, dt)
     // За замовчуванням позиція = центр. Якщо задано anchorZ — фіксуємо цю грань
     // по Z, тому коробка росте/зникає ВІД грані (не з центру) і не залазить на сусіда.
@@ -295,6 +309,7 @@ function PlanFloor({
         cz: room.z + (f - bk) / 2,
         anchorZ: room.anchorZ,
         lazyStretch: room.lazyStretch,
+        growEase: room.growEase,
         exiting: false,
       }
     })
