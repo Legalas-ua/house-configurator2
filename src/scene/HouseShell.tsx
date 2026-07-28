@@ -5,7 +5,7 @@ import { ExtrudeGeometry, Path, Shape, type Group } from 'three'
 import { useConfigurator } from '../state/store'
 import { STEPS } from '../config/steps'
 import { generateHousePlan } from '../lib/floorplan'
-import type { PlanRect } from '../config/types'
+import type { PlanRect, RoomType, RoomZone, WindowType } from '../config/types'
 
 // ============================================================
 // 3D-оболонка будинку (Фаза A): зовнішні стіни + перекриття, підняті з плану.
@@ -23,6 +23,63 @@ const PLATE_T = 0.2 // товщина перекриття
 const WALL_COLOR = '#ece7de' // теплий світлий тиньк
 const PLATE_COLOR = '#d9d3c6' // трохи темніше — читається як підлога/перекриття
 const RISE_EASE = 0.5 // плавний підйом коробки
+
+// ---- Вікна та двері ----
+const GLASS_COLOR = '#33434f' // темне скло
+const PANEL_D = 0.06 // товщина скляної панелі (трохи виступає із стіни)
+const WIN_MARGIN = 0.5 // сумарний відступ вікна від країв стіни
+const WIN_TOP = 2.3 // верхня межа вікна від підлоги поверху
+
+// Ширина отвору за типом кімнати (м). Немає в мапі → кімната без вікон
+// (коридор, сходи, комора, тераса тощо).
+const WIN_WIDTH: Partial<Record<RoomType, number>> = {
+  master: 1.8,
+  bedroom: 1.6,
+  livingKitchen: 2.6,
+  office: 1.3,
+  bathroom: 0.6, // санвузол — маленьке
+  closet: 0.6, // гардероб майстра — маленьке
+  wardrobe: 0.8, // гардеробна денна
+  hall: 1.0, // прихожа — вхідні двері
+}
+
+// Кімнати, чий НАЙШИРШИЙ зовнішній отвір робимо дверима в підлогу:
+// кухня-вітальня та прихожа завжди; кімнати 1-го поверху (вихід у двір/на терасу);
+// майстер 2-го поверху, коли обрано терасу (вихід на неї).
+function isDoorRoom(type: RoomType, floorIdx: number, terrace2: boolean): boolean {
+  if (type === 'livingKitchen' || type === 'hall') return true
+  if (floorIdx === 0 && (type === 'bedroom' || type === 'master' || type === 'office')) return true
+  if (floorIdx === 1 && type === 'master' && terrace2) return true
+  return false
+}
+
+// Підвіконня та висота отвору. Двері — в підлогу. Санвузол — маленьке високо.
+// Панорамні — в підлогу (2-й поверх: підвіконня 300 мм). Звичайні — стандартні.
+function verticalSpec(type: RoomType, floorIdx: number, win: WindowType, asDoor: boolean) {
+  if (asDoor) return { sill: 0, height: 2.1 }
+  if (type === 'bathroom') return { sill: 1.3, height: 0.7 }
+  if (win === 'panoramic') {
+    const sill = floorIdx === 0 ? 0 : 0.3
+    return { sill, height: WIN_TOP - sill }
+  }
+  return { sill: 0.9, height: 1.2 }
+}
+
+const segOverlap = (a0: number, a1: number, b0: number, b1: number) => Math.min(a1, b1) - Math.max(a0, b0) > 0.05
+
+// Чи сторона кімнати зовнішня (немає суміжної кімнати за нею). Тераса НЕ блокує —
+// сторона до тераси теж зовнішня (там будуть двері на терасу).
+function isExterior(rooms: RoomZone[], room: RoomZone, side: 'xmax' | 'xmin' | 'zmax' | 'zmin'): boolean {
+  const b = bounds(room)
+  return !rooms.some((r2) => {
+    if (r2 === room || r2.type === 'terrace') return false
+    const c = bounds(r2)
+    if (side === 'xmax') return Math.abs(c.x0 - b.x1) < 0.05 && segOverlap(b.z0, b.z1, c.z0, c.z1)
+    if (side === 'xmin') return Math.abs(c.x1 - b.x0) < 0.05 && segOverlap(b.z0, b.z1, c.z0, c.z1)
+    if (side === 'zmax') return Math.abs(c.z0 - b.z1) < 0.05 && segOverlap(b.x0, b.x1, c.x0, c.x1)
+    return Math.abs(c.z1 - b.z0) < 0.05 && segOverlap(b.x0, b.x1, c.x0, c.x1)
+  })
+}
 
 interface WallSeg {
   cx: number
@@ -124,6 +181,38 @@ export default function HouseShell() {
     return arr
   }, [plan])
 
+  // Отвори (вікна/двері) на зовнішніх стінах кімнат.
+  const openings = useMemo(() => {
+    const terrace2 = config.extras2.includes('terrace')
+    const win: WindowType = config.windows ?? 'standard'
+    const out: { floorIdx: number; axis: 'x' | 'z'; face: number; perp: number; width: number; sill: number; height: number }[] = []
+    plan.floors.forEach((fl, floorIdx) => {
+      fl.rooms.forEach((room) => {
+        const specW = WIN_WIDTH[room.type]
+        if (specW == null) return
+        const b = bounds(room)
+        const sides = (
+          [
+            ['xmax', b.x1 + WALL_T / 2, (b.z0 + b.z1) / 2, b.z1 - b.z0, 'x'],
+            ['xmin', b.x0 - WALL_T / 2, (b.z0 + b.z1) / 2, b.z1 - b.z0, 'x'],
+            ['zmax', b.z1 + WALL_T / 2, (b.x0 + b.x1) / 2, b.x1 - b.x0, 'z'],
+            ['zmin', b.z0 - WALL_T / 2, (b.x0 + b.x1) / 2, b.x1 - b.x0, 'z'],
+          ] as const
+        ).filter(([side]) => isExterior(fl.rooms, room, side))
+        if (sides.length === 0) return
+        sides.sort((a, c) => c[3] - a[3]) // найширша сторона перша
+        const doorRoom = isDoorRoom(room.type, floorIdx, terrace2)
+        sides.forEach(([, face, perp, sideLen, axis], i) => {
+          const width = Math.min(specW, sideLen - WIN_MARGIN)
+          if (width < 0.4) return // замало місця на стіні
+          const { sill, height } = verticalSpec(room.type, floorIdx, win, doorRoom && i === 0)
+          out.push({ floorIdx, axis, face, perp, width, sill, height })
+        })
+      })
+    })
+    return out
+  }, [plan, config.windows, config.extras2])
+
   useFrame((_, dt) => {
     if (ref.current) easing.damp(ref.current.scale, 'y', show ? 1 : 0.0001, RISE_EASE, dt)
   })
@@ -151,6 +240,20 @@ export default function HouseShell() {
           <meshStandardMaterial color={PLATE_COLOR} roughness={0.9} />
         </mesh>
       ))}
+
+      {/* Вікна та двері — темні скляні панелі на зовнішніх стінах */}
+      {openings.map((o, i) => {
+        const y = o.floorIdx * FLOOR_H + o.sill + o.height / 2
+        return (
+          <mesh
+            key={`win-${i}`}
+            position={o.axis === 'x' ? [o.face, y, o.perp] : [o.perp, y, o.face]}
+          >
+            <boxGeometry args={o.axis === 'x' ? [PANEL_D, o.height, o.width] : [o.width, o.height, PANEL_D]} />
+            <meshStandardMaterial color={GLASS_COLOR} roughness={0.15} metalness={0.1} />
+          </mesh>
+        )
+      })}
     </group>
   )
 }
