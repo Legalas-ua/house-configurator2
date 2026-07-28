@@ -33,24 +33,15 @@ const LAZY_SHRINK_EASE = 0.28 // швидке стягування
 
 // ---- 3D-стос поверхів ----
 const FLOOR_H = 3.0 // висота поверху: на скільки 2-й поверх підіймається над 1-м
-const INACTIVE_OPACITY = 0.2 // прозорість неактивного (не редагованого) поверху (зони)
-// Плита неактивного поверху — НЕВИДИМА. Майже-біла плита (#faf7f0) під
-// напівпрозорими зонами проступала суцільним білим полотном при перемиканні
-// поверхів. Ховаємо її → привидом лишаються тільки легкі кольорові зони.
-const INACTIVE_SLAB_OPACITY = 0
+const INACTIVE_OPACITY = 0.2 // прозорість неактивного (не редагованого) поверху
 const OPACITY_EASE = 0.2 // плавна (і швидша) зміна прозорості при перемиканні поверху
 
 // Плавно веде прозорість матеріалу до цілі. transparent перемикаємо ІМПЕРАТИВНО з
 // needsUpdate (three.js не застосовує зміну transparent через реактивний проп),
 // інакше неактивний поверх не стає прозорим. Активний (opacity≈1) → непрозорий
 // (без мерехтіння); неактивний → прозорий привид без depthWrite.
-function fadeMaterial(
-  mat: MeshStandardMaterial,
-  active: boolean,
-  dt: number,
-  inactiveOpacity = INACTIVE_OPACITY,
-) {
-  easing.damp(mat, 'opacity', active ? 1 : inactiveOpacity, OPACITY_EASE, dt)
+function fadeMaterial(mat: MeshStandardMaterial, active: boolean, dt: number) {
+  easing.damp(mat, 'opacity', active ? 1 : INACTIVE_OPACITY, OPACITY_EASE, dt)
   const opaque = mat.opacity > 0.98
   if (mat.transparent === opaque) {
     mat.transparent = !opaque
@@ -108,6 +99,7 @@ function SlabMesh({
   cz,
   delay,
   active,
+  show,
 }: {
   w: number
   d: number
@@ -115,6 +107,7 @@ function SlabMesh({
   cz: number
   delay: number
   active: boolean
+  show: boolean
 }) {
   const ref = useRef<Mesh>(null)
   const mat = useRef<MeshStandardMaterial>(null)
@@ -128,7 +121,7 @@ function SlabMesh({
   useFrame((_, dt) => {
     const m = ref.current
     if (!m) return
-    if (mat.current) fadeMaterial(mat.current, active, dt, INACTIVE_SLAB_OPACITY)
+    if (mat.current) fadeMaterial(mat.current, active, dt)
     if (wait.current > 0) {
       wait.current -= dt
       return // тримаємо старий розмір/позицію, поки кімнати не заберуться
@@ -137,10 +130,11 @@ function SlabMesh({
     easing.damp3(m.position, [cx, 0.05, cz], SLAB_EASE, dt)
   })
   return (
-    // Плиту фундаменту БІЛЬШЕ НЕ МАЛЮЄМО (visible={false}): майже-біла плита
-    // давала білі полотна при перемиканні поверхів. Кімнати самі задають контур.
-    // Логіку розміру/затримки лишено — легко повернути плиту, знявши visible={false}.
-    <mesh ref={ref} visible={false} scale={[0.001, 0.1, 0.001]} position={[init.cx, 0.05, init.cz]}>
+    // Плиту показуємо лише коли НЕ на кроці «кімнати» (show): на кроці форми вона
+    // = основа плану (щоб не було пусто); на кроці кімнат її ховаємо, бо там
+    // майже-біла плита давала білі полотна при перемиканні поверхів (контур там
+    // задають самі зони кімнат).
+    <mesh ref={ref} visible={show} scale={[0.001, 0.1, 0.001]} position={[init.cx, 0.05, init.cz]}>
       <boxGeometry args={[1, 1, 1]} />
       <meshStandardMaterial ref={mat} color="#faf7f0" roughness={0.7} transparent opacity={1} />
     </mesh>
@@ -336,9 +330,9 @@ function PlanFloor({
 
   return (
     <group position={[0, yOffset, 0]}>
-      {/* Фундамент (плита) */}
+      {/* Фундамент (плита) — видимий лише поза кроком «кімнати» (show={!showZones}) */}
       {floor.slab.map((r, i) => (
-        <SlabMesh key={`slab-${i}`} w={r.width} d={r.depth} cx={r.x} cz={r.z} delay={slabDelay} active={active} />
+        <SlabMesh key={`slab-${i}`} w={r.width} d={r.depth} cx={r.x} cz={r.z} delay={slabDelay} active={active} show={!showZones} />
       ))}
 
       {/* Зони кімнат */}
