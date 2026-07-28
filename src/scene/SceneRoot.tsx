@@ -8,6 +8,7 @@ import { useConfigurator } from '../state/store'
 import { generateHousePlan } from '../lib/floorplan'
 import Ground from './Ground'
 import PlanView from './PlanView'
+import HouseShell from './HouseShell'
 
 const FOV = 40
 
@@ -84,6 +85,7 @@ export default function SceneRoot() {
 
       <Ground />
       <PlanView />
+      <HouseShell />
 
       <OrbitControls
         ref={controlsRef}

@@ -61,6 +61,14 @@ export const uk = {
         },
       },
     },
+    windows: {
+      title: 'Вікна',
+      hint: 'Стіни будинку піднялись — оберіть тип вікон',
+      options: {
+        standard: 'Звичайні',
+        panoramic: 'Панорамні (в підлогу)',
+      },
+    },
   },
   floors: {
     title: 'Поверхи',

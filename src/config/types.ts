@@ -5,6 +5,7 @@ export type HouseShape = 'rect' | 'square' | 'l-shape'
 export type KitchenType = 'separate' | 'open'
 export type ExtraRoom = 'office' | 'wardrobe' | 'pantry' | 'terrace'
 export type Floors = 1 | 2
+export type WindowType = 'standard' | 'panoramic'
 
 // null = «ще не обрано» або «скинуто, бо змінився попередній крок»
 export interface HouseConfig {
@@ -20,6 +21,8 @@ export interface HouseConfig {
   // але не більше спалень, ніж на 1-му. Комора на 2-му недоступна.
   bedrooms2: number
   extras2: ExtraRoom[]
+  // Тип вікон (крок «Вікна»): звичайні чи панорамні (в підлогу). null = ще не обрано.
+  windows: WindowType | null
   // майбутні кроки додають поля сюди
 }
 
