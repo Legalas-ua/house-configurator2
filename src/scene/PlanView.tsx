@@ -34,6 +34,21 @@ const LAZY_SHRINK_EASE = 0.28 // швидке стягування
 // ---- 3D-стос поверхів ----
 const FLOOR_H = 3.0 // висота поверху: на скільки 2-й поверх підіймається над 1-м
 const INACTIVE_OPACITY = 0.2 // прозорість неактивного (не редагованого) поверху
+const OPACITY_EASE = 0.3 // плавна зміна прозорості при перемиканні поверху
+
+// Плавно веде прозорість матеріалу до цілі. transparent перемикаємо ІМПЕРАТИВНО з
+// needsUpdate (three.js не застосовує зміну transparent через реактивний проп),
+// інакше неактивний поверх не стає прозорим. Активний (opacity≈1) → непрозорий
+// (без мерехтіння); неактивний → прозорий привид без depthWrite.
+function fadeMaterial(mat: MeshStandardMaterial, active: boolean, dt: number) {
+  easing.damp(mat, 'opacity', active ? 1 : INACTIVE_OPACITY, OPACITY_EASE, dt)
+  const opaque = mat.opacity > 0.98
+  if (mat.transparent === opaque) {
+    mat.transparent = !opaque
+    mat.depthWrite = opaque
+    mat.needsUpdate = true
+  }
+}
 
 function box(r: RoomZone) {
   return { x0: r.x - r.width / 2, x1: r.x + r.width / 2, z0: r.z - r.depth / 2, z1: r.z + r.depth / 2 }
@@ -92,6 +107,7 @@ function SlabMesh({
   active: boolean
 }) {
   const ref = useRef<Mesh>(null)
+  const mat = useRef<MeshStandardMaterial>(null)
   const wait = useRef(0)
   // початкову позицію фіксуємо один раз (стабільний проп) — далі нею володіє
   // лише useFrame, тому плита ніколи не «перескакує».
@@ -102,6 +118,7 @@ function SlabMesh({
   useFrame((_, dt) => {
     const m = ref.current
     if (!m) return
+    if (mat.current) fadeMaterial(mat.current, active, dt)
     if (wait.current > 0) {
       wait.current -= dt
       return // тримаємо старий розмір/позицію, поки кімнати не заберуться
@@ -112,14 +129,8 @@ function SlabMesh({
   return (
     <mesh ref={ref} scale={[0.001, 0.1, 0.001]} position={[init.cx, 0.05, init.cz]}>
       <boxGeometry args={[1, 1, 1]} />
-      {/* Активний поверх непрозорий; неактивний — прозорий привид без depthWrite. Без тіней. */}
-      <meshStandardMaterial
-        color="#faf7f0"
-        roughness={0.7}
-        transparent={!active}
-        opacity={active ? 1 : INACTIVE_OPACITY}
-        depthWrite={active}
-      />
+      {/* Прозорість керується імперативно через fadeMaterial (див. useFrame). Без тіней. */}
+      <meshStandardMaterial ref={mat} color="#faf7f0" roughness={0.7} transparent opacity={1} />
     </mesh>
   )
 }
@@ -185,7 +196,12 @@ function ZoneMesh({
     easing.damp(m.position, 'x', item.cx, ROOM_EASE, dt)
     easing.damp(m.position, 'y', hovered ? 0.26 : 0.18, ROOM_EASE, dt)
     easing.damp(m.position, 'z', posZ, ROOM_EASE, dt)
-    if (mat.current) easing.damp(mat.current, 'emissiveIntensity', hovered ? 0.28 : 0, 0.2, dt)
+    if (mat.current) {
+      // Підсвітку показуємо лише на активному поверсі (щоб не «застрягала» білим,
+      // коли перейшли на інший поверх).
+      easing.damp(mat.current, 'emissiveIntensity', hovered && active ? 0.28 : 0, 0.2, dt)
+      fadeMaterial(mat.current, active, dt)
+    }
     if (item.exiting && m.scale.x < 0.03) onExited()
   })
   return (
@@ -198,18 +214,16 @@ function ZoneMesh({
       onPointerOut={active ? onOut : undefined}
     >
       <boxGeometry args={[1, 1, 1]} />
-      {/* Активний поверх — НЕПРОЗОРИЙ (без мерехтіння при обертанні). Неактивний
-          — прозорий «привид» без depthWrite (не перефарбовує сусідів). Без тіней.
-          Хендлери лише в активного → неактивний не бере ховер/клік і не блокує. */}
+      {/* Прозорість — імперативно через fadeMaterial (активний непрозорий, без
+          мерехтіння; неактивний — прозорий привид). Хендлери лише в активного. */}
       <meshStandardMaterial
         ref={mat}
         color={item.color}
         roughness={0.55}
         emissive="#ffffff"
         emissiveIntensity={0}
-        transparent={!active}
-        opacity={active ? 1 : INACTIVE_OPACITY}
-        depthWrite={active}
+        transparent
+        opacity={1}
       />
     </mesh>
   )
@@ -232,6 +246,11 @@ function PlanFloor({
   const setHovered = useConfigurator((s) => s.setHovered)
   const [hoverKey, setHoverKey] = useState<string | null>(null)
   const [items, setItems] = useState<Item[]>([])
+
+  // Коли поверх стає неактивним — скидаємо підсвітку (щоб не «застрягала»)
+  useEffect(() => {
+    if (!active) setHoverKey(null)
+  }, [active])
 
   // Напрям зміни фундаменту: якщо площа плити меншає — це видалення, тож плита
   // чекає (SLAB_SHRINK_DELAY), поки кімнати заберуться. Якщо росте — delay=0.
