@@ -197,9 +197,14 @@ function ZoneMesh({
     easing.damp(m.position, 'y', hovered ? 0.26 : 0.18, ROOM_EASE, dt)
     easing.damp(m.position, 'z', posZ, ROOM_EASE, dt)
     if (mat.current) {
-      // Підсвітку показуємо лише на активному поверсі (щоб не «застрягала» білим,
-      // коли перейшли на інший поверх).
-      easing.damp(mat.current, 'emissiveIntensity', hovered && active ? 0.28 : 0, 0.2, dt)
+      // Підсвітку показуємо лише на активному поверсі. На неактивному гасимо
+      // МИТТЄВО (без easing-хвоста): інакше при перемиканні поверхів білий
+      // спалах ще ~0.2 с «доганяє» нуль, поки зона стає прозорим привидом.
+      if (active) {
+        easing.damp(mat.current, 'emissiveIntensity', hovered ? 0.28 : 0, 0.2, dt)
+      } else {
+        mat.current.emissiveIntensity = 0
+      }
       fadeMaterial(mat.current, active, dt)
     }
     if (item.exiting && m.scale.x < 0.03) onExited()

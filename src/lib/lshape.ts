@@ -260,8 +260,11 @@ function buildFloor2(config: HouseConfig): { rooms: RoomZone[]; length: number }
   rooms.push(rect('f2-stairs', 'stairs', CORRIDOR_W, z, STAIR_W, STAIR_LEN))
   z += STAIR_LEN
   const nightLen2 = z
-  // Коридор — уздовж крила до денного крила (як на 1-му), той самий lazyStretch
-  rooms.push({ ...rect('f2-corridor-v', 'corridor', 0, nw.corridorTop, CORRIDOR_W, nightLen2 - nw.corridorTop), lazyStretch: true })
+  // Коридор — уздовж крила до денного крила (як на 1-му), той самий lazyStretch.
+  // anchorZ:'min' — верхня грань (біля майстра) зафіксована, тож коридор росте/
+  // стягується від НИЖНЬОЇ грані й не «насідає» на майстер при 1↔2 спальнях
+  // (на 2-му поверсі це помітніше через зсув усього поверху за сходами).
+  rooms.push({ ...rect('f2-corridor-v', 'corridor', 0, nw.corridorTop, CORRIDOR_W, nightLen2 - nw.corridorTop), lazyStretch: true, anchorZ: 'min' as const })
 
   // ---- Денне крило (без кухні): горизонтальний коридор + санвузол(дубль) + спальня ----
   const bz = nightLen2 + HCORR_LEN
