@@ -250,11 +250,13 @@ function ZoneMesh({
 function PlanFloor({
   floor,
   showZones,
+  showSlab,
   yOffset,
   active,
 }: {
   floor: FloorPlan
   showZones: boolean
+  showSlab: boolean
   yOffset: number
   active: boolean
 }) {
@@ -330,9 +332,10 @@ function PlanFloor({
 
   return (
     <group position={[0, yOffset, 0]}>
-      {/* Фундамент (плита) — видимий лише поза кроком «кімнати» (show={!showZones}) */}
+      {/* Фундамент (плита) — на кроці «форма» тощо. На «кімнати» контур задають
+          зони, на «вікна» — 3D-оболонка (HouseShell), тож там плиту ховаємо. */}
       {floor.slab.map((r, i) => (
-        <SlabMesh key={`slab-${i}`} w={r.width} d={r.depth} cx={r.x} cz={r.z} delay={slabDelay} active={active} show={!showZones} />
+        <SlabMesh key={`slab-${i}`} w={r.width} d={r.depth} cx={r.x} cz={r.z} delay={slabDelay} active={active} show={showSlab} />
       ))}
 
       {/* Зони кімнат */}
@@ -376,7 +379,11 @@ export default function PlanView() {
   const hideFloor2 = useConfigurator((s) => s.hideFloor2)
 
   const plan = useMemo(() => generateHousePlan(config), [config])
-  const showZones = STEPS[currentStep].id === 'rooms'
+  const stepId = STEPS[currentStep].id
+  const showZones = stepId === 'rooms'
+  // Плиту показуємо на «формі» тощо, але не на «кімнати» (зони) і не на «вікна»
+  // (там основу дає 3D-оболонка HouseShell).
+  const showSlab = !showZones && stepId !== 'windows'
 
   if (plan.floors.length === 0) return null
 
@@ -392,6 +399,7 @@ export default function PlanView() {
             key={floorNum}
             floor={fl}
             showZones={showZones}
+            showSlab={showSlab}
             yOffset={(floorNum - 1) * FLOOR_H}
             active={active}
           />
