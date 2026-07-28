@@ -1,4 +1,4 @@
-import type { ConstructionType, HouseShape, WindowType } from './types'
+import type { ConstructionType, HouseShape, RoofType, WindowType } from './types'
 
 // Матриця залежностей: які форми доступні для якого типу конструкції.
 // Це ПРОСТО ДАНІ — редагуй список, і UI та 3D підлаштуються самі.
@@ -11,6 +11,9 @@ export const CONSTRUCTION_TYPES: ConstructionType[] = ['frame', 'modular', 'bric
 
 // Типи вікон (крок «Вікна»). Панорамні — в підлогу (вихід на терасу).
 export const WINDOW_TYPES: WindowType[] = ['standard', 'panoramic']
+
+// Типи даху (крок «Дах»). Поки працює лише плоский (додає парапети).
+export const ROOF_TYPES: RoofType[] = ['flat', 'pitched']
 
 export const SHAPES_BY_CONSTRUCTION: Record<ConstructionType, HouseShape[]> = {
   frame: ['rect', 'square', 'l-shape'],

@@ -1,5 +1,5 @@
 import type { ConfigKey, HouseConfig } from './types'
-import { ALL_SHAPES, WINDOW_TYPES } from './availability'
+import { ALL_SHAPES, ROOF_TYPES, WINDOW_TYPES } from './availability'
 
 // ============================================================
 // Data-driven майстер кроків.
@@ -8,7 +8,7 @@ import { ALL_SHAPES, WINDOW_TYPES } from './availability'
 // show3D визначає, чи видно 3D-вьюпорт на цьому кроці.
 // ============================================================
 
-export type StepId = 'budget' | 'constructionType' | 'shape' | 'rooms' | 'windows'
+export type StepId = 'budget' | 'constructionType' | 'shape' | 'rooms' | 'windows' | 'roof'
 
 export interface StepDef {
   id: StepId
@@ -53,6 +53,14 @@ export const STEPS: StepDef[] = [
     getOptions: () => WINDOW_TYPES,
     isComplete: (c) => c.windows !== null,
   },
+  {
+    id: 'roof',
+    kind: 'cards',
+    configKey: 'roof',
+    show3D: true,
+    getOptions: () => ROOF_TYPES,
+    isComplete: (c) => c.roof !== null,
+  },
 ]
 
 export const DEFAULT_CONFIG: HouseConfig = {
@@ -67,4 +75,5 @@ export const DEFAULT_CONFIG: HouseConfig = {
   bedrooms2: 1,
   extras2: [],
   windows: null,
+  roof: null,
 }

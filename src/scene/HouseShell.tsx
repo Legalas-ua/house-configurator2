@@ -19,12 +19,14 @@ import type { FloorPlan, PlanRect, RoomType, RoomZone, WindowType } from '../con
 const FLOOR_H = 3.0
 const WALL_T = 0.18
 const PLATE_T = 0.2
+const WALL_H = FLOOR_H - PLATE_T // стіна нижча за поверх, щоб не влазити в перекриття
 const WALL_COLOR = '#ece7de'
 const PLATE_COLOR = '#d9d3c6'
 const RISE_EASE = 0.5
+const PARAPET_H = 0.45 // висота парапету плоского даху
 
 // ---- Вікна ----
-const WIN_TOP = 2.3 // СПІЛЬНИЙ верх усіх вікон; змінюється лише низ (підвіконня)
+const WIN_TOP = 2.6 // СПІЛЬНИЙ верх усіх вікон; змінюється лише низ (підвіконня)
 const WIN_MARGIN = 0.5
 const FRAME_W = 0.06
 const FRAME_D = 0.1 // рама сидить у товщі стіни → вмонтована
@@ -34,7 +36,8 @@ const GLASS_COLOR = '#a9c6d6'
 const GLASS_OPACITY = 0.32
 const SWITCH_EASE = 0.4
 const MULLION_STEP = 1.4
-const DOOR_TRANSOM_Y = 2.0 // фрамуга над дверима
+const DOOR_TRANSOM_Y = 2.4 // фрамуга над дверима — на 2400 від підлоги (двері в підлогу)
+const DOOR_LEAF = 0.95 // ширина секції дверей (900–1000 мм)
 
 // ---- Перегородки та внутрішні двері ----
 const PART_T = 0.1
@@ -62,9 +65,10 @@ const WIN_WIDTH: Partial<Record<RoomType, number>> = {
   corridor: 100, // галерея на всю стіну
 }
 
-// Двері (панорама в підлогу) — лише кухня-вітальня та прихожа. Решта кімнат —
-// звичайні вікна (перемикаються). Вихід на терасу — окремо (facesTerrace).
-const isDoorRoom = (type: RoomType) => type === 'livingKitchen' || type === 'hall'
+// Двері (панорама в підлогу): кухня-вітальня та прихожа завжди; спальні/майстер
+// 1-го поверху — вихід у двір. Решта — звичайні вікна. Тераса — окремо.
+const isDoorRoom = (type: RoomType, floorIdx: number) =>
+  type === 'livingKitchen' || type === 'hall' || (floorIdx === 0 && (type === 'bedroom' || type === 'master'))
 
 // Підвіконня (верх завжди WIN_TOP). Санвузол/сходи — фіксовані (не перемикаються).
 // Двері — в підлогу. Решта: панорама — 1-й поверх у підлогу / 2-й 300мм; звичайні
@@ -216,12 +220,27 @@ const frameMat = { color: FRAME_COLOR, metalness: 0.85, roughness: 0.35 }
 // типу). Двері отримують горизонтальну фрамугу + вертикальні імпости.
 function Win({ rotY, x, z, baseY, width, sill, isDoor }: { rotY: number; x: number; z: number; baseY: number; width: number; sill: number; isDoor: boolean }) {
   const gW = Math.max(width - 2 * FRAME_W, 0.05)
+  // Двері: ліворуч секція дверей (DOOR_LEAF) з фрамугою над нею; праворуч — вікно.
+  const split = isDoor && width > DOOR_LEAF + 0.3
+  const boundary = -width / 2 + DOOR_LEAF // межа секції дверей
   const mullX = useMemo(() => {
     const xs: number[] = []
-    const n = width > 1.7 ? Math.max(1, Math.round(width / MULLION_STEP) - 1) : isDoor ? 1 : 0
-    for (let k = 1; k <= n; k++) xs.push(-width / 2 + (k * width) / (n + 1))
+    if (split) xs.push(boundary) // імпост між дверима і вікном
+    // додаткові імпости у широкій віконній частині
+    const wsStart = split ? boundary : -width / 2
+    const wsW = width / 2 - wsStart
+    if (wsW > 1.7) {
+      const n = Math.max(1, Math.round(wsW / MULLION_STEP) - 1)
+      for (let k = 1; k <= n; k++) xs.push(wsStart + (k * wsW) / (n + 1))
+    } else if (!isDoor && width > 1.7) {
+      const n = Math.max(1, Math.round(width / MULLION_STEP) - 1)
+      for (let k = 1; k <= n; k++) xs.push(-width / 2 + (k * width) / (n + 1))
+    }
     return xs
-  }, [width, isDoor])
+  }, [width, isDoor, split, boundary])
+  // Фрамуга — лише над секцією дверей (або над усім, якщо секція вузька).
+  const transomA = -width / 2
+  const transomB = split ? boundary : width / 2
   const s = useRef(sill)
   const stretch = useRef<Group>(null)
   const bottom = useRef<Mesh>(null)
@@ -245,8 +264,8 @@ function Win({ rotY, x, z, baseY, width, sill, isDoor }: { rotY: number; x: numb
         <meshStandardMaterial {...frameMat} />
       </mesh>
       {isDoor && (
-        <mesh position={[0, DOOR_TRANSOM_Y, 0]}>
-          <boxGeometry args={[width, FRAME_W, FRAME_D]} />
+        <mesh position={[(transomA + transomB) / 2, DOOR_TRANSOM_Y, 0]}>
+          <boxGeometry args={[transomB - transomA, FRAME_W, FRAME_D]} />
           <meshStandardMaterial {...frameMat} />
         </mesh>
       )}
@@ -302,7 +321,8 @@ export default function HouseShell() {
   const currentStep = useConfigurator((s) => s.currentStep)
 
   const plan = useMemo(() => generateHousePlan(config), [config])
-  const show = STEPS[currentStep].id === 'windows'
+  const stepId = STEPS[currentStep].id
+  const show = stepId === 'windows' || stepId === 'roof' // коробка видима на «Вікна» і «Дах»
   const ref = useRef<Group>(null)
 
   const openings = useMemo(() => {
@@ -324,7 +344,7 @@ export default function HouseShell() {
         if (sides.length === 0) return
         sides.sort((a, c) => c.len - a.len)
         // Дверна сторона: прихожа — з фасаду (zmax); кухня/інші — у двір (zmin).
-        const doorRoom = isDoorRoom(room.type)
+        const doorRoom = isDoorRoom(room.type, floorIdx)
         const pref: Side = room.type === 'hall' ? 'zmax' : 'zmin'
         const doorSide = doorRoom ? (sides.find((s) => s.side === pref) ?? sides[0]) : null
         sides.forEach((sd) => {
@@ -366,11 +386,11 @@ export default function HouseShell() {
           .sort((a, b) => a.a - b.a)
         let cursor = e.min - WALL_T / 2
         for (const o of eo) {
-          if (o.a > cursor) pushBox(boxes, e.horizontal, e.line, cursor, o.a, 0, FLOOR_H, baseY, WALL_T)
-          pushBox(boxes, e.horizontal, e.line, o.a, o.b, WIN_TOP, FLOOR_H, baseY, WALL_T)
+          if (o.a > cursor) pushBox(boxes, e.horizontal, e.line, cursor, o.a, 0, WALL_H, baseY, WALL_T)
+          pushBox(boxes, e.horizontal, e.line, o.a, o.b, WIN_TOP, WALL_H, baseY, WALL_T)
           cursor = o.b
         }
-        pushBox(boxes, e.horizontal, e.line, cursor, e.max + WALL_T / 2, 0, FLOOR_H, baseY, WALL_T)
+        pushBox(boxes, e.horizontal, e.line, cursor, e.max + WALL_T / 2, 0, WALL_H, baseY, WALL_T)
       }
     })
     return boxes
@@ -401,14 +421,14 @@ export default function HouseShell() {
           seen.add(key)
           const len = sd.b - sd.a
           if (len < IDOOR_W + 0.4) {
-            pushBox(wallB, sd.horizontal, sd.line, sd.a, sd.b, 0, FLOOR_H, baseY, PART_T)
+            pushBox(wallB, sd.horizontal, sd.line, sd.a, sd.b, 0, WALL_H, baseY, PART_T)
           } else {
             const mid = (sd.a + sd.b) / 2
             const ds = mid - IDOOR_W / 2
             const de = mid + IDOOR_W / 2
-            pushBox(wallB, sd.horizontal, sd.line, sd.a, ds, 0, FLOOR_H, baseY, PART_T)
-            pushBox(wallB, sd.horizontal, sd.line, de, sd.b, 0, FLOOR_H, baseY, PART_T)
-            pushBox(wallB, sd.horizontal, sd.line, ds, de, IDOOR_H, FLOOR_H, baseY, PART_T)
+            pushBox(wallB, sd.horizontal, sd.line, sd.a, ds, 0, WALL_H, baseY, PART_T)
+            pushBox(wallB, sd.horizontal, sd.line, de, sd.b, 0, WALL_H, baseY, PART_T)
+            pushBox(wallB, sd.horizontal, sd.line, ds, de, IDOOR_H, WALL_H, baseY, PART_T)
             pushBox(doorB, sd.horizontal, sd.line, ds, de, 0, IDOOR_H, baseY, IDOOR_D)
           }
         }
@@ -458,6 +478,18 @@ export default function HouseShell() {
     return out
   }, [plan])
 
+  // Плоский дах: парапети по периметру верхньої плити (крок «Дах», roof=flat).
+  const parapets = useMemo(() => {
+    const boxes: Box[] = []
+    const N = plan.floors.length
+    if (N === 0 || config.roof !== 'flat') return boxes
+    const y = N * FLOOR_H
+    for (const e of edgesOf(wallOutline(plan.floors[N - 1]))) {
+      pushBox(boxes, e.horizontal, e.line, e.min - WALL_T / 2, e.max + WALL_T / 2, 0, PARAPET_H, y, WALL_T)
+    }
+    return boxes
+  }, [plan, config.roof])
+
   useFrame((_, dt) => {
     const g = ref.current
     if (!g) return
@@ -493,7 +525,15 @@ export default function HouseShell() {
 
       {plates.map((p, i) => (
         <mesh key={`plate-${i}`} geometry={p.geo} position={[0, p.y - PLATE_T, 0]} castShadow receiveShadow>
-          <meshStandardMaterial color={PLATE_COLOR} roughness={0.9} />
+          {/* polygonOffset — плита виграє в z-тесті над зеленою землею (без мерехтіння) */}
+          <meshStandardMaterial color={PLATE_COLOR} roughness={0.9} polygonOffset polygonOffsetFactor={-2} polygonOffsetUnits={-2} />
+        </mesh>
+      ))}
+
+      {parapets.map((b, i) => (
+        <mesh key={`parapet-${i}`} position={[b.x, b.y, b.z]} castShadow receiveShadow>
+          <boxGeometry args={[b.dx, b.dy, b.dz]} />
+          <meshStandardMaterial color={WALL_COLOR} roughness={0.9} />
         </mesh>
       ))}
 
