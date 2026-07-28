@@ -137,9 +137,11 @@ function SlabMesh({
     easing.damp3(m.position, [cx, 0.05, cz], SLAB_EASE, dt)
   })
   return (
-    <mesh ref={ref} scale={[0.001, 0.1, 0.001]} position={[init.cx, 0.05, init.cz]}>
+    // Плиту фундаменту БІЛЬШЕ НЕ МАЛЮЄМО (visible={false}): майже-біла плита
+    // давала білі полотна при перемиканні поверхів. Кімнати самі задають контур.
+    // Логіку розміру/затримки лишено — легко повернути плиту, знявши visible={false}.
+    <mesh ref={ref} visible={false} scale={[0.001, 0.1, 0.001]} position={[init.cx, 0.05, init.cz]}>
       <boxGeometry args={[1, 1, 1]} />
-      {/* Прозорість керується імперативно через fadeMaterial (див. useFrame). Без тіней. */}
       <meshStandardMaterial ref={mat} color="#faf7f0" roughness={0.7} transparent opacity={1} />
     </mesh>
   )
