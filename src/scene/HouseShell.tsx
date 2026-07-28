@@ -9,81 +9,89 @@ import type { FloorPlan, PlanRect, RoomType, RoomZone, WindowType } from '../con
 
 // ============================================================
 // 3D-оболонка будинку (Фази A+B). Показуємо ЛИШЕ на кроці «Вікна» — уся коробка
-// плавно «виростає» з землі (одна група, scale.y), а на зовнішніх стінах кімнат
-// стоять деталізовані вікна/двері (рама + скло + ручка).
+// плавно «виростає» з землі (одна група, scale.y). Вікна/двері ВМОНТОВАНІ в стіну:
+// стіна будується з простінків + перемичок + підвіконних частин, лишаючи реальний
+// отвір, у який сідає деталізоване вікно (рама + скло + імпости).
 //
-// Стіни — на всю висоту поверху (з'єднуються між поверхами). Перекриття: підлога
-// 1-го, міжповерхове (з ОТВОРОМ під сходи) і кришка (тимчасова — дах у Фазі C).
 // Тераса — БЕЗ стін і кришки: відкритий простір зі скляним парканом + поручнем.
+// Стіна кімнати, що виходить на терасу, — панорамне скління-двері в підлогу.
 // ============================================================
 
-const FLOOR_H = 3.0 // висота поверху (= висота стіни, щоб коробка була суцільна)
-const WALL_T = 0.18 // товщина стіни
-const PLATE_T = 0.2 // товщина перекриття
-const WALL_COLOR = '#ece7de' // теплий світлий тиньк
-const PLATE_COLOR = '#d9d3c6' // трохи темніше — читається як підлога/перекриття
-const RISE_EASE = 0.5 // плавний підйом коробки
+const FLOOR_H = 3.0
+const WALL_T = 0.18
+const PLATE_T = 0.2
+const WALL_COLOR = '#ece7de'
+const PLATE_COLOR = '#d9d3c6'
+const RISE_EASE = 0.5
 
-// ---- Вікна та двері ----
-const WIN_TOP = 2.3 // СПІЛЬНИЙ верх усіх вікон/дверей; змінюється лише низ (підвіконня)
-const WIN_MARGIN = 0.5 // сумарний відступ вікна від країв стіни
+// ---- Вікна ----
+const WIN_TOP = 2.3 // СПІЛЬНИЙ верх усіх вікон; змінюється лише низ (підвіконня)
+const WIN_MARGIN = 0.5
 const FRAME_W = 0.06 // ширина металевого профілю
-const FRAME_D = 0.1 // глибина рами (трохи виступає зі стіни)
-const GLASS_D = 0.03 // товщина скла
-const FRAME_COLOR = '#6b7075' // метал (рама + ручка + поручень)
-const GLASS_COLOR = '#a9c6d6' // прозоре скло (легкий блакитний)
-const GLASS_OPACITY = 0.34
+const FRAME_D = 0.1 // глибина рами (сидить у товщі стіни → вмонтована)
+const GLASS_D = 0.03
+const FRAME_COLOR = '#6b7075' // метал (рама + імпости + поручень)
+const GLASS_COLOR = '#a9c6d6'
+const GLASS_OPACITY = 0.32
 const SWITCH_EASE = 0.4 // анімація зміни вікна при переключенні типу
+const MULLION_STEP = 1.4 // імпост приблизно кожні 1.4 м ширини
 
 // ---- Тераса ----
-const FENCE_H = 1.1 // скляний паркан 1100 мм
+const FENCE_H = 1.1
 const FENCE_D = 0.04
-const RAIL_H = 0.06 // поручень
+const RAIL_H = 0.06
 const RAIL_W = 0.08
 
-// Ширина отвору за типом кімнати (м). Немає в мапі → кімната без вікон
-// (комора, тераса тощо). corridor = дуже широко → скляна галерея на всю стіну.
+// Ширина отвору за типом кімнати. Немає в мапі → без вікон (комора/тераса).
 const WIN_WIDTH: Partial<Record<RoomType, number>> = {
   master: 1.8,
   bedroom: 1.6,
   livingKitchen: 2.6,
   office: 1.3,
-  bathroom: 1.0, // санвузол — БІЛЬШЕ і горизонтальне
-  closet: 0.6, // гардероб майстра — маленьке
-  wardrobe: 0.8, // гардеробна денна
-  hall: 1.0, // прихожа — вхідні двері
-  stairs: 1.2, // вікно біля сходів (за нормами обов'язкове)
-  corridor: 100, // скляна галерея — на всю довжину стіни
+  bathroom: 1.0, // санвузол — більше, горизонтальне
+  closet: 0.6,
+  wardrobe: 0.8,
+  hall: 1.0,
+  stairs: 1.2, // вікно біля сходів (норми)
+  corridor: 100, // скляна галерея — на всю стіну
 }
 
-// Кімнати, чий НАЙШИРШИЙ зовнішній отвір — двері в підлогу: кухня-вітальня та
-// прихожа завжди; кімнати 1-го поверху (вихід у двір); майстер 2-го з терасою.
-function isDoorRoom(type: RoomType, floorIdx: number, terrace2: boolean): boolean {
+function isDoorRoom(type: RoomType, floorIdx: number): boolean {
   if (type === 'livingKitchen' || type === 'hall') return true
   if (floorIdx === 0 && (type === 'bedroom' || type === 'master' || type === 'office')) return true
-  if (floorIdx === 1 && type === 'master' && terrace2) return true
   return false
 }
 
-// Підвіконня отвору (верх завжди WIN_TOP → міняється лише низ). Двері/галерея/сходи
-// — в підлогу; санвузол — коротке горизонтальне вгорі; панорамні — в підлогу (2-й
-// поверх: 300 мм); звичайні — стандартні.
-function sillFor(type: RoomType, floorIdx: number, win: WindowType, asDoor: boolean): number {
-  if (asDoor) return 0
+// Підвіконня (верх завжди WIN_TOP). Тераса → в підлогу (обробляється окремо).
+// 1-й поверх: двері/галерея/сходи/панорама — в підлогу, звичайні — 900 мм.
+// 2-й поверх: УСЕ з відступом 300 мм (крім виходу на терасу і санвузла).
+function sillFor(floorIdx: number, type: RoomType, win: WindowType, asDoor: boolean): number {
   if (type === 'bathroom') return WIN_TOP - 0.6
+  if (floorIdx >= 1) return 0.3
+  if (asDoor) return 0
   if (type === 'corridor' || type === 'stairs') return 0
-  if (win === 'panoramic') return floorIdx === 0 ? 0 : 0.3
+  if (win === 'panoramic') return 0
   return 0.9
 }
 
 const segOverlap = (a0: number, a1: number, b0: number, b1: number) => Math.min(a1, b1) - Math.max(a0, b0) > 0.05
 
-// Чи сторона кімнати зовнішня (немає суміжної кімнати за нею). Тераса НЕ блокує —
-// сторона до тераси теж зовнішня (там будуть двері на терасу).
-function isExterior(rooms: RoomZone[], room: RoomZone, side: 'xmax' | 'xmin' | 'zmax' | 'zmin'): boolean {
+interface Rect {
+  x0: number
+  x1: number
+  z0: number
+  z1: number
+}
+function bounds(r: PlanRect): Rect {
+  return { x0: r.x - r.width / 2, x1: r.x + r.width / 2, z0: r.z - r.depth / 2, z1: r.z + r.depth / 2 }
+}
+
+// Чи є за стороною кімнати щось (тераса НЕ блокує — до неї роблять вихід).
+function neighborBeyond(rooms: RoomZone[], room: RoomZone, side: 'xmax' | 'xmin' | 'zmax' | 'zmin', onlyTerrace: boolean): boolean {
   const b = bounds(room)
-  return !rooms.some((r2) => {
-    if (r2 === room || r2.type === 'terrace') return false
+  return rooms.some((r2) => {
+    if (r2 === room) return false
+    if (onlyTerrace ? r2.type !== 'terrace' : r2.type === 'terrace') return false
     const c = bounds(r2)
     if (side === 'xmax') return Math.abs(c.x0 - b.x1) < 0.05 && segOverlap(b.z0, b.z1, c.z0, c.z1)
     if (side === 'xmin') return Math.abs(c.x1 - b.x0) < 0.05 && segOverlap(b.z0, b.z1, c.z0, c.z1)
@@ -91,26 +99,10 @@ function isExterior(rooms: RoomZone[], room: RoomZone, side: 'xmax' | 'xmin' | '
     return Math.abs(c.z1 - b.z0) < 0.05 && segOverlap(b.x0, b.x1, c.x0, c.x1)
   })
 }
+const isExterior = (rooms: RoomZone[], room: RoomZone, side: 'xmax' | 'xmin' | 'zmax' | 'zmin') => !neighborBeyond(rooms, room, side, false)
+const facesTerrace = (rooms: RoomZone[], room: RoomZone, side: 'xmax' | 'xmin' | 'zmax' | 'zmin') => neighborBeyond(rooms, room, side, true)
 
-interface WallSeg {
-  cx: number
-  cz: number
-  len: number
-  horizontal: boolean
-}
-interface Rect {
-  x0: number
-  x1: number
-  z0: number
-  z1: number
-}
-
-function bounds(r: PlanRect): Rect {
-  return { x0: r.x - r.width / 2, x1: r.x + r.width / 2, z0: r.z - r.depth / 2, z1: r.z + r.depth / 2 }
-}
-
-// Зовнішній контур поверху з плити. Г-подібний = 2 прямокутники → 6-кутник;
-// один прямокутник → 4 кути.
+// Контур поверху з плити (Г = 6-кутник, прямокутник = 4 кути).
 function outline(slab: PlanRect[]): [number, number][] {
   if (slab.length === 1) {
     const a = bounds(slab[0])
@@ -132,8 +124,7 @@ function outline(slab: PlanRect[]): [number, number][] {
   ]
 }
 
-// Контур СТІН/КРИШКИ: як outline, але БЕЗ тераси (тераса — відкрита, її не
-// обносимо стінами й не накриваємо). Тераса — задня смуга на всю ширину крила.
+// Контур СТІН/КРИШКИ — без тераси (її не обносимо стінами й не накриваємо).
 function wallOutline(fl: FloorPlan): [number, number][] {
   const terrace = fl.rooms.find((r) => r.type === 'terrace')
   if (!terrace || fl.slab.length !== 1) return outline(fl.slab)
@@ -149,20 +140,74 @@ function wallOutline(fl: FloorPlan): [number, number][] {
   ]
 }
 
-// Ребра контуру → відрізки стін (кожне осепаралельне).
-function segments(pts: [number, number][]): WallSeg[] {
-  const segs: WallSeg[] = []
+interface Edge {
+  horizontal: boolean
+  line: number
+  min: number
+  max: number
+}
+function edgesOf(pts: [number, number][]): Edge[] {
+  const es: Edge[] = []
   for (let i = 0; i < pts.length; i++) {
     const [x0, z0] = pts[i]
     const [x1, z1] = pts[(i + 1) % pts.length]
-    const horizontal = Math.abs(z1 - z0) < 1e-4
-    const len = Math.abs(horizontal ? x1 - x0 : z1 - z0) + WALL_T // +T щоб кути стикались
-    segs.push({ cx: (x0 + x1) / 2, cz: (z0 + z1) / 2, len, horizontal })
+    if (Math.abs(z1 - z0) < 1e-4) es.push({ horizontal: true, line: z0, min: Math.min(x0, x1), max: Math.max(x0, x1) })
+    else es.push({ horizontal: false, line: x0, min: Math.min(z0, z1), max: Math.max(z0, z1) })
   }
-  return segs
+  return es
 }
 
-// Горизонтальне перекриття (з можливим отвором під сходи), покладене плазом.
+interface Opening {
+  key: string
+  baseY: number
+  horizontal: boolean
+  line: number
+  a: number
+  b: number
+  sill: number
+  rotY: number
+  fx: number
+  fz: number
+  width: number
+}
+interface Box {
+  x: number
+  y: number
+  z: number
+  dx: number
+  dy: number
+  dz: number
+}
+
+// Стіна з отворами: простінки на всю висоту + перемичка над отвором + підвіконна
+// частина під ним. Отвір [a..b]×[sill..WIN_TOP] лишається порожнім.
+function wallBoxes(pts: [number, number][], ops: Opening[], baseY: number): Box[] {
+  const boxes: Box[] = []
+  for (const e of edgesOf(pts)) {
+    const eo = ops
+      .filter((o) => o.horizontal === e.horizontal && Math.abs(o.line - e.line) < 0.05 && o.a >= e.min - 0.01 && o.b <= e.max + 0.01)
+      .sort((a, b) => a.a - b.a)
+    const push = (u0: number, u1: number, v0: number, v1: number) => {
+      const ulen = u1 - u0
+      const vlen = v1 - v0
+      if (ulen <= 0.001 || vlen <= 0.001) return
+      const uc = (u0 + u1) / 2
+      const vc = baseY + (v0 + v1) / 2
+      if (e.horizontal) boxes.push({ x: uc, y: vc, z: e.line, dx: ulen, dy: vlen, dz: WALL_T })
+      else boxes.push({ x: e.line, y: vc, z: uc, dx: WALL_T, dy: vlen, dz: ulen })
+    }
+    let cursor = e.min - WALL_T / 2
+    for (const o of eo) {
+      if (o.a > cursor) push(cursor, o.a, 0, FLOOR_H)
+      push(o.a, o.b, WIN_TOP, FLOOR_H) // перемичка над
+      if (o.sill > 0.001) push(o.a, o.b, 0, o.sill) // під підвіконням
+      cursor = o.b
+    }
+    push(cursor, e.max + WALL_T / 2, 0, FLOOR_H)
+  }
+  return boxes
+}
+
 function plateGeometry(pts: [number, number][], hole: Rect | null): ExtrudeGeometry {
   const shape = new Shape()
   pts.forEach(([x, z], i) => (i === 0 ? shape.moveTo(x, -z) : shape.lineTo(x, -z)))
@@ -183,34 +228,31 @@ function plateGeometry(pts: [number, number][], hole: Rect | null): ExtrudeGeome
 
 const frameMat = { color: FRAME_COLOR, metalness: 0.85, roughness: 0.35 }
 
-// Деталізоване вікно: рама (4 металеві профілі) + скло + ручка. Верх нерухомий
-// (WIN_TOP), НИЗ анімується до цільового підвіконня → при зміні типу вікон низ
-// плавно з'їжджає. Бічні профілі й скло — unit-висота × scale.y.
+// Деталізоване вікно, вмонтоване в отвір: рама + скло + вертикальні імпости.
+// Верх нерухомий (WIN_TOP), НИЗ анімується до цільового підвіконня (зміна типу).
 function Win({ rotY, x, z, baseY, width, sill }: { rotY: number; x: number; z: number; baseY: number; width: number; sill: number }) {
   const gW = Math.max(width - 2 * FRAME_W, 0.05)
+  const mullX = useMemo(() => {
+    const xs: number[] = []
+    if (width > 1.7) {
+      const n = Math.max(1, Math.round(width / MULLION_STEP) - 1)
+      for (let k = 1; k <= n; k++) xs.push(-width / 2 + (k * width) / (n + 1))
+    }
+    return xs
+  }, [width])
   const s = useRef(sill)
+  const stretch = useRef<Group>(null)
   const bottom = useRef<Mesh>(null)
-  const left = useRef<Mesh>(null)
-  const right = useRef<Mesh>(null)
-  const glass = useRef<Mesh>(null)
-  const handle = useRef<Mesh>(null)
   useFrame((_, dt) => {
     easing.damp(s, 'current', sill, SWITCH_EASE, dt)
     const cs = s.current
     const h = WIN_TOP - cs
     const cy = (cs + WIN_TOP) / 2
     if (bottom.current) bottom.current.position.y = cs + FRAME_W / 2
-    for (const r of [left.current, right.current]) {
-      if (r) {
-        r.position.y = cy
-        r.scale.y = Math.max(h, 0.01)
-      }
+    if (stretch.current) {
+      stretch.current.position.y = cy
+      stretch.current.scale.y = Math.max(h, 0.01)
     }
-    if (glass.current) {
-      glass.current.position.y = cy
-      glass.current.scale.y = Math.max(h - 2 * FRAME_W, 0.01)
-    }
-    if (handle.current) handle.current.position.y = cy
   })
   return (
     <group rotation-y={rotY} position={[x, baseY, z]}>
@@ -224,25 +266,27 @@ function Win({ rotY, x, z, baseY, width, sill }: { rotY: number; x: number; z: n
         <boxGeometry args={[width, FRAME_W, FRAME_D]} />
         <meshStandardMaterial {...frameMat} />
       </mesh>
-      {/* бічні профілі — unit-висота, масштабуються по y */}
-      <mesh ref={left} position={[-width / 2 + FRAME_W / 2, WIN_TOP / 2, 0]}>
-        <boxGeometry args={[FRAME_W, 1, FRAME_D]} />
-        <meshStandardMaterial {...frameMat} />
-      </mesh>
-      <mesh ref={right} position={[width / 2 - FRAME_W / 2, WIN_TOP / 2, 0]}>
-        <boxGeometry args={[FRAME_W, 1, FRAME_D]} />
-        <meshStandardMaterial {...frameMat} />
-      </mesh>
-      {/* скло */}
-      <mesh ref={glass} position={[0, WIN_TOP / 2, 0]}>
-        <boxGeometry args={[gW, 1, GLASS_D]} />
-        <meshStandardMaterial color={GLASS_COLOR} metalness={0} roughness={0.05} transparent opacity={GLASS_OPACITY} />
-      </mesh>
-      {/* ручка */}
-      <mesh ref={handle} position={[width / 2 - 0.14, WIN_TOP / 2, FRAME_D / 2]}>
-        <boxGeometry args={[0.03, 0.2, 0.04]} />
-        <meshStandardMaterial {...frameMat} />
-      </mesh>
+      {/* вертикальні елементи — unit-висота (центр 0), масштабуються по y */}
+      <group ref={stretch}>
+        <mesh position={[-width / 2 + FRAME_W / 2, 0, 0]}>
+          <boxGeometry args={[FRAME_W, 1, FRAME_D]} />
+          <meshStandardMaterial {...frameMat} />
+        </mesh>
+        <mesh position={[width / 2 - FRAME_W / 2, 0, 0]}>
+          <boxGeometry args={[FRAME_W, 1, FRAME_D]} />
+          <meshStandardMaterial {...frameMat} />
+        </mesh>
+        {mullX.map((mx, i) => (
+          <mesh key={i} position={[mx, 0, 0]}>
+            <boxGeometry args={[FRAME_W * 0.8, 1, FRAME_D * 0.9]} />
+            <meshStandardMaterial {...frameMat} />
+          </mesh>
+        ))}
+        <mesh position={[0, 0, -0.01]}>
+          <boxGeometry args={[gW, 1, GLASS_D]} />
+          <meshStandardMaterial color={GLASS_COLOR} metalness={0} roughness={0.05} transparent opacity={GLASS_OPACITY} />
+        </mesh>
+      </group>
     </group>
   )
 }
@@ -255,10 +299,60 @@ export default function HouseShell() {
   const show = STEPS[currentStep].id === 'windows'
   const ref = useRef<Group>(null)
 
-  const wallFloors = useMemo(() => plan.floors.map((fl) => segments(wallOutline(fl))), [plan])
+  // Отвори (вікна/двері) — рахуємо ПЕРШИМИ, бо стіни будуються з отворами під них.
+  const openings = useMemo(() => {
+    const win: WindowType = config.windows ?? 'standard'
+    const out: Opening[] = []
+    plan.floors.forEach((fl, floorIdx) => {
+      const baseY = floorIdx * FLOOR_H
+      fl.rooms.forEach((room) => {
+        const specW = WIN_WIDTH[room.type]
+        if (specW == null) return
+        const b = bounds(room)
+        type Side = 'xmax' | 'xmin' | 'zmax' | 'zmin'
+        const cand: { side: Side; horizontal: boolean; line: number; center: number; len: number; rotY: number }[] = [
+          { side: 'xmax', horizontal: false, line: b.x1, center: (b.z0 + b.z1) / 2, len: b.z1 - b.z0, rotY: Math.PI / 2 },
+          { side: 'xmin', horizontal: false, line: b.x0, center: (b.z0 + b.z1) / 2, len: b.z1 - b.z0, rotY: -Math.PI / 2 },
+          { side: 'zmax', horizontal: true, line: b.z1, center: (b.x0 + b.x1) / 2, len: b.x1 - b.x0, rotY: 0 },
+          { side: 'zmin', horizontal: true, line: b.z0, center: (b.x0 + b.x1) / 2, len: b.x1 - b.x0, rotY: Math.PI },
+        ]
+        const sides = cand.filter((c) => isExterior(fl.rooms, room, c.side))
+        if (sides.length === 0) return
+        sides.sort((a, c) => c.len - a.len)
+        const doorRoom = isDoorRoom(room.type, floorIdx)
+        sides.forEach((sd, i) => {
+          const terraceExit = facesTerrace(fl.rooms, room, sd.side)
+          // Вихід на терасу — панорамне скління-двері на всю стіну, в підлогу.
+          const width = terraceExit ? Math.max(sd.len - 0.3, 0.6) : Math.min(specW, sd.len - WIN_MARGIN)
+          if (width < 0.4) return
+          const asDoor = doorRoom && i === 0
+          const sill = terraceExit ? 0 : sillFor(floorIdx, room.type, win, asDoor)
+          out.push({
+            key: `${floorIdx}-${room.id ?? room.type}-${sd.side}`,
+            baseY,
+            horizontal: sd.horizontal,
+            line: sd.line,
+            a: sd.center - width / 2,
+            b: sd.center + width / 2,
+            sill,
+            rotY: sd.rotY,
+            fx: sd.horizontal ? sd.center : sd.line,
+            fz: sd.horizontal ? sd.line : sd.center,
+            width,
+          })
+        })
+      })
+    })
+    return out
+  }, [plan, config.windows])
 
-  // Перекриття рівнів 0..N. Контур — БЕЗ тераси (wallOutline), тож кришка над
-  // терасою не накриває її; отвір під сходи — лише в перекриттях між поверхами.
+  // Стіни з отворами.
+  const walls = useMemo(() => {
+    if (plan.floors.length === 0) return []
+    return plan.floors.flatMap((fl, idx) => wallBoxes(wallOutline(fl), openings.filter((o) => o.baseY === idx * FLOOR_H), idx * FLOOR_H))
+  }, [plan, openings])
+
+  // Перекриття рівнів 0..N (контур кришки — без тераси; підлога тераси лишається).
   const plates = useMemo(() => {
     const N = plan.floors.length
     const arr: { y: number; geo: ExtrudeGeometry }[] = []
@@ -268,52 +362,11 @@ export default function HouseShell() {
       const wantHole = idx >= 1 && idx <= N - 1
       const stairs = wantHole ? fl.rooms.find((r) => r.type === 'stairs') : undefined
       const hole = stairs ? bounds(stairs) : null
-      // Підлога тераси — це перекриття НИЖЧОГО рівня (idx-1), тож повний контур
-      // (outline). Кришка над поверхом (idx) — wallOutline (без тераси).
       const pts = idx <= N - 1 ? outline(fl.slab) : wallOutline(fl)
       arr.push({ y: idx * FLOOR_H, geo: plateGeometry(pts, hole) })
     }
     return arr
   }, [plan])
-
-  // Отвори (вікна/двері) на зовнішніх стінах кімнат.
-  const openings = useMemo(() => {
-    const terrace2 = config.extras2.includes('terrace')
-    const win: WindowType = config.windows ?? 'standard'
-    const out: { key: string; baseY: number; rotY: number; x: number; z: number; width: number; sill: number }[] = []
-    plan.floors.forEach((fl, floorIdx) => {
-      fl.rooms.forEach((room) => {
-        const specW = WIN_WIDTH[room.type]
-        if (specW == null) return
-        const b = bounds(room)
-        const cand: { side: 'xmax' | 'xmin' | 'zmax' | 'zmin'; rotY: number; x: number; z: number; len: number }[] = [
-          { side: 'xmax', rotY: Math.PI / 2, x: b.x1 + WALL_T / 2, z: (b.z0 + b.z1) / 2, len: b.z1 - b.z0 },
-          { side: 'xmin', rotY: -Math.PI / 2, x: b.x0 - WALL_T / 2, z: (b.z0 + b.z1) / 2, len: b.z1 - b.z0 },
-          { side: 'zmax', rotY: 0, x: (b.x0 + b.x1) / 2, z: b.z1 + WALL_T / 2, len: b.x1 - b.x0 },
-          { side: 'zmin', rotY: Math.PI, x: (b.x0 + b.x1) / 2, z: b.z0 - WALL_T / 2, len: b.x1 - b.x0 },
-        ]
-        const sides = cand.filter((c) => isExterior(fl.rooms, room, c.side))
-        if (sides.length === 0) return
-        sides.sort((a, c) => c.len - a.len) // найширша сторона перша
-        const doorRoom = isDoorRoom(room.type, floorIdx, terrace2)
-        sides.forEach((sd, i) => {
-          const width = Math.min(specW, sd.len - WIN_MARGIN)
-          if (width < 0.4) return
-          const sill = sillFor(room.type, floorIdx, win, doorRoom && i === 0)
-          out.push({
-            key: `${floorIdx}-${room.id ?? room.type}-${sd.side}`,
-            baseY: floorIdx * FLOOR_H,
-            rotY: sd.rotY,
-            x: sd.x,
-            z: sd.z,
-            width,
-            sill,
-          })
-        })
-      })
-    })
-    return out
-  }, [plan, config.windows, config.extras2])
 
   // Скляний паркан по контуру тераси (крім сторони до будинку) + поручень.
   const fences = useMemo(() => {
@@ -333,13 +386,7 @@ export default function HouseShell() {
       edges.forEach((e) => {
         if (!e.on) return
         const mid = (e.a + e.b) / 2
-        out.push({
-          baseY,
-          horizontal: e.horizontal,
-          cx: e.horizontal ? mid : e.c,
-          cz: e.horizontal ? e.c : mid,
-          len: e.b - e.a + FENCE_D,
-        })
+        out.push({ baseY, horizontal: e.horizontal, cx: e.horizontal ? mid : e.c, cz: e.horizontal ? e.c : mid, len: e.b - e.a + FENCE_D })
       })
     })
     return out
@@ -351,29 +398,23 @@ export default function HouseShell() {
 
   return (
     <group ref={ref} visible={show} scale={[1, 0.0001, 1]}>
-      {/* Стіни */}
-      {plan.floors.map((_, idx) =>
-        wallFloors[idx].map((seg, i) => (
-          <mesh key={`wall-${idx}-${i}`} position={[seg.cx, idx * FLOOR_H + FLOOR_H / 2, seg.cz]} castShadow receiveShadow>
-            <boxGeometry args={[seg.horizontal ? seg.len : WALL_T, FLOOR_H, seg.horizontal ? WALL_T : seg.len]} />
-            <meshStandardMaterial color={WALL_COLOR} roughness={0.9} />
-          </mesh>
-        )),
-      )}
+      {walls.map((b, i) => (
+        <mesh key={`wall-${i}`} position={[b.x, b.y, b.z]} castShadow receiveShadow>
+          <boxGeometry args={[b.dx, b.dy, b.dz]} />
+          <meshStandardMaterial color={WALL_COLOR} roughness={0.9} />
+        </mesh>
+      ))}
 
-      {/* Перекриття */}
       {plates.map((p, i) => (
         <mesh key={`plate-${i}`} geometry={p.geo} position={[0, p.y - PLATE_T / 2, 0]} castShadow receiveShadow>
           <meshStandardMaterial color={PLATE_COLOR} roughness={0.9} />
         </mesh>
       ))}
 
-      {/* Вікна та двері */}
       {openings.map((o) => (
-        <Win key={o.key} rotY={o.rotY} x={o.x} z={o.z} baseY={o.baseY} width={o.width} sill={o.sill} />
+        <Win key={o.key} rotY={o.rotY} x={o.fx} z={o.fz} baseY={o.baseY} width={o.width} sill={o.sill} />
       ))}
 
-      {/* Тераса: скляний паркан + поручень */}
       {fences.map((f, i) => (
         <group key={`fence-${i}`}>
           <mesh position={[f.cx, f.baseY + FENCE_H / 2, f.cz]}>
