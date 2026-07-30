@@ -5,6 +5,7 @@ import { ExtrudeGeometry, Path, Shape, type Group, type Mesh } from 'three'
 import { useConfigurator, useHousePlan } from '../state/store'
 import { STEPS } from '../config/steps'
 import { ringContains, unionOutline, type Point, type Ring } from '../lib/outline'
+import { FOUNDATION_H } from '../config/plan'
 import type { FloorPlan, PlanRect, RoomType, RoomZone, WindowType } from '../config/types'
 
 // ============================================================
@@ -20,9 +21,12 @@ const CEIL_H = 3.0 // чиста висота стелі на поверсі
 const PLATE_T = 0.2
 const FLOOR_H = CEIL_H + PLATE_T // крок поверху (стеля + перекриття)
 const WALL_T = 0.18
+const POST_T = WALL_T + 0.004 // кутовий стовп трохи товщий — див. коментар у walls
 const WALL_H = CEIL_H // стіна = висота стелі; зверху лягає перекриття (без колізій)
 const WALL_COLOR = '#ece7de'
 const PLATE_COLOR = '#d9d3c6'
+const FOUND_COLOR = '#bdb6a7' // цоколь темніший за плиту — читається як окремий об'єм
+const FOUND_OUT = WALL_T / 2 + 0.04 // виступ цоколя за зовнішню грань стіни
 const RISE_EASE = 0.5
 const PARAPET_H = 0.45 // висота парапету плоського даху
 const ROOF_SLOPE = 0.35 // висота гребеня = проліт × 0.35 (≈35°, скандинавський)
@@ -179,7 +183,7 @@ interface Opening {
 
 // Плита перекриття по кільцях контуру. Зовнішні кільця — окремі фігури,
 // внутрішні (вирізи) та проріз під сходи кладемо в те кільце, що їх містить.
-function plateGeometry(rings: Ring[], hole: Rect | null): ExtrudeGeometry {
+function plateGeometry(rings: Ring[], hole: Rect | null, depth = PLATE_T): ExtrudeGeometry {
   const path = (pts: Point[]) => {
     const p = new Path()
     pts.forEach(([x, z], i) => (i === 0 ? p.moveTo(x, -z) : p.lineTo(x, -z)))
@@ -214,7 +218,7 @@ function plateGeometry(rings: Ring[], hole: Rect | null): ExtrudeGeometry {
       )
     }
   }
-  const geo = new ExtrudeGeometry(shapes, { depth: PLATE_T, bevelEnabled: false })
+  const geo = new ExtrudeGeometry(shapes, { depth, bevelEnabled: false })
   geo.rotateX(-Math.PI / 2)
   return geo
 }
@@ -428,20 +432,23 @@ export default function HouseShell() {
           .sort((a, b) => a.a - b.a)
         // Зовнішня стіна — на ВСЮ висоту поверху (FLOOR_H), щоб закрити край плити
         // перекриття (не було «прожилок»). Простінки точно між кутами; кути — стовпи.
-        // -0.02..FLOOR_H+0.02 — стіни поверхів трохи перехрещуються по вертикалі,
-        // тож на стику поверхів немає хайрлайн-щілини від z-fighting.
+        // Поверхи стикаються ТОЧНО (0..FLOOR_H), без перекриття: раніше стіни
+        // заходили одна в одну на 0.02, і в цій смузі їхні зовнішні грані лежали
+        // в одній площині — звідси мерехтливий шов на стику поверхів під кутом.
         let cursor = e.min
         for (const o of eo) {
-          if (o.a > cursor) pushBox(boxes, e.horizontal, e.line, cursor, o.a, -0.02, FLOOR_H + 0.02, baseY, WALL_T)
-          pushBox(boxes, e.horizontal, e.line, o.a, o.b, WIN_TOP, FLOOR_H + 0.02, baseY, WALL_T)
+          if (o.a > cursor) pushBox(boxes, e.horizontal, e.line, cursor, o.a, 0, FLOOR_H, baseY, WALL_T)
+          pushBox(boxes, e.horizontal, e.line, o.a, o.b, WIN_TOP, FLOOR_H, baseY, WALL_T)
           cursor = o.b
         }
-        pushBox(boxes, e.horizontal, e.line, cursor, e.max, -0.02, FLOOR_H + 0.02, baseY, WALL_T)
+        pushBox(boxes, e.horizontal, e.line, cursor, e.max, 0, FLOOR_H, baseY, WALL_T)
       }
-      // Кутові стовпи на кожній вершині контуру — гарантовано з'єднують стіни без дірок.
+      // Кутові стовпи на кожній вершині контуру — гарантовано з'єднують стіни без
+      // дірок. Стовп на 2 мм ТОВЩИЙ за стіну: інакше його грані лежать рівно в
+      // площині граней простінка, який він перекриває, і кут мерехтить.
       for (const { pts } of rings)
         for (const [vx, vz] of pts)
-          boxes.push({ x: vx, y: baseY + FLOOR_H / 2, z: vz, dx: WALL_T, dy: FLOOR_H + 0.04, dz: WALL_T })
+          boxes.push({ x: vx, y: baseY + FLOOR_H / 2, z: vz, dx: POST_T, dy: FLOOR_H, dz: POST_T })
     })
     return boxes
   }, [plan, openings])
@@ -503,6 +510,22 @@ export default function HouseShell() {
     return arr
   }, [plan])
 
+  // Цоколь: плита на всю площу 1-го поверху, від -FOUNDATION_H до нуля. Контур
+  // розширений так, щоб цоколь дійшов до ЗОВНІШНЬОЇ грані стін (вони центровані
+  // на контурі) і ще трохи виступив — карниз, на який далі ляже тераса.
+  const foundation = useMemo(() => {
+    const fl = plan.floors[0]
+    if (!fl) return null
+    const grown = fl.slab.map((r) => ({
+      ...r,
+      width: r.width + 2 * FOUND_OUT,
+      depth: r.depth + 2 * FOUND_OUT,
+    }))
+    // Верх цоколя на 1 мм НИЖЧЕ нуля: плита 1-го поверху теж має верх на нулі,
+    // і дві збіжні площини по всій підошві дали б мерехтіння. Крок непомітний.
+    return plateGeometry(unionOutline(grown), null, FOUNDATION_H - 0.001)
+  }, [plan])
+
   // Скляний паркан по контуру тераси (без сторони до будинку) + поручень.
   const fences = useMemo(() => {
     const out: { baseY: number; horizontal: boolean; cx: number; cz: number; len: number }[] = []
@@ -557,17 +580,19 @@ export default function HouseShell() {
         }
         if (e.max > cur + 0.05) spans.push([cur, e.max])
         for (const [a, b] of spans) {
-          // Парапет трохи заходить у плиту (−0.04) — без щілини на стику зі стіною.
-          pushBox(boxes, e.horizontal, e.line, a, b, -0.04, PARAPET_H, roofY, WALL_T)
+          // Парапет стає ТОЧНО на верх стіни (roofY). Раніше він занурювався на
+          // 0.04 у плиту, і в цій смузі його грані збігалися з гранями стіни —
+          // звідси мерехтливий шов по всьому периметру даху.
+          pushBox(boxes, e.horizontal, e.line, a, b, 0, PARAPET_H, roofY, WALL_T)
           // Стовпчики на КІНЦЯХ кожної ділянки — кути парапету змикаються без дірок.
           for (const u of [a, b]) {
             boxes.push({
               x: e.horizontal ? u : e.line,
-              y: roofY + (PARAPET_H - 0.04) / 2 - 0.02,
+              y: roofY + PARAPET_H / 2,
               z: e.horizontal ? e.line : u,
-              dx: WALL_T,
-              dy: PARAPET_H + 0.04,
-              dz: WALL_T,
+              dx: POST_T,
+              dy: PARAPET_H,
+              dz: POST_T,
             })
           }
         }
@@ -634,6 +659,13 @@ export default function HouseShell() {
 
   return (
     <group ref={ref} visible={false} scale={[1, 0.0001, 1]}>
+      {/* Цоколь — усередині анімованої групи, тож виростає разом зі стінами. */}
+      {foundation && (
+        <mesh geometry={foundation} position={[0, -FOUNDATION_H, 0]} castShadow receiveShadow>
+          <meshStandardMaterial color={FOUND_COLOR} roughness={0.95} />
+        </mesh>
+      )}
+
       {walls.map((b, i) => (
         <mesh key={`wall-${i}`} position={[b.x, b.y, b.z]} castShadow receiveShadow>
           <boxGeometry args={[b.dx, b.dy, b.dz]} />

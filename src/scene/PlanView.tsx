@@ -4,7 +4,7 @@ import { easing } from 'maath'
 import type { Mesh, MeshStandardMaterial } from 'three'
 import { useConfigurator, useHousePlan } from '../state/store'
 import { STEPS } from '../config/steps'
-import { ROOM_COLORS } from '../config/plan'
+import { FOUNDATION_H, ROOM_COLORS } from '../config/plan'
 import type { FloorPlan, RoomType, RoomZone } from '../config/types'
 import { t } from '../locales'
 
@@ -398,7 +398,9 @@ export default function PlanView() {
             floor={fl}
             showZones={showZones}
             showSlab={showSlab}
-            yOffset={(floorNum - 1) * FLOOR_H}
+            // Земля опустилась на цоколь — зміщуємо весь план на стільки ж,
+            // щоб вид зверху лишився таким самим відносно газону.
+            yOffset={(floorNum - 1) * FLOOR_H - FOUNDATION_H}
             active={active}
           />
         )

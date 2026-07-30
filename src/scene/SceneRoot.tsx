@@ -66,17 +66,23 @@ export default function SceneRoot() {
       <ambientLight intensity={0.35} />
 
       {/* Головне «сонце» — тепле, дає чіткі м'які тіні */}
+      {/* normalBias зсуває вибірку тіні ВЗДОВЖ НОРМАЛІ поверхні — саме він
+          прибирає «драбинку» самозатінення на стінах і відрив тіні біля основи.
+          Робити це через shadow-bias не можна: він або лишає смуги, або
+          відриває тінь від об'єкта. Ширша камера тіні + карта 4096 — щоб великі
+          будинки не виходили за її межі й лишалась різкість. */}
       <directionalLight
         position={[12, 16, 8]}
         intensity={2.4}
         color="#fff4e2"
         castShadow
-        shadow-mapSize={[2048, 2048]}
-        shadow-bias={-0.0004}
-        shadow-camera-left={-16}
-        shadow-camera-right={16}
-        shadow-camera-top={16}
-        shadow-camera-bottom={-16}
+        shadow-mapSize={[4096, 4096]}
+        shadow-bias={-0.0001}
+        shadow-normalBias={0.04}
+        shadow-camera-left={-22}
+        shadow-camera-right={22}
+        shadow-camera-top={22}
+        shadow-camera-bottom={-22}
       />
       {/* Заповнююче світло з протилежного боку — прибирає чорні тіні */}
       <directionalLight position={[-10, 8, -6]} intensity={0.5} color="#cfe0ff" />

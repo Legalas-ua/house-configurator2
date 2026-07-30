@@ -1,8 +1,11 @@
+import { FOUNDATION_H } from '../config/plan'
+
 // Ділянка: два кола — широкий газон + світліша «пляма» під будинком,
 // на яку падає тінь. Матеріал не надто шорсткий, щоб ловив світло.
+// Земля лежить на -FOUNDATION_H: нуль сцени — це верх цоколя, а не ґрунт.
 export default function Ground() {
   return (
-    <group>
+    <group position={[0, -FOUNDATION_H, 0]}>
       {/* Зовнішній газон */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.01, 0]} receiveShadow>
         <circleGeometry args={[18, 96]} />
