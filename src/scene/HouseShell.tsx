@@ -42,7 +42,8 @@ const FOUND_OUT = WALL_T / 2 + 0.04 // виступ цоколя за зовні
 const RISE_EASE = 0.5
 const PARAPET_H = 0.45 // висота парапету плоського даху
 const ROOF_SLOPE = 0.35 // висота гребеня = проліт × 0.35 (≈35°, скандинавський)
-const ROOF_COLOR = '#5d6167' // темна покрівля
+const ROOF_LIFT = 0.09 // на скільки схили підняті над верхом стіни
+const ROOF_COLOR = WALL_COLOR // ТИМЧАСОВО в колір стін — покриття ще не обране
 
 // ---- Вікна ----
 const WIN_TOP = 2.7 // СПІЛЬНИЙ верх усіх вікон; змінюється лише низ (підвіконня)
@@ -235,13 +236,18 @@ function plateGeometry(rings: Ring[], hole: Rect | null, depth = PLATE_T): Extru
   return geo
 }
 
-// Двосхилий дах (скандинавський, БЕЗ звісів): трикутний профіль по X, витягнутий
-// по Z → гребінь уздовж Z. Габарит = точно контур стін (немає виносу за стіну).
-function gableGeometry(width: number, depth: number, height: number): ExtrudeGeometry {
+// Двосхилий дах (скандинавський, БЕЗ звісів): профіль «будиночком» по X,
+// витягнутий по Z → гребінь уздовж Z. Габарит = контур стін.
+// skirt — пряма спідниця під схилами. Без неї схил сходить у нуль рівно на
+// верху стіни, і дах виглядає втопленим у неї; спідниця дає краю товщину й
+// піднімає початок схилу над стіною.
+function gableGeometry(width: number, depth: number, height: number, skirt: number): ExtrudeGeometry {
   const s = new Shape()
-  s.moveTo(-width / 2, 0)
+  s.moveTo(-width / 2, -skirt)
+  s.lineTo(width / 2, -skirt)
   s.lineTo(width / 2, 0)
   s.lineTo(0, height)
+  s.lineTo(-width / 2, 0)
   s.closePath()
   const g = new ExtrudeGeometry(s, { depth, bevelEnabled: false })
   g.translate(0, 0, -depth / 2)
@@ -663,10 +669,13 @@ export default function HouseShell() {
         const ridgeAlongZ = d >= w // гребінь — уздовж довшої сторони
         const span = ridgeAlongZ ? w : d
         const h = span * ROOF_SLOPE
+        // Схили починаються на ROOF_LIFT ВИЩЕ верху стіни, а спідниця під ними
+        // спускається назад у стіну на TIER_LAP — дах сидить на стіні, а не в ній.
+        const skirt = ROOF_LIFT + TIER_LAP
         out.push({
-          geo: ridgeAlongZ ? gableGeometry(w, d, h) : gableGeometry(d, w, h),
+          geo: ridgeAlongZ ? gableGeometry(w, d, h, skirt) : gableGeometry(d, w, h, skirt),
           x: (r.x0 + r.x1) / 2,
-          y: roofY - 0.02,
+          y: roofY + ROOF_LIFT,
           z: (r.z0 + r.z1) / 2,
           rotY: ridgeAlongZ ? 0 : Math.PI / 2,
         })
@@ -717,8 +726,12 @@ export default function HouseShell() {
 
       {plates.map((p, i) => (
         <mesh key={`plate-${i}`} geometry={p.geo} position={[0, p.y - PLATE_T, 0]} castShadow receiveShadow>
-          {/* polygonOffset — плита виграє в z-тесті над зеленою землею (без мерехтіння) */}
-          <meshStandardMaterial color={PLATE_COLOR} roughness={0.9} polygonOffset polygonOffsetFactor={-2} polygonOffsetUnits={-2} />
+          {/* БЕЗ polygonOffset. Він тягнув плиту ближче до камери, щоб вона
+              вигравала в зеленої землі на нулі — але тепер земля на -100 і між
+              ними цоколь, тож потреби немає. А от шкода була: зсув росте з
+              нахилом поверхні, і торець плити (його видно майже з ребра)
+              вилазив КРІЗЬ стіну — та сама смужка на кожному стику поверхів. */}
+          <meshStandardMaterial color={PLATE_COLOR} roughness={0.9} />
         </mesh>
       ))}
 
