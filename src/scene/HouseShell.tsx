@@ -346,12 +346,19 @@ export default function HouseShell() {
         sides.sort((a, c) => c.len - a.len)
         // Дверна сторона: прихожа — з фасаду (zmax); кухня/інші — у двір (zmin).
         const doorRoom = isDoorRoom(room.type, floorIdx)
-        const pref: Side = room.type === 'hall' ? 'zmax' : 'zmin'
+        // Прихожа і кухня-вітальня — двері спереду (фасад); решта дверних кімнат — у двір.
+        const pref: Side = room.type === 'hall' || room.type === 'livingKitchen' ? 'zmax' : 'zmin'
         const doorSide = doorRoom ? (sides.find((s) => s.side === pref) ?? sides[0]) : null
         sides.forEach((sd) => {
           const terraceExit = facesTerrace(fl.rooms, room, sd.side)
           const asDoor = terraceExit || sd === doorSide
-          const width = terraceExit ? Math.max(sd.len - 0.3, 0.6) : Math.min(specW, sd.len - WIN_MARGIN)
+          // Двері кухні-вітальні — широкі (панорамні на фасаді), щоб не лишалося пустого фронту.
+          const kitchenDoor = asDoor && room.type === 'livingKitchen'
+          const width = terraceExit
+            ? Math.max(sd.len - 0.3, 0.6)
+            : kitchenDoor
+              ? Math.max(sd.len - 1.0, 0.9)
+              : Math.min(specW, sd.len - WIN_MARGIN)
           if (width < 0.4) return
           const sill = asDoor ? 0 : sillFor(floorIdx, room.type, win, false)
           out.push({
@@ -386,17 +393,18 @@ export default function HouseShell() {
         const eo = ops
           .filter((o) => o.horizontal === e.horizontal && Math.abs(o.line - e.line) < 0.05 && o.a >= e.min - 0.01 && o.b <= e.max + 0.01)
           .sort((a, b) => a.a - b.a)
-        // Простінки точно між кутами (без подовження); кути закривають окремі стовпи.
+        // Зовнішня стіна — на ВСЮ висоту поверху (FLOOR_H), щоб закрити край плити
+        // перекриття (не було «прожилок»). Простінки точно між кутами; кути — стовпи.
         let cursor = e.min
         for (const o of eo) {
-          if (o.a > cursor) pushBox(boxes, e.horizontal, e.line, cursor, o.a, 0, WALL_H, baseY, WALL_T)
-          pushBox(boxes, e.horizontal, e.line, o.a, o.b, WIN_TOP, WALL_H, baseY, WALL_T)
+          if (o.a > cursor) pushBox(boxes, e.horizontal, e.line, cursor, o.a, 0, FLOOR_H, baseY, WALL_T)
+          pushBox(boxes, e.horizontal, e.line, o.a, o.b, WIN_TOP, FLOOR_H, baseY, WALL_T)
           cursor = o.b
         }
-        pushBox(boxes, e.horizontal, e.line, cursor, e.max, 0, WALL_H, baseY, WALL_T)
+        pushBox(boxes, e.horizontal, e.line, cursor, e.max, 0, FLOOR_H, baseY, WALL_T)
       }
       // Кутові стовпи на кожній вершині контуру — гарантовано з'єднують стіни без дірок.
-      for (const [vx, vz] of pts) boxes.push({ x: vx, y: baseY + WALL_H / 2, z: vz, dx: WALL_T, dy: WALL_H, dz: WALL_T })
+      for (const [vx, vz] of pts) boxes.push({ x: vx, y: baseY + FLOOR_H / 2, z: vz, dx: WALL_T, dy: FLOOR_H, dz: WALL_T })
     })
     return boxes
   }, [plan, openings])
@@ -491,7 +499,10 @@ export default function HouseShell() {
     if (N === 0 || config.roof !== 'flat') return boxes
     plan.floors.forEach((fl, idx) => {
       const roofY = (idx + 1) * FLOOR_H
-      const upper = idx < N - 1 ? edgesOf(wallOutline(plan.floors[idx + 1])) : []
+      // «Накрите» рахуємо по ПОВНІЙ плиті верхнього поверху (враховує терасу):
+      // під терасою парапету немає (там скляний паркан); без тераси ця смуга —
+      // відкритий дах, тож парапет по контуру з'являється.
+      const upper = idx < N - 1 ? edgesOf(outline(plan.floors[idx + 1].slab)) : []
       for (const e of edgesOf(wallOutline(fl))) {
         const covered = upper.some(
           (u) => u.horizontal === e.horizontal && Math.abs(u.line - e.line) < 0.05 && Math.min(u.max, e.max) - Math.max(u.min, e.min) > 0.1,
