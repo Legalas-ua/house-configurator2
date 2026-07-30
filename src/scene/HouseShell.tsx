@@ -21,7 +21,19 @@ const CEIL_H = 3.0 // чиста висота стелі на поверсі
 const PLATE_T = 0.2
 const FLOOR_H = CEIL_H + PLATE_T // крок поверху (стеля + перекриття)
 const WALL_T = 0.18
-const POST_T = WALL_T + 0.004 // кутовий стовп трохи товщий — див. коментар у walls
+// ---- Яруси: як прибрані шви на стиках ----
+// Шов на стику двох коробок буває з двох причин, і лікуються вони протилежно:
+//   1) коробки стикаються впритул -> похибка float лишає щілину в піксель;
+//   2) коробки перекриваються, а їхні бічні грані лежать в ОДНІЙ площині ->
+//      відеокарта не може вирішити, яка ближче, і воно мерехтить під кутом.
+// Тому робимо і те, і те: кожен наступний ярус (поверх, далі парапет) заходить
+// у попередній знизу на TIER_LAP і водночас на TIER_STEP тонший, тож його грані
+// ховаються ВСЕРЕДИНІ нижнього ярусу й ніде не збігаються. 2 мм на масштабі
+// будинку не видно.
+const TIER_STEP = 0.002
+const TIER_LAP = 0.02
+const wallT = (tier: number) => WALL_T - TIER_STEP * tier
+const postT = (tier: number) => wallT(tier) + 0.004 // стовп товщий за свій простінок
 const WALL_H = CEIL_H // стіна = висота стелі; зверху лягає перекриття (без колізій)
 const WALL_COLOR = '#ece7de'
 const PLATE_COLOR = '#d9d3c6'
@@ -330,9 +342,12 @@ function Spandrel({ horizontal, line, a, b, baseY, sill }: { horizontal: boolean
       ref.current.position.y = baseY + cs / 2
     }
   })
+  // Товщина — рівно як у простінків свого поверху, інакше на стику з ними
+  // з'явився б уступ (яруси тоншають догори).
+  const t = wallT(Math.round(baseY / FLOOR_H))
   return (
     <mesh ref={ref} position={horizontal ? [uc, baseY, line] : [line, baseY, uc]} castShadow receiveShadow>
-      <boxGeometry args={horizontal ? [ulen, 1, WALL_T] : [WALL_T, 1, ulen]} />
+      <boxGeometry args={horizontal ? [ulen, 1, t] : [t, 1, ulen]} />
       <meshStandardMaterial color={WALL_COLOR} roughness={0.9} />
     </mesh>
   )
@@ -424,6 +439,7 @@ export default function HouseShell() {
     const boxes: Box[] = []
     plan.floors.forEach((fl, idx) => {
       const baseY = idx * FLOOR_H
+      const t = wallT(idx)
       const ops = openings.filter((o) => o.baseY === baseY)
       const rings = wallOutline(fl)
       for (const e of edgesOf(rings)) {
@@ -431,24 +447,30 @@ export default function HouseShell() {
           .filter((o) => o.horizontal === e.horizontal && Math.abs(o.line - e.line) < 0.05 && o.a >= e.min - 0.01 && o.b <= e.max + 0.01)
           .sort((a, b) => a.a - b.a)
         // Зовнішня стіна — на ВСЮ висоту поверху (FLOOR_H), щоб закрити край плити
-        // перекриття (не було «прожилок»). Простінки точно між кутами; кути — стовпи.
-        // Поверхи стикаються ТОЧНО (0..FLOOR_H), без перекриття: раніше стіни
-        // заходили одна в одну на 0.02, і в цій смузі їхні зовнішні грані лежали
-        // в одній площині — звідси мерехтливий шов на стику поверхів під кутом.
+        // перекриття (не було «прожилок»). Знизу заходить у нижній ярус на
+        // TIER_LAP і тонша за нього — див. коментар про яруси нагорі файлу.
         let cursor = e.min
         for (const o of eo) {
-          if (o.a > cursor) pushBox(boxes, e.horizontal, e.line, cursor, o.a, 0, FLOOR_H, baseY, WALL_T)
-          pushBox(boxes, e.horizontal, e.line, o.a, o.b, WIN_TOP, FLOOR_H, baseY, WALL_T)
+          if (o.a > cursor) pushBox(boxes, e.horizontal, e.line, cursor, o.a, -TIER_LAP, FLOOR_H, baseY, t)
+          pushBox(boxes, e.horizontal, e.line, o.a, o.b, WIN_TOP, FLOOR_H, baseY, t)
           cursor = o.b
         }
-        pushBox(boxes, e.horizontal, e.line, cursor, e.max, 0, FLOOR_H, baseY, WALL_T)
+        pushBox(boxes, e.horizontal, e.line, cursor, e.max, -TIER_LAP, FLOOR_H, baseY, t)
       }
       // Кутові стовпи на кожній вершині контуру — гарантовано з'єднують стіни без
-      // дірок. Стовп на 2 мм ТОВЩИЙ за стіну: інакше його грані лежать рівно в
-      // площині граней простінка, який він перекриває, і кут мерехтить.
+      // дірок. Стовп на 2 мм ТОВЩИЙ за свій простінок: інакше його грані лежать
+      // рівно в площині граней простінка, який він перекриває, і кут мерехтить.
+      const pt = postT(idx)
       for (const { pts } of rings)
         for (const [vx, vz] of pts)
-          boxes.push({ x: vx, y: baseY + FLOOR_H / 2, z: vz, dx: POST_T, dy: FLOOR_H, dz: POST_T })
+          boxes.push({
+            x: vx,
+            y: baseY + (FLOOR_H - TIER_LAP) / 2,
+            z: vz,
+            dx: pt,
+            dy: FLOOR_H + TIER_LAP,
+            dz: pt,
+          })
     })
     return boxes
   }, [plan, openings])
@@ -559,6 +581,8 @@ export default function HouseShell() {
     if (N === 0 || config.roof !== 'flat') return boxes
     plan.floors.forEach((fl, idx) => {
       const roofY = (idx + 1) * FLOOR_H
+      const t = wallT(idx + 1) // парапет — ярус над стіною свого поверху
+      const pt = postT(idx + 1)
       // «Накрите» рахуємо по ПОВНІЙ плиті верхнього поверху (враховує терасу):
       // під терасою парапету немає (там скляний паркан); без тераси ця смуга —
       // відкритий дах, тож парапет по контуру з'являється.
@@ -580,19 +604,18 @@ export default function HouseShell() {
         }
         if (e.max > cur + 0.05) spans.push([cur, e.max])
         for (const [a, b] of spans) {
-          // Парапет стає ТОЧНО на верх стіни (roofY). Раніше він занурювався на
-          // 0.04 у плиту, і в цій смузі його грані збігалися з гранями стіни —
-          // звідси мерехтливий шов по всьому периметру даху.
-          pushBox(boxes, e.horizontal, e.line, a, b, 0, PARAPET_H, roofY, WALL_T)
+          // Парапет — наступний ярус над стіною свого поверху: заходить у неї
+          // на TIER_LAP і тонший на TIER_STEP (див. коментар про яруси).
+          pushBox(boxes, e.horizontal, e.line, a, b, -TIER_LAP, PARAPET_H, roofY, t)
           // Стовпчики на КІНЦЯХ кожної ділянки — кути парапету змикаються без дірок.
           for (const u of [a, b]) {
             boxes.push({
               x: e.horizontal ? u : e.line,
-              y: roofY + PARAPET_H / 2,
+              y: roofY + (PARAPET_H - TIER_LAP) / 2,
               z: e.horizontal ? e.line : u,
-              dx: POST_T,
-              dy: PARAPET_H,
-              dz: POST_T,
+              dx: pt,
+              dy: PARAPET_H + TIER_LAP,
+              dz: pt,
             })
           }
         }
@@ -633,8 +656,10 @@ export default function HouseShell() {
         })
       }
       for (const r of rects) {
-        const w = r.x1 - r.x0 + WALL_T
-        const d = r.z1 - r.z0 + WALL_T
+        // +0.004 понад товщину стіни: скат має ВИСТУПАТИ за грань стіни, а не
+        // лежати з нею в одній площині — інакше по карнизу йде те саме мерехтіння.
+        const w = r.x1 - r.x0 + WALL_T + 0.004
+        const d = r.z1 - r.z0 + WALL_T + 0.004
         const ridgeAlongZ = d >= w // гребінь — уздовж довшої сторони
         const span = ridgeAlongZ ? w : d
         const h = span * ROOF_SLOPE
