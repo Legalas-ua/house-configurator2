@@ -4,6 +4,7 @@ import { easing } from 'maath'
 import { ExtrudeGeometry, Path, Shape, type Group, type Mesh } from 'three'
 import { useConfigurator, useHousePlan } from '../state/store'
 import { STEPS } from '../config/steps'
+import { ringContains, unionOutline, type Point, type Ring } from '../lib/outline'
 import type { FloorPlan, PlanRect, RoomType, RoomZone, WindowType } from '../config/types'
 
 // ============================================================
@@ -112,40 +113,16 @@ function neighborOf(rooms: RoomZone[], room: RoomZone, side: Side, wantTerrace: 
 const isExterior = (rooms: RoomZone[], room: RoomZone, side: Side) => !neighborOf(rooms, room, side, false)
 const facesTerrace = (rooms: RoomZone[], room: RoomZone, side: Side) => !!neighborOf(rooms, room, side, true)
 
-function outline(slab: PlanRect[]): [number, number][] {
-  if (slab.length === 1) {
-    const a = bounds(slab[0])
-    return [
-      [a.x0, a.z0],
-      [a.x1, a.z0],
-      [a.x1, a.z1],
-      [a.x0, a.z1],
-    ]
-  }
-  const [n, d] = slab[0].z < slab[1].z ? [bounds(slab[0]), bounds(slab[1])] : [bounds(slab[1]), bounds(slab[0])]
-  return [
-    [n.x0, n.z0],
-    [n.x1, n.z0],
-    [n.x1, n.z1],
-    [d.x1, d.z0],
-    [d.x1, d.z1],
-    [d.x0, d.z1],
-  ]
-}
-function wallOutline(fl: FloorPlan): [number, number][] {
-  const terrace = fl.rooms.find((r) => r.type === 'terrace')
-  if (!terrace || fl.slab.length !== 1) return outline(fl.slab)
-  const s = bounds(fl.slab[0])
-  const t = bounds(terrace)
-  const z0 = Math.abs(t.z0 - s.z0) < 0.05 ? t.z1 : s.z0
-  const z1 = Math.abs(t.z1 - s.z1) < 0.05 ? t.z0 : s.z1
-  return [
-    [s.x0, z0],
-    [s.x1, z0],
-    [s.x1, z1],
-    [s.x0, z1],
-  ]
-}
+// Контур плити поверху (може бути кілька кілець: окремі частини + вирізи).
+const outline = (slab: PlanRect[]): Ring[] => unionOutline(slab)
+
+// Контур СТІН: та сама плита, але з вирізаною терасою — вона відкрита, її не
+// обносять стінами й не накривають дахом.
+const wallOutline = (fl: FloorPlan): Ring[] =>
+  unionOutline(
+    fl.slab,
+    fl.rooms.filter((r) => r.type === 'terrace'),
+  )
 
 interface Edge {
   horizontal: boolean
@@ -153,13 +130,15 @@ interface Edge {
   min: number
   max: number
 }
-function edgesOf(pts: [number, number][]): Edge[] {
+function edgesOf(rings: Ring[]): Edge[] {
   const es: Edge[] = []
-  for (let i = 0; i < pts.length; i++) {
-    const [x0, z0] = pts[i]
-    const [x1, z1] = pts[(i + 1) % pts.length]
-    if (Math.abs(z1 - z0) < 1e-4) es.push({ horizontal: true, line: z0, min: Math.min(x0, x1), max: Math.max(x0, x1) })
-    else es.push({ horizontal: false, line: x0, min: Math.min(z0, z1), max: Math.max(z0, z1) })
+  for (const { pts } of rings) {
+    for (let i = 0; i < pts.length; i++) {
+      const [x0, z0] = pts[i]
+      const [x1, z1] = pts[(i + 1) % pts.length]
+      if (Math.abs(z1 - z0) < 1e-4) es.push({ horizontal: true, line: z0, min: Math.min(x0, x1), max: Math.max(x0, x1) })
+      else es.push({ horizontal: false, line: x0, min: Math.min(z0, z1), max: Math.max(z0, z1) })
+    }
   }
   return es
 }
@@ -198,20 +177,44 @@ interface Opening {
   isDoor: boolean
 }
 
-function plateGeometry(pts: [number, number][], hole: Rect | null): ExtrudeGeometry {
-  const shape = new Shape()
-  pts.forEach(([x, z], i) => (i === 0 ? shape.moveTo(x, -z) : shape.lineTo(x, -z)))
-  shape.closePath()
-  if (hole) {
-    const h = new Path()
-    h.moveTo(hole.x0, -hole.z0)
-    h.lineTo(hole.x1, -hole.z0)
-    h.lineTo(hole.x1, -hole.z1)
-    h.lineTo(hole.x0, -hole.z1)
-    h.closePath()
-    shape.holes.push(h)
+// Плита перекриття по кільцях контуру. Зовнішні кільця — окремі фігури,
+// внутрішні (вирізи) та проріз під сходи кладемо в те кільце, що їх містить.
+function plateGeometry(rings: Ring[], hole: Rect | null): ExtrudeGeometry {
+  const path = (pts: Point[]) => {
+    const p = new Path()
+    pts.forEach(([x, z], i) => (i === 0 ? p.moveTo(x, -z) : p.lineTo(x, -z)))
+    p.closePath()
+    return p
   }
-  const geo = new ExtrudeGeometry(shape, { depth: PLATE_T, bevelEnabled: false })
+  const outers = rings.filter((r) => !r.hole)
+  const shapes = outers.map((r) => {
+    const s = new Shape()
+    r.pts.forEach(([x, z], i) => (i === 0 ? s.moveTo(x, -z) : s.lineTo(x, -z)))
+    s.closePath()
+    return s
+  })
+  // Кільце-виріз віддаємо тому зовнішньому контуру, всередині якого воно лежить.
+  const owner = (p: Point) => outers.findIndex((o) => ringContains(o.pts, p))
+  for (const r of rings) {
+    if (!r.hole) continue
+    const i = owner(r.pts[0])
+    if (i >= 0) shapes[i].holes.push(path(r.pts))
+  }
+  if (hole) {
+    const center: Point = [(hole.x0 + hole.x1) / 2, (hole.z0 + hole.z1) / 2]
+    const i = Math.max(0, owner(center))
+    if (shapes[i]) {
+      shapes[i].holes.push(
+        path([
+          [hole.x0, hole.z0],
+          [hole.x1, hole.z0],
+          [hole.x1, hole.z1],
+          [hole.x0, hole.z1],
+        ]),
+      )
+    }
+  }
+  const geo = new ExtrudeGeometry(shapes, { depth: PLATE_T, bevelEnabled: false })
   geo.rotateX(-Math.PI / 2)
   return geo
 }
@@ -418,8 +421,8 @@ export default function HouseShell() {
     plan.floors.forEach((fl, idx) => {
       const baseY = idx * FLOOR_H
       const ops = openings.filter((o) => o.baseY === baseY)
-      const pts = wallOutline(fl)
-      for (const e of edgesOf(pts)) {
+      const rings = wallOutline(fl)
+      for (const e of edgesOf(rings)) {
         const eo = ops
           .filter((o) => o.horizontal === e.horizontal && Math.abs(o.line - e.line) < 0.05 && o.a >= e.min - 0.01 && o.b <= e.max + 0.01)
           .sort((a, b) => a.a - b.a)
@@ -436,8 +439,9 @@ export default function HouseShell() {
         pushBox(boxes, e.horizontal, e.line, cursor, e.max, -0.02, FLOOR_H + 0.02, baseY, WALL_T)
       }
       // Кутові стовпи на кожній вершині контуру — гарантовано з'єднують стіни без дірок.
-      for (const [vx, vz] of pts)
-        boxes.push({ x: vx, y: baseY + FLOOR_H / 2, z: vz, dx: WALL_T, dy: FLOOR_H + 0.04, dz: WALL_T })
+      for (const { pts } of rings)
+        for (const [vx, vz] of pts)
+          boxes.push({ x: vx, y: baseY + FLOOR_H / 2, z: vz, dx: WALL_T, dy: FLOOR_H + 0.04, dz: WALL_T })
     })
     return boxes
   }, [plan, openings])
@@ -583,7 +587,9 @@ export default function HouseShell() {
       let rects: Rect[]
       if (idx === N - 1) {
         // Верхній поверх — по контуру СТІН (без тераси: її дах не накриває).
-        const pts = wallOutline(fl)
+        // Габарит контуру: одна двосхила призма на весь верх, як і було.
+        const pts = wallOutline(fl).flatMap((r) => r.pts)
+        if (pts.length === 0) return
         const xs = pts.map((p) => p[0])
         const zs = pts.map((p) => p[1])
         rects = [{ x0: Math.min(...xs), x1: Math.max(...xs), z0: Math.min(...zs), z1: Math.max(...zs) }]
