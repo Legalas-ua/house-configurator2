@@ -16,17 +16,18 @@ import type { FloorPlan, PlanRect, RoomType, RoomZone, WindowType } from '../con
 // зі скляним парканом + поручнем; стіна до тераси — панорамні двері в підлогу.
 // ============================================================
 
-const FLOOR_H = 3.0
-const WALL_T = 0.18
+const CEIL_H = 3.0 // чиста висота стелі на поверсі
 const PLATE_T = 0.2
-const WALL_H = FLOOR_H - PLATE_T // стіна нижча за поверх, щоб не влазити в перекриття
+const FLOOR_H = CEIL_H + PLATE_T // крок поверху (стеля + перекриття)
+const WALL_T = 0.18
+const WALL_H = CEIL_H // стіна = висота стелі; зверху лягає перекриття (без колізій)
 const WALL_COLOR = '#ece7de'
 const PLATE_COLOR = '#d9d3c6'
 const RISE_EASE = 0.5
 const PARAPET_H = 0.45 // висота парапету плоского даху
 
 // ---- Вікна ----
-const WIN_TOP = 2.6 // СПІЛЬНИЙ верх усіх вікон; змінюється лише низ (підвіконня)
+const WIN_TOP = 2.7 // СПІЛЬНИЙ верх усіх вікон; змінюється лише низ (підвіконня)
 const WIN_MARGIN = 0.5
 const FRAME_W = 0.06
 const FRAME_D = 0.1 // рама сидить у товщі стіни → вмонтована
@@ -36,7 +37,7 @@ const GLASS_COLOR = '#a9c6d6'
 const GLASS_OPACITY = 0.32
 const SWITCH_EASE = 0.4
 const MULLION_STEP = 1.4
-const DOOR_TRANSOM_Y = 2.4 // фрамуга над дверима — на 2400 від підлоги (двері в підлогу)
+const DOOR_TRANSOM_Y = 2.2 // фрамуга над дверима — на 2200 від підлоги
 const DOOR_LEAF = 0.95 // ширина секції дверей (900–1000 мм)
 
 // ---- Перегородки та внутрішні двері ----
@@ -229,10 +230,10 @@ function Win({ rotY, x, z, baseY, width, sill, isDoor }: { rotY: number; x: numb
     // додаткові імпости у широкій віконній частині
     const wsStart = split ? boundary : -width / 2
     const wsW = width / 2 - wsStart
-    if (wsW > 1.7) {
+    if (split && wsW > 1.4) {
       const n = Math.max(1, Math.round(wsW / MULLION_STEP) - 1)
       for (let k = 1; k <= n; k++) xs.push(wsStart + (k * wsW) / (n + 1))
-    } else if (!isDoor && width > 1.7) {
+    } else if (!isDoor && width > 1.4) {
       const n = Math.max(1, Math.round(width / MULLION_STEP) - 1)
       for (let k = 1; k <= n; k++) xs.push(-width / 2 + (k * width) / (n + 1))
     }
@@ -380,18 +381,22 @@ export default function HouseShell() {
     plan.floors.forEach((fl, idx) => {
       const baseY = idx * FLOOR_H
       const ops = openings.filter((o) => o.baseY === baseY)
-      for (const e of edgesOf(wallOutline(fl))) {
+      const pts = wallOutline(fl)
+      for (const e of edgesOf(pts)) {
         const eo = ops
           .filter((o) => o.horizontal === e.horizontal && Math.abs(o.line - e.line) < 0.05 && o.a >= e.min - 0.01 && o.b <= e.max + 0.01)
           .sort((a, b) => a.a - b.a)
-        let cursor = e.min - WALL_T / 2
+        // Простінки точно між кутами (без подовження); кути закривають окремі стовпи.
+        let cursor = e.min
         for (const o of eo) {
           if (o.a > cursor) pushBox(boxes, e.horizontal, e.line, cursor, o.a, 0, WALL_H, baseY, WALL_T)
           pushBox(boxes, e.horizontal, e.line, o.a, o.b, WIN_TOP, WALL_H, baseY, WALL_T)
           cursor = o.b
         }
-        pushBox(boxes, e.horizontal, e.line, cursor, e.max + WALL_T / 2, 0, WALL_H, baseY, WALL_T)
+        pushBox(boxes, e.horizontal, e.line, cursor, e.max, 0, WALL_H, baseY, WALL_T)
       }
+      // Кутові стовпи на кожній вершині контуру — гарантовано з'єднують стіни без дірок.
+      for (const [vx, vz] of pts) boxes.push({ x: vx, y: baseY + WALL_H / 2, z: vz, dx: WALL_T, dy: WALL_H, dz: WALL_T })
     })
     return boxes
   }, [plan, openings])
@@ -478,15 +483,23 @@ export default function HouseShell() {
     return out
   }, [plan])
 
-  // Плоский дах: парапети по периметру верхньої плити (крок «Дах», roof=flat).
+  // Плоский дах: парапети по периметру КОЖНОГО рівня даху (верх + дах над денним
+  // крилом/вітальнею). Ребро, накрите верхнім поверхом (там його стіни), пропускаємо.
   const parapets = useMemo(() => {
     const boxes: Box[] = []
     const N = plan.floors.length
     if (N === 0 || config.roof !== 'flat') return boxes
-    const y = N * FLOOR_H
-    for (const e of edgesOf(wallOutline(plan.floors[N - 1]))) {
-      pushBox(boxes, e.horizontal, e.line, e.min - WALL_T / 2, e.max + WALL_T / 2, 0, PARAPET_H, y, WALL_T)
-    }
+    plan.floors.forEach((fl, idx) => {
+      const roofY = (idx + 1) * FLOOR_H
+      const upper = idx < N - 1 ? edgesOf(wallOutline(plan.floors[idx + 1])) : []
+      for (const e of edgesOf(wallOutline(fl))) {
+        const covered = upper.some(
+          (u) => u.horizontal === e.horizontal && Math.abs(u.line - e.line) < 0.05 && Math.min(u.max, e.max) - Math.max(u.min, e.min) > 0.1,
+        )
+        if (covered) continue
+        pushBox(boxes, e.horizontal, e.line, e.min, e.max, 0, PARAPET_H, roofY, WALL_T)
+      }
+    })
     return boxes
   }, [plan, config.roof])
 

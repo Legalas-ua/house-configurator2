@@ -381,9 +381,9 @@ export default function PlanView() {
   const plan = useMemo(() => generateHousePlan(config), [config])
   const stepId = STEPS[currentStep].id
   const showZones = stepId === 'rooms'
-  // Плиту показуємо на «формі» тощо, але не на «кімнати» (зони) і не на «вікна»
+  // Плиту показуємо на «формі» тощо, але не на «кімнати» (зони) і не на «вікна»/«дах»
   // (там основу дає 3D-оболонка HouseShell).
-  const showSlab = !showZones && stepId !== 'windows'
+  const showSlab = !showZones && stepId !== 'windows' && stepId !== 'roof'
 
   if (plan.floors.length === 0) return null
 
