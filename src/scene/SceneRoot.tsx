@@ -44,6 +44,7 @@ function CameraRig({ controls }: { controls: React.RefObject<OrbitControlsImpl |
 
 export default function SceneRoot() {
   const setTopView = useConfigurator((s) => s.setTopView)
+  const dragging = useConfigurator((s) => s.dragging)
   const controlsRef = useRef<OrbitControlsImpl>(null)
 
   return (
@@ -91,8 +92,11 @@ export default function SceneRoot() {
       <PlanView />
       <HouseShell />
 
+      {/* Поки тягнуть зону — орбіта вимкнена, інакше камера крутилася б разом
+          з кімнатою (OrbitControls слухає полотно, а не наші меші). */}
       <OrbitControls
         ref={controlsRef}
+        enabled={!dragging}
         target={[0, 1.2, 0]}
         enablePan={false}
         minDistance={10}

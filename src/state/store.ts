@@ -74,6 +74,8 @@ interface ConfiguratorState {
   // з конфігурації — інакше правки користувача затирались би на кожен setValue.
   planMode: PlanMode
   customPlan: HousePlan | null
+  selectedRoom: string | null // id кімнати, яку зараз редагують (ручний режим)
+  dragging: boolean // тягнуть зону на плані → камеру треба знерухомити
   currentStep: number // індекс у STEPS
   maxStepReached: number // до якого кроку дійшов користувач (для 3D і навігації)
   topView: boolean // камера летить у вид зверху; обертання мишею вимикає
@@ -84,6 +86,8 @@ interface ConfiguratorState {
   setValue: (key: ConfigKey, value: string | number | string[] | null) => void
   setPlanMode: (mode: PlanMode) => void
   setCustomPlan: (plan: HousePlan) => void
+  setSelectedRoom: (id: string | null) => void
+  setDragging: (on: boolean) => void
   setTopView: (on: boolean) => void
   setViewFloor: (floor: number) => void
   setHideFloor2: (on: boolean) => void
@@ -98,6 +102,8 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
   config: DEFAULT_CONFIG,
   planMode: 'template',
   customPlan: null,
+  selectedRoom: null,
+  dragging: false,
   currentStep: 0,
   maxStepReached: 0,
   topView: false,
@@ -121,11 +127,19 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
   setPlanMode: (mode) =>
     set((s) => {
       if (mode === s.planMode) return s
-      if (mode === 'template') return { planMode: 'template', customPlan: null }
-      return { planMode: 'custom', customPlan: s.customPlan ?? generateHousePlan(s.config) }
+      if (mode === 'template') return { planMode: 'template', customPlan: null, selectedRoom: null }
+      return {
+        planMode: 'custom',
+        customPlan: s.customPlan ?? generateHousePlan(s.config),
+        selectedRoom: null,
+      }
     }),
 
   setCustomPlan: (plan) => set({ planMode: 'custom', customPlan: plan }),
+
+  setSelectedRoom: (id) => set({ selectedRoom: id }),
+
+  setDragging: (on) => set({ dragging: on }),
 
   setTopView: (on) => set({ topView: on }),
   setViewFloor: (floor) => set({ viewFloor: floor }),

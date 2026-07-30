@@ -1,9 +1,14 @@
-import { useConfigurator } from '../../state/store'
-import type { ExtraRoom } from '../../config/types'
+import { useConfigurator, useHousePlan } from '../../state/store'
+import type { ExtraRoom, PlanMode, RoomType } from '../../config/types'
 import { ALL_EXTRAS } from '../../config/rooms'
 import { availableBedrooms, supportedExtras } from '../../config/layouts'
 import { floor2Limits } from '../../lib/lshape'
+import { addRoom, removeRoom } from '../../lib/editPlan'
 import { t } from '../../locales'
+
+// Типи кімнат, які можна додати вручну. Сходи й тераса поки не тут: перші
+// тягнуть за собою проріз у перекритті, друга — паркан і виріз у стінах.
+const ADDABLE: RoomType[] = ['bedroom', 'bathroom', 'office', 'wardrobe', 'pantry', 'corridor', 'living']
 
 // Композитний крок «Кімнати». Межі лічильників і доступність опцій
 // диктує каталог планувань (config/layouts.ts): показуємо лише те,
@@ -12,12 +17,42 @@ export default function RoomsField() {
   const config = useConfigurator((s) => s.config)
   const setValue = useConfigurator((s) => s.setValue)
   const viewFloor = useConfigurator((s) => s.viewFloor)
-  const setViewFloor = useConfigurator((s) => s.setViewFloor)
-  const hideFloor2 = useConfigurator((s) => s.hideFloor2)
-  const setHideFloor2 = useConfigurator((s) => s.setHideFloor2)
+  const planMode = useConfigurator((s) => s.planMode)
+  const setPlanMode = useConfigurator((s) => s.setPlanMode)
   const texts = t.steps.rooms
 
   if (!config.shape) return null
+
+  const modeSwitch = (
+    <div className="rooms__group">
+      <span className="rooms__group-title">{texts.mode.title}</span>
+      <div className="chips">
+        {(['template', 'custom'] as PlanMode[]).map((m) => (
+          <button
+            key={m}
+            type="button"
+            className={`chip${planMode === m ? ' chip--on' : ''}`}
+            onClick={() => setPlanMode(m)}
+          >
+            {texts.mode[m]}
+          </button>
+        ))}
+      </div>
+      <p className="rooms__hint">{planMode === 'custom' ? texts.mode.customHint : texts.mode.templateHint}</p>
+    </div>
+  )
+
+  // У ручному режимі лічильники не мають сенсу — планування більше не
+  // виводиться з конфігурації, кімнати додають і рухають руками.
+  if (planMode === 'custom') {
+    return (
+      <div className="rooms">
+        <FloorTabs />
+        {modeSwitch}
+        <RoomEditor />
+      </div>
+    )
+  }
 
   // Г-подібний 2-й поверх має власні кімнати (bedrooms2/extras2); решта форм і
   // 1-й поверх працюють зі спільним конфігом (bedrooms/extras).
@@ -59,32 +94,8 @@ export default function RoomsField() {
 
   return (
     <div className="rooms">
-      {config.floors === 2 && (
-        <>
-          <div className="floor-tabs">
-            {[1, 2].map((n) => (
-              <button
-                key={n}
-                type="button"
-                className={`floor-tab${viewFloor === n ? ' floor-tab--active' : ''}`}
-                onClick={() => setViewFloor(n)}
-              >
-                {t.plan.floorTab(n)}
-              </button>
-            ))}
-          </div>
-          {viewFloor === 1 && (
-            <label className="floor-hide">
-              <input
-                type="checkbox"
-                checked={hideFloor2}
-                onChange={(e) => setHideFloor2(e.target.checked)}
-              />
-              {t.plan.hideFloor2}
-            </label>
-          )}
-        </>
-      )}
+      <FloorTabs />
+      {modeSwitch}
 
       <Counter
         label={texts.bedrooms}
@@ -121,6 +132,97 @@ export default function RoomsField() {
         </div>
       </div>
     </div>
+  )
+}
+
+// Перемикач поверхів + галочка «сховати 2-й». Спільний для обох режимів.
+function FloorTabs() {
+  const floors = useConfigurator((s) => s.config.floors)
+  const viewFloor = useConfigurator((s) => s.viewFloor)
+  const setViewFloor = useConfigurator((s) => s.setViewFloor)
+  const hideFloor2 = useConfigurator((s) => s.hideFloor2)
+  const setHideFloor2 = useConfigurator((s) => s.setHideFloor2)
+  if (floors !== 2) return null
+  return (
+    <>
+      <div className="floor-tabs">
+        {[1, 2].map((n) => (
+          <button
+            key={n}
+            type="button"
+            className={`floor-tab${viewFloor === n ? ' floor-tab--active' : ''}`}
+            onClick={() => setViewFloor(n)}
+          >
+            {t.plan.floorTab(n)}
+          </button>
+        ))}
+      </div>
+      {viewFloor === 1 && (
+        <label className="floor-hide">
+          <input type="checkbox" checked={hideFloor2} onChange={(e) => setHideFloor2(e.target.checked)} />
+          {t.plan.hideFloor2}
+        </label>
+      )}
+    </>
+  )
+}
+
+// Ручний режим: додати кімнату, побачити обрану, видалити її.
+// Пересування й розміри — мишею на самому плані (PlanView).
+function RoomEditor() {
+  const plan = useHousePlan()
+  const viewFloor = useConfigurator((s) => s.viewFloor)
+  const setCustomPlan = useConfigurator((s) => s.setCustomPlan)
+  const selectedRoom = useConfigurator((s) => s.selectedRoom)
+  const setSelectedRoom = useConfigurator((s) => s.setSelectedRoom)
+  const texts = t.steps.rooms.editor
+
+  const floorIdx = Math.min(viewFloor, plan.floors.length) - 1
+  const floor = plan.floors[floorIdx]
+  const selected = floor?.rooms.find((r) => r.id === selectedRoom)
+
+  const add = (type: RoomType) => {
+    const next = addRoom(plan, floorIdx, type)
+    setCustomPlan(next.plan)
+    setSelectedRoom(next.id)
+  }
+
+  return (
+    <>
+      <div className="rooms__group">
+        <span className="rooms__group-title">{texts.add}</span>
+        <div className="chips">
+          {ADDABLE.map((type) => (
+            <button key={type} type="button" className="chip" onClick={() => add(type)}>
+              {t.plan.roomNames[type]}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="rooms__group">
+        <span className="rooms__group-title">{texts.selected}</span>
+        {selected ? (
+          <div className="rooms__selected">
+            <span>
+              {t.plan.roomNames[selected.type]} · {texts.size(selected.width, selected.depth)}
+            </span>
+            <button
+              type="button"
+              className="chip"
+              onClick={() => {
+                setCustomPlan(removeRoom(plan, floorIdx, selected.id!))
+                setSelectedRoom(null)
+              }}
+            >
+              {texts.remove}
+            </button>
+          </div>
+        ) : (
+          <p className="rooms__hint">{texts.none}</p>
+        )}
+      </div>
+    </>
   )
 }
 

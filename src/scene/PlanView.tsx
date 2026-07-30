@@ -5,7 +5,8 @@ import type { Mesh, MeshStandardMaterial } from 'three'
 import { useConfigurator, useHousePlan } from '../state/store'
 import { STEPS } from '../config/steps'
 import { FOUNDATION_H, ROOM_COLORS } from '../config/plan'
-import type { FloorPlan, RoomType, RoomZone } from '../config/types'
+import type { FloorPlan, PlanRect, RoomType, RoomZone } from '../config/types'
+import { MIN_SIDE, snap, updateRoom } from '../lib/editPlan'
 import { t } from '../locales'
 
 const GAP = 0.08 // зазор між РІЗНИМИ кімнатами
@@ -86,6 +87,103 @@ interface Item {
   lazyStretch?: boolean // рости повільніше / стягуватись швидше (відставати від сусіда)
   growEase?: number // власний (повільніший) час згладжування лише для росту/появи
   exiting: boolean
+  instant?: boolean // її зараз тягнуть мишею — ставити ціль без згладжування
+}
+
+// ---- Ручний режим: перетягування та зміна розмірів зон ----
+
+type DragMode = 'move' | 'xmin' | 'xmax' | 'zmin' | 'zmax'
+
+interface Drag {
+  id: string
+  mode: DragMode
+  px: number // точка захоплення на площині плану
+  pz: number
+  rect: PlanRect // прямокутник кімнати на момент захоплення
+}
+
+// Новий прямокутник за зсувом курсора. Для граней рухаємо ЛИШЕ ту грань,
+// протилежна лишається на місці (інакше кімната «їхала» б при розтягуванні).
+function dragRect(drag: Drag, x: number, z: number): PlanRect {
+  const r = drag.rect
+  const dx = x - drag.px
+  const dz = z - drag.pz
+  if (drag.mode === 'move') return { ...r, x: r.x + dx, z: r.z + dz }
+  const x0 = r.x - r.width / 2
+  const x1 = r.x + r.width / 2
+  const z0 = r.z - r.depth / 2
+  const z1 = r.z + r.depth / 2
+  if (drag.mode === 'xmin') {
+    const nx0 = Math.min(snap(x0 + dx), x1 - MIN_SIDE)
+    return { ...r, x: (nx0 + x1) / 2, width: x1 - nx0 }
+  }
+  if (drag.mode === 'xmax') {
+    const nx1 = Math.max(snap(x1 + dx), x0 + MIN_SIDE)
+    return { ...r, x: (x0 + nx1) / 2, width: nx1 - x0 }
+  }
+  if (drag.mode === 'zmin') {
+    const nz0 = Math.min(snap(z0 + dz), z1 - MIN_SIDE)
+    return { ...r, z: (nz0 + z1) / 2, depth: z1 - nz0 }
+  }
+  const nz1 = Math.max(snap(z1 + dz), z0 + MIN_SIDE)
+  return { ...r, z: (z0 + nz1) / 2, depth: nz1 - z0 }
+}
+
+// Ручки на серединах граней обраної кімнати. Тягнеш ручку — рухається та грань.
+function Handles({
+  rect,
+  onGrab,
+}: {
+  rect: PlanRect
+  onGrab: (mode: DragMode, e: ThreeEvent<PointerEvent>) => void
+}) {
+  const s = 0.45
+  const spots: { mode: DragMode; x: number; z: number }[] = [
+    { mode: 'xmin', x: rect.x - rect.width / 2, z: rect.z },
+    { mode: 'xmax', x: rect.x + rect.width / 2, z: rect.z },
+    { mode: 'zmin', x: rect.x, z: rect.z - rect.depth / 2 },
+    { mode: 'zmax', x: rect.x, z: rect.z + rect.depth / 2 },
+  ]
+  return (
+    <>
+      {spots.map((sp) => (
+        <mesh
+          key={sp.mode}
+          position={[sp.x, 0.34, sp.z]}
+          onPointerDown={(e) => onGrab(sp.mode, e)}
+        >
+          <boxGeometry args={[s, 0.12, s]} />
+          <meshStandardMaterial color="#ffffff" emissive="#2f6fb8" emissiveIntensity={0.5} />
+        </mesh>
+      ))}
+    </>
+  )
+}
+
+// Невидима площина, що ловить рух курсора під час перетягування: рахувати
+// координати по самій кімнаті не можна — вона їде з-під курсора.
+function DragPlane({
+  onMove,
+  onDrop,
+}: {
+  onMove: (x: number, z: number) => void
+  onDrop: () => void
+}) {
+  return (
+    <mesh
+      rotation={[-Math.PI / 2, 0, 0]}
+      position={[0, 0.2, 0]}
+      onPointerMove={(e) => {
+        e.stopPropagation()
+        onMove(e.point.x, e.point.z)
+      }}
+      onPointerUp={onDrop}
+      onPointerLeave={onDrop}
+    >
+      <planeGeometry args={[200, 200]} />
+      <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+    </mesh>
+  )
 }
 
 // ---- Плита фундаменту: плавно росте/змінює розмір ----
@@ -149,6 +247,7 @@ function ZoneMesh({
   onOver,
   onMove,
   onOut,
+  onDown,
 }: {
   item: Item
   hovered: boolean
@@ -157,6 +256,7 @@ function ZoneMesh({
   onOver: (e: ThreeEvent<PointerEvent>) => void
   onMove: (e: ThreeEvent<PointerEvent>) => void
   onOut: (e: ThreeEvent<PointerEvent>) => void
+  onDown?: (e: ThreeEvent<PointerEvent>) => void
 }) {
   const ref = useRef<Mesh>(null)
   const mat = useRef<MeshStandardMaterial>(null)
@@ -190,21 +290,30 @@ function ZoneMesh({
         : growing && item.growEase != null
           ? item.growEase
           : ROOM_EASE
-    easing.damp3(m.scale, [tx, 0.14, tz], ease, dt)
-    // За замовчуванням позиція = центр. Якщо задано anchorZ — фіксуємо цю грань
-    // по Z, тому коробка росте/зникає ВІД грані (не з центру) і не залазить на сусіда.
-    const posZ =
-      item.anchorZ === 'min'
-        ? item.cz - item.d / 2 + m.scale.z / 2
-        : item.anchorZ === 'max'
-          ? item.cz + item.d / 2 - m.scale.z / 2
-          : item.cz
-    // Горизонтальний рух (X) — ЗАВЖДИ синхронно з іншими кімнатами (ROOM_EASE),
-    // навіть для «лінивого» коридору. Лише рух/розтягування вперед-назад (Z)
-    // зберігає ліниву швидкість (щоб коридор не наздоганяв майстер).
-    easing.damp(m.position, 'x', item.cx, ROOM_EASE, dt)
-    easing.damp(m.position, 'y', hovered ? 0.26 : 0.18, ROOM_EASE, dt)
-    easing.damp(m.position, 'z', posZ, ROOM_EASE, dt)
+    const y = hovered ? 0.26 : 0.18
+    if (item.instant) {
+      // Ручне перетягування — БЕЗ згладжування: кімната має йти рівно за
+      // курсором. Позицією й масштабом і далі володіє ЛИШЕ useFrame
+      // (правило №1), просто ціль ставиться миттєво.
+      m.scale.set(item.w, 0.14, item.d)
+      m.position.set(item.cx, y, item.cz)
+    } else {
+      easing.damp3(m.scale, [tx, 0.14, tz], ease, dt)
+      // За замовчуванням позиція = центр. Якщо задано anchorZ — фіксуємо цю грань
+      // по Z, тому коробка росте/зникає ВІД грані (не з центру) і не залазить на сусіда.
+      const posZ =
+        item.anchorZ === 'min'
+          ? item.cz - item.d / 2 + m.scale.z / 2
+          : item.anchorZ === 'max'
+            ? item.cz + item.d / 2 - m.scale.z / 2
+            : item.cz
+      // Горизонтальний рух (X) — ЗАВЖДИ синхронно з іншими кімнатами (ROOM_EASE),
+      // навіть для «лінивого» коридору. Лише рух/розтягування вперед-назад (Z)
+      // зберігає ліниву швидкість (щоб коридор не наздоганяв майстер).
+      easing.damp(m.position, 'x', item.cx, ROOM_EASE, dt)
+      easing.damp(m.position, 'y', y, ROOM_EASE, dt)
+      easing.damp(m.position, 'z', posZ, ROOM_EASE, dt)
+    }
     if (mat.current) {
       // Підсвітку показуємо лише на активному поверсі. На неактивному гасимо
       // МИТТЄВО (без easing-хвоста): інакше при перемиканні поверхів білий
@@ -226,6 +335,7 @@ function ZoneMesh({
       onPointerOver={active ? onOver : undefined}
       onPointerMove={active ? onMove : undefined}
       onPointerOut={active ? onOut : undefined}
+      onPointerDown={onDown}
     >
       <boxGeometry args={[1, 1, 1]} />
       {/* Прозорість — імперативно через fadeMaterial (активний непрозорий, без
@@ -248,20 +358,66 @@ function ZoneMesh({
 // над/під ним (прозорий, не перехоплює ховер/клік).
 function PlanFloor({
   floor,
+  floorIdx,
   showZones,
   showSlab,
   yOffset,
   active,
+  editable,
 }: {
   floor: FloorPlan
+  floorIdx: number
   showZones: boolean
   showSlab: boolean
   yOffset: number
   active: boolean
+  editable: boolean
 }) {
   const setHovered = useConfigurator((s) => s.setHovered)
+  const plan = useHousePlan()
+  const setCustomPlan = useConfigurator((s) => s.setCustomPlan)
+  const selectedRoom = useConfigurator((s) => s.selectedRoom)
+  const setSelectedRoom = useConfigurator((s) => s.setSelectedRoom)
+  const setDragging = useConfigurator((s) => s.setDragging)
   const [hoverKey, setHoverKey] = useState<string | null>(null)
   const [items, setItems] = useState<Item[]>([])
+  const [drag, setDrag] = useState<Drag | null>(null)
+
+  const selected = editable ? floor.rooms.find((r) => r.id === selectedRoom) : undefined
+
+  const endDrag = () => {
+    setDrag(null)
+    setDragging(false)
+  }
+
+  // Кнопку могли відпустити поза полотном — інакше зона «прилипла» б до курсора.
+  useEffect(() => {
+    if (!drag) return
+    const up = () => endDrag()
+    window.addEventListener('pointerup', up)
+    return () => window.removeEventListener('pointerup', up)
+  }, [drag])
+
+  const grab = (id: string, mode: DragMode, e: ThreeEvent<PointerEvent>) => {
+    const room = floor.rooms.find((r) => r.id === id)
+    if (!room) return
+    e.stopPropagation()
+    setSelectedRoom(id)
+    setHovered(null)
+    setDragging(true)
+    setDrag({
+      id,
+      mode,
+      px: e.point.x,
+      pz: e.point.z,
+      rect: { x: room.x, z: room.z, width: room.width, depth: room.depth },
+    })
+  }
+
+  const moveDrag = (x: number, z: number) => {
+    if (!drag) return
+    setCustomPlan(updateRoom(plan, floorIdx, drag.id, dragRect(drag, x, z)))
+  }
 
   // Коли поверх стає неактивним — скидаємо підсвітку (щоб не «застрягала»)
   useEffect(() => {
@@ -343,20 +499,22 @@ function PlanFloor({
           e.stopPropagation()
           setHovered({ name: t.plan.roomNames[item.type], area: item.area, mx: e.nativeEvent.clientX, my: e.nativeEvent.clientY })
         }
+        const dragging = drag?.id === item.key
         return (
           <ZoneMesh
             key={item.key}
-            item={item}
+            item={dragging ? { ...item, instant: true } : item}
             active={active}
             hovered={hoverKey === item.hoverId && !item.exiting}
             onExited={() => removeKey(item.key)}
+            onDown={editable && active && !item.exiting ? (e) => grab(item.key, 'move', e) : undefined}
             onOver={(e) => {
-              if (item.exiting) return
+              if (item.exiting || drag) return
               setHoverKey(item.hoverId)
               showTip(e)
             }}
             onMove={(e) => {
-              if (item.exiting) return
+              if (item.exiting || drag) return
               showTip(e)
             }}
             onOut={(e) => {
@@ -367,6 +525,15 @@ function PlanFloor({
           />
         )
       })}
+
+      {/* Ручки обраної кімнати + ловець руху курсора під час перетягування */}
+      {editable && active && selected && (
+        <Handles
+          rect={{ x: selected.x, z: selected.z, width: selected.width, depth: selected.depth }}
+          onGrab={(mode, e) => grab(selected.id!, mode, e)}
+        />
+      )}
+      {drag && <DragPlane onMove={moveDrag} onDrop={endDrag} />}
     </group>
   )
 }
@@ -375,10 +542,13 @@ export default function PlanView() {
   const currentStep = useConfigurator((s) => s.currentStep)
   const viewFloor = useConfigurator((s) => s.viewFloor)
   const hideFloor2 = useConfigurator((s) => s.hideFloor2)
+  const planMode = useConfigurator((s) => s.planMode)
 
   const plan = useHousePlan()
   const stepId = STEPS[currentStep].id
   const showZones = stepId === 'rooms'
+  // Тягати зони можна лише там, де їх видно, і лише у ручному режимі.
+  const editable = showZones && planMode === 'custom'
   // Плиту показуємо на «формі» тощо, але не на «кімнати» (зони) і не на «вікна»/«дах»
   // (там основу дає 3D-оболонка HouseShell).
   const showSlab = !showZones && stepId !== 'windows' && stepId !== 'roof'
@@ -396,6 +566,8 @@ export default function PlanView() {
           <PlanFloor
             key={floorNum}
             floor={fl}
+            floorIdx={idx}
+            editable={editable}
             showZones={showZones}
             showSlab={showSlab}
             // Земля опустилась на цоколь — зміщуємо весь план на стільки ж,

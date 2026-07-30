@@ -529,6 +529,23 @@ body {
   gap: 8px;
 }
 
+/* Ручний режим планування: підказка та рядок обраної кімнати */
+.rooms__hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink-soft);
+}
+
+.rooms__selected {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
 .chip {
   padding: 8px 14px;
   border: 1.5px solid var(--border);
