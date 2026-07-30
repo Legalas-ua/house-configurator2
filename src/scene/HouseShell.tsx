@@ -24,7 +24,9 @@ const WALL_H = CEIL_H // стіна = висота стелі; зверху ля
 const WALL_COLOR = '#ece7de'
 const PLATE_COLOR = '#d9d3c6'
 const RISE_EASE = 0.5
-const PARAPET_H = 0.45 // висота парапету плоского даху
+const PARAPET_H = 0.45 // висота парапету плоського даху
+const ROOF_SLOPE = 0.35 // висота гребеня = проліт × 0.35 (≈35°, скандинавський)
+const ROOF_COLOR = '#5d6167' // темна покрівля
 
 // ---- Вікна ----
 const WIN_TOP = 2.7 // СПІЛЬНИЙ верх усіх вікон; змінюється лише низ (підвіконня)
@@ -215,6 +217,19 @@ function plateGeometry(pts: [number, number][], hole: Rect | null): ExtrudeGeome
   return geo
 }
 
+// Двосхилий дах (скандинавський, БЕЗ звісів): трикутний профіль по X, витягнутий
+// по Z → гребінь уздовж Z. Габарит = точно контур стін (немає виносу за стіну).
+function gableGeometry(width: number, depth: number, height: number): ExtrudeGeometry {
+  const s = new Shape()
+  s.moveTo(-width / 2, 0)
+  s.lineTo(width / 2, 0)
+  s.lineTo(0, height)
+  s.closePath()
+  const g = new ExtrudeGeometry(s, { depth, bevelEnabled: false })
+  g.translate(0, 0, -depth / 2)
+  return g
+}
+
 const frameMat = { color: FRAME_COLOR, metalness: 0.85, roughness: 0.35 }
 
 // Деталізоване вікно, вмонтоване в отвір. Верх нерухомий, низ анімується (зміна
@@ -329,8 +344,19 @@ export default function HouseShell() {
   const openings = useMemo(() => {
     const win: WindowType = config.windows ?? 'standard'
     const out: Opening[] = []
+    const pitched = config.roof === 'pitched'
     plan.floors.forEach((fl, floorIdx) => {
       const baseY = floorIdx * FLOOR_H
+      // Чи за цією стіною лежить дах нижнього рівня (напр. скат над кухнею-вітальнею).
+      // При СКАТНОМУ даху такі вікна прибираємо — їх перекриває схил.
+      const lowerSlab = floorIdx > 0 ? plan.floors[floorIdx - 1].slab.map(bounds) : []
+      const overLowerRoof = (side: Side, b: Rect) => {
+        if (!pitched || lowerSlab.length === 0) return false
+        const off = 0.6
+        const px = side === 'xmax' ? b.x1 + off : side === 'xmin' ? b.x0 - off : (b.x0 + b.x1) / 2
+        const pz = side === 'zmax' ? b.z1 + off : side === 'zmin' ? b.z0 - off : (b.z0 + b.z1) / 2
+        return lowerSlab.some((r) => px > r.x0 && px < r.x1 && pz > r.z0 && pz < r.z1)
+      }
       fl.rooms.forEach((room) => {
         const specW = WIN_WIDTH[room.type]
         if (specW == null) return
@@ -341,7 +367,12 @@ export default function HouseShell() {
           { side: 'zmax', horizontal: true, line: b.z1, center: (b.x0 + b.x1) / 2, len: b.x1 - b.x0, rotY: 0 },
           { side: 'zmin', horizontal: true, line: b.z0, center: (b.x0 + b.x1) / 2, len: b.x1 - b.x0, rotY: Math.PI },
         ]
-        const sides = cand.filter((c) => isExterior(fl.rooms, room, c.side))
+        const sides = cand.filter(
+          (c) =>
+            isExterior(fl.rooms, room, c.side) &&
+            // скат нижнього даху перекриває це вікно (вихід на терасу лишаємо)
+            !(overLowerRoof(c.side, b) && !facesTerrace(fl.rooms, room, c.side)),
+        )
         if (sides.length === 0) return
         sides.sort((a, c) => c.len - a.len)
         // Дверна сторона: прихожа — з фасаду (zmax); кухня/інші — у двір (zmin).
@@ -379,7 +410,7 @@ export default function HouseShell() {
       })
     })
     return out
-  }, [plan, config.windows])
+  }, [plan, config.windows, config.roof])
 
   // Стіни: простінки + перемички НАД отворами (простінок під підвіконням — окремо,
   // анімований Spandrel). Верх перемички = FLOOR_H, низ отвору = WIN_TOP.
@@ -395,16 +426,19 @@ export default function HouseShell() {
           .sort((a, b) => a.a - b.a)
         // Зовнішня стіна — на ВСЮ висоту поверху (FLOOR_H), щоб закрити край плити
         // перекриття (не було «прожилок»). Простінки точно між кутами; кути — стовпи.
+        // -0.02..FLOOR_H+0.02 — стіни поверхів трохи перехрещуються по вертикалі,
+        // тож на стику поверхів немає хайрлайн-щілини від z-fighting.
         let cursor = e.min
         for (const o of eo) {
-          if (o.a > cursor) pushBox(boxes, e.horizontal, e.line, cursor, o.a, 0, FLOOR_H, baseY, WALL_T)
-          pushBox(boxes, e.horizontal, e.line, o.a, o.b, WIN_TOP, FLOOR_H, baseY, WALL_T)
+          if (o.a > cursor) pushBox(boxes, e.horizontal, e.line, cursor, o.a, -0.02, FLOOR_H + 0.02, baseY, WALL_T)
+          pushBox(boxes, e.horizontal, e.line, o.a, o.b, WIN_TOP, FLOOR_H + 0.02, baseY, WALL_T)
           cursor = o.b
         }
-        pushBox(boxes, e.horizontal, e.line, cursor, e.max, 0, FLOOR_H, baseY, WALL_T)
+        pushBox(boxes, e.horizontal, e.line, cursor, e.max, -0.02, FLOOR_H + 0.02, baseY, WALL_T)
       }
       // Кутові стовпи на кожній вершині контуру — гарантовано з'єднують стіни без дірок.
-      for (const [vx, vz] of pts) boxes.push({ x: vx, y: baseY + FLOOR_H / 2, z: vz, dx: WALL_T, dy: FLOOR_H, dz: WALL_T })
+      for (const [vx, vz] of pts)
+        boxes.push({ x: vx, y: baseY + FLOOR_H / 2, z: vz, dx: WALL_T, dy: FLOOR_H + 0.04, dz: WALL_T })
     })
     return boxes
   }, [plan, openings])
@@ -504,14 +538,86 @@ export default function HouseShell() {
       // відкритий дах, тож парапет по контуру з'являється.
       const upper = idx < N - 1 ? edgesOf(outline(plan.floors[idx + 1].slab)) : []
       for (const e of edgesOf(wallOutline(fl))) {
-        const covered = upper.some(
-          (u) => u.horizontal === e.horizontal && Math.abs(u.line - e.line) < 0.05 && Math.min(u.max, e.max) - Math.max(u.min, e.min) > 0.1,
-        )
-        if (covered) continue
-        pushBox(boxes, e.horizontal, e.line, e.min, e.max, 0, PARAPET_H, roofY, WALL_T)
+        // ВІДРІЗАЄМО лише накриту ЧАСТИНУ ребра, а не пропускаємо ребро цілком —
+        // інакше довга бічна стіна (спільна з 2-м поверхом) губила свій парапет,
+        // і над кухнею/майстром лишалася 1 стінка замість 3.
+        const cuts = upper
+          .filter((u) => u.horizontal === e.horizontal && Math.abs(u.line - e.line) < 0.05)
+          .map((u) => [Math.max(u.min, e.min), Math.min(u.max, e.max)] as [number, number])
+          .filter(([a, b]) => b - a > 0.1)
+          .sort((a, b) => a[0] - b[0])
+        let cur = e.min
+        const spans: [number, number][] = []
+        for (const [a, b] of cuts) {
+          if (a > cur + 0.05) spans.push([cur, a])
+          cur = Math.max(cur, b)
+        }
+        if (e.max > cur + 0.05) spans.push([cur, e.max])
+        for (const [a, b] of spans) {
+          // Парапет трохи заходить у плиту (−0.04) — без щілини на стику зі стіною.
+          pushBox(boxes, e.horizontal, e.line, a, b, -0.04, PARAPET_H, roofY, WALL_T)
+          // Стовпчики на КІНЦЯХ кожної ділянки — кути парапету змикаються без дірок.
+          for (const u of [a, b]) {
+            boxes.push({
+              x: e.horizontal ? u : e.line,
+              y: roofY + (PARAPET_H - 0.04) / 2 - 0.02,
+              z: e.horizontal ? e.line : u,
+              dx: WALL_T,
+              dy: PARAPET_H + 0.04,
+              dz: WALL_T,
+            })
+          }
+        }
       }
     })
     return boxes
+  }, [plan, config.roof])
+
+  // Скатний дах (скандинавський, без звісів): двосхилі призми точно по контуру
+  // стін — над верхнім поверхом і над кожним нижнім рівнем, не накритим зверху.
+  const gables = useMemo(() => {
+    const out: { geo: ExtrudeGeometry; x: number; y: number; z: number; rotY: number }[] = []
+    const N = plan.floors.length
+    if (N === 0 || config.roof !== 'pitched') return out
+    plan.floors.forEach((fl, idx) => {
+      const roofY = (idx + 1) * FLOOR_H
+      let rects: Rect[]
+      if (idx === N - 1) {
+        // Верхній поверх — по контуру СТІН (без тераси: її дах не накриває).
+        const pts = wallOutline(fl)
+        const xs = pts.map((p) => p[0])
+        const zs = pts.map((p) => p[1])
+        rects = [{ x0: Math.min(...xs), x1: Math.max(...xs), z0: Math.min(...zs), z1: Math.max(...zs) }]
+      } else {
+        // Нижній рівень — лише ті прямокутники, що НЕ під верхнім поверхом.
+        const up = plan.floors[idx + 1].slab.map(bounds)
+        rects = fl.slab.map(bounds).filter((r) => {
+          const area = (r.x1 - r.x0) * (r.z1 - r.z0)
+          const cov = up.reduce(
+            (s, u) =>
+              s +
+              Math.max(0, Math.min(u.x1, r.x1) - Math.max(u.x0, r.x0)) * Math.max(0, Math.min(u.z1, r.z1) - Math.max(u.z0, r.z0)),
+            0,
+          )
+          return cov < area * 0.6
+        })
+      }
+      for (const r of rects) {
+        const w = r.x1 - r.x0 + WALL_T
+        const d = r.z1 - r.z0 + WALL_T
+        const ridgeAlongZ = d >= w // гребінь — уздовж довшої сторони
+        const span = ridgeAlongZ ? w : d
+        const h = span * ROOF_SLOPE
+        out.push({
+          geo: ridgeAlongZ ? gableGeometry(w, d, h) : gableGeometry(d, w, h),
+          x: (r.x0 + r.x1) / 2,
+          y: roofY - 0.02,
+          z: (r.z0 + r.z1) / 2,
+          rotY: ridgeAlongZ ? 0 : Math.PI / 2,
+        })
+      }
+    })
+    return out
   }, [plan, config.roof])
 
   useFrame((_, dt) => {
@@ -558,6 +664,12 @@ export default function HouseShell() {
         <mesh key={`parapet-${i}`} position={[b.x, b.y, b.z]} castShadow receiveShadow>
           <boxGeometry args={[b.dx, b.dy, b.dz]} />
           <meshStandardMaterial color={WALL_COLOR} roughness={0.9} />
+        </mesh>
+      ))}
+
+      {gables.map((g, i) => (
+        <mesh key={`gable-${i}`} geometry={g.geo} position={[g.x, g.y, g.z]} rotation-y={g.rotY} castShadow receiveShadow>
+          <meshStandardMaterial color={ROOF_COLOR} roughness={0.75} />
         </mesh>
       ))}
 
