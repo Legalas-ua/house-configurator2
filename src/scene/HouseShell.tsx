@@ -160,6 +160,25 @@ function edgesOf(rings: Ring[]): Edge[] {
   return es
 }
 
+// Смуга, яку займають зовнішні стіни. Віднімаємо її від плити, щоб плита
+// закінчувалась по ВНУТРІШНІЙ грані стіни, а не доходила до її осі — інакше
+// торець плити сидить усередині стіни. Кінці подовжені на пів товщини, щоб
+// смуги перекрились на кутах.
+function wallBand(rings: Ring[]): PlanRect[] {
+  const out: PlanRect[] = []
+  for (const e of edgesOf(rings)) {
+    const a = e.min - WALL_T / 2
+    const b = e.max + WALL_T / 2
+    const mid = (a + b) / 2
+    out.push(
+      e.horizontal
+        ? { x: mid, z: e.line, width: b - a, depth: WALL_T }
+        : { x: e.line, z: mid, width: WALL_T, depth: b - a },
+    )
+  }
+  return out
+}
+
 interface Box {
   x: number
   y: number
@@ -523,6 +542,8 @@ export default function HouseShell() {
   }, [plan])
 
   // Перекриття: ВРІВЕНЬ (top на рівні поверху, під ним), а не видавлені вгору.
+  // Контур — по ВНУТРІШНІЙ грані стін (віднімаємо смугу стіни), щоб торець
+  // плити не сидів у товщі стіни. Тераса смуги не має, тож там плита повна.
   const plates = useMemo(() => {
     const N = plan.floors.length
     const arr: { y: number; geo: ExtrudeGeometry }[] = []
@@ -532,8 +553,9 @@ export default function HouseShell() {
       const wantHole = idx >= 1 && idx <= N - 1
       const stairs = wantHole ? fl.rooms.find((r) => r.type === 'stairs') : undefined
       const hole = stairs ? bounds(stairs) : null
-      const pts = idx <= N - 1 ? outline(fl.slab) : wallOutline(fl)
-      arr.push({ y: idx * FLOOR_H, geo: plateGeometry(pts, hole) })
+      const band = wallBand(wallOutline(fl))
+      const cut = idx <= N - 1 ? band : [...fl.rooms.filter((r) => r.type === 'terrace'), ...band]
+      arr.push({ y: idx * FLOOR_H, geo: plateGeometry(unionOutline(fl.slab, cut), hole) })
     }
     return arr
   }, [plan])
