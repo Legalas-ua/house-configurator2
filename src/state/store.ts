@@ -1,5 +1,12 @@
+import { useMemo } from 'react'
 import { create } from 'zustand'
-import type { ConfigKey, ConfigValue, HouseConfig } from '../config/types'
+import type {
+  ConfigKey,
+  ConfigValue,
+  HouseConfig,
+  HousePlan,
+  PlanMode,
+} from '../config/types'
 import { DEFAULT_CONFIG, STEPS } from '../config/steps'
 import {
   floorsAvailable,
@@ -7,6 +14,7 @@ import {
   planBathrooms,
   supportedExtras,
 } from '../config/layouts'
+import { generateHousePlan } from '../lib/floorplan'
 import { floor2Limits } from '../lib/lshape'
 
 // ============================================================
@@ -62,6 +70,10 @@ function sanitize(config: HouseConfig): HouseConfig {
 interface ConfiguratorState {
   started: boolean // false = стартовий екран
   config: HouseConfig
+  // Режим плану. У 'custom' план лежить у customPlan і БІЛЬШЕ не перераховується
+  // з конфігурації — інакше правки користувача затирались би на кожен setValue.
+  planMode: PlanMode
+  customPlan: HousePlan | null
   currentStep: number // індекс у STEPS
   maxStepReached: number // до якого кроку дійшов користувач (для 3D і навігації)
   topView: boolean // камера летить у вид зверху; обертання мишею вимикає
@@ -70,6 +82,8 @@ interface ConfiguratorState {
   hovered: { name: string; area: number; mx: number; my: number } | null // підказка кімнати
   start: () => void
   setValue: (key: ConfigKey, value: string | number | string[] | null) => void
+  setPlanMode: (mode: PlanMode) => void
+  setCustomPlan: (plan: HousePlan) => void
   setTopView: (on: boolean) => void
   setViewFloor: (floor: number) => void
   setHideFloor2: (on: boolean) => void
@@ -82,6 +96,8 @@ interface ConfiguratorState {
 export const useConfigurator = create<ConfiguratorState>((set) => ({
   started: false,
   config: DEFAULT_CONFIG,
+  planMode: 'template',
+  customPlan: null,
   currentStep: 0,
   maxStepReached: 0,
   topView: false,
@@ -99,6 +115,17 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
       // Якщо будинок став одноповерховим — показуємо 1-й поверх
       return { config, viewFloor: Math.min(s.viewFloor, config.floors) }
     }),
+
+  // Ручний режим НЕ починається з порожнечі: заморожуємо поточний обчислений
+  // план як стартову точку. Повернення до шаблонів скидає ручні правки.
+  setPlanMode: (mode) =>
+    set((s) => {
+      if (mode === s.planMode) return s
+      if (mode === 'template') return { planMode: 'template', customPlan: null }
+      return { planMode: 'custom', customPlan: s.customPlan ?? generateHousePlan(s.config) }
+    }),
+
+  setCustomPlan: (plan) => set({ planMode: 'custom', customPlan: plan }),
 
   setTopView: (on) => set({ topView: on }),
   setViewFloor: (floor) => set({ viewFloor: floor }),
@@ -127,3 +154,12 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
       return allowed ? { currentStep: index } : s
     }),
 }))
+
+// ЄДИНЕ джерело плану для всіх споживачів (3D, вид зверху, легенда, ціна).
+// Режим шаблонів — чиста функція від конфігурації; ручний — план зі стору.
+// Ніхто, крім цього хука, не має викликати generateHousePlan напряму.
+export function useHousePlan(): HousePlan {
+  const config = useConfigurator((s) => s.config)
+  const customPlan = useConfigurator((s) => s.customPlan)
+  return useMemo(() => customPlan ?? generateHousePlan(config), [customPlan, config])
+}

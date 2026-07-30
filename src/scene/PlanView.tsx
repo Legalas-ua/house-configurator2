@@ -2,11 +2,10 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useFrame, type ThreeEvent } from '@react-three/fiber'
 import { easing } from 'maath'
 import type { Mesh, MeshStandardMaterial } from 'three'
-import { useConfigurator } from '../state/store'
+import { useConfigurator, useHousePlan } from '../state/store'
 import { STEPS } from '../config/steps'
 import { ROOM_COLORS } from '../config/plan'
 import type { FloorPlan, RoomType, RoomZone } from '../config/types'
-import { generateHousePlan } from '../lib/floorplan'
 import { t } from '../locales'
 
 const GAP = 0.08 // зазор між РІЗНИМИ кімнатами
@@ -373,12 +372,11 @@ function PlanFloor({
 }
 
 export default function PlanView() {
-  const config = useConfigurator((s) => s.config)
   const currentStep = useConfigurator((s) => s.currentStep)
   const viewFloor = useConfigurator((s) => s.viewFloor)
   const hideFloor2 = useConfigurator((s) => s.hideFloor2)
 
-  const plan = useMemo(() => generateHousePlan(config), [config])
+  const plan = useHousePlan()
   const stepId = STEPS[currentStep].id
   const showZones = stepId === 'rooms'
   // Плиту показуємо на «формі» тощо, але не на «кімнати» (зони) і не на «вікна»/«дах»

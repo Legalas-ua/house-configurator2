@@ -1,19 +1,16 @@
-import { useMemo } from 'react'
-import { useConfigurator } from '../state/store'
+import { useConfigurator, useHousePlan } from '../state/store'
 import { STEPS } from '../config/steps'
 import { ROOM_COLORS } from '../config/plan'
 import type { RoomType } from '../config/types'
-import { generateHousePlan } from '../lib/floorplan'
 import { t } from '../locales'
 
 // Умовні позначення плану внизу панелі: колір → кімната → площа.
 // Показуємо кімнати поточного поверху; внизу — загальна площа будинку.
 export default function Legend() {
-  const config = useConfigurator((s) => s.config)
   const currentStep = useConfigurator((s) => s.currentStep)
   const viewFloor = useConfigurator((s) => s.viewFloor)
 
-  const plan = useMemo(() => generateHousePlan(config), [config])
+  const plan = useHousePlan()
 
   if (STEPS[currentStep].id !== 'rooms' || plan.floors.length === 0) return null
 

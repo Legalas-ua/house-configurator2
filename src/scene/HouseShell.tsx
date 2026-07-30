@@ -2,9 +2,8 @@ import { useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { easing } from 'maath'
 import { ExtrudeGeometry, Path, Shape, type Group, type Mesh } from 'three'
-import { useConfigurator } from '../state/store'
+import { useConfigurator, useHousePlan } from '../state/store'
 import { STEPS } from '../config/steps'
-import { generateHousePlan } from '../lib/floorplan'
 import type { FloorPlan, PlanRect, RoomType, RoomZone, WindowType } from '../config/types'
 
 // ============================================================
@@ -336,7 +335,7 @@ export default function HouseShell() {
   const config = useConfigurator((s) => s.config)
   const currentStep = useConfigurator((s) => s.currentStep)
 
-  const plan = useMemo(() => generateHousePlan(config), [config])
+  const plan = useHousePlan()
   const stepId = STEPS[currentStep].id
   const show = stepId === 'windows' || stepId === 'roof' // коробка видима на «Вікна» і «Дах»
   const ref = useRef<Group>(null)

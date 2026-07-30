@@ -1,4 +1,4 @@
-import type { HouseConfig } from '../config/types'
+import type { HouseConfig, HousePlan } from '../config/types'
 import type { PriceConfig } from '../config/pricing'
 import { generateHousePlan } from './floorplan'
 
@@ -14,12 +14,18 @@ export interface PriceEstimate {
   overBy: number // на скільки перевищено бюджет (0, якщо не перевищено)
 }
 
-export function calculatePrice(config: HouseConfig, prices: PriceConfig): PriceEstimate {
+// plan передається ззовні (useHousePlan), щоб ручний план теж рахувався;
+// без нього — виводимо з конфігурації, як у режимі шаблонів.
+export function calculatePrice(
+  config: HouseConfig,
+  prices: PriceConfig,
+  plan?: HousePlan,
+): PriceEstimate {
   if (!config.shape) {
     return { total: 0, areaM2: 0, budgetStatus: 'incomplete', overBy: 0 }
   }
 
-  const areaM2 = generateHousePlan(config).totalArea
+  const areaM2 = (plan ?? generateHousePlan(config)).totalArea
 
   const base = areaM2 * prices.basePricePerM2
   const total = Math.round(base * prices.shapeMultiplier[config.shape])

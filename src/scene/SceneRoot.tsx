@@ -4,8 +4,7 @@ import { OrbitControls } from '@react-three/drei'
 import { ACESFilmicToneMapping } from 'three'
 import { easing } from 'maath'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
-import { useConfigurator } from '../state/store'
-import { generateHousePlan } from '../lib/floorplan'
+import { useConfigurator, useHousePlan } from '../state/store'
 import Ground from './Ground'
 import PlanView from './PlanView'
 import HouseShell from './HouseShell'
@@ -18,11 +17,10 @@ const FOV = 40
 // режим вимикається і камера знову вільна.
 function CameraRig({ controls }: { controls: React.RefObject<OrbitControlsImpl | null> }) {
   const topView = useConfigurator((s) => s.topView)
-  const config = useConfigurator((s) => s.config)
   const viewFloor = useConfigurator((s) => s.viewFloor)
+  const plan = useHousePlan()
 
   const fitHeight = useMemo(() => {
-    const plan = generateHousePlan(config)
     const floor = plan.floors[Math.min(viewFloor, plan.floors.length) - 1]
     if (!floor) return 26
     let ext = 0
@@ -32,7 +30,7 @@ function CameraRig({ controls }: { controls: React.RefObject<OrbitControlsImpl |
     const maxDim = ext * 2
     const h = (maxDim / 2) * 1.35 / Math.tan(((FOV / 2) * Math.PI) / 180)
     return Math.max(22, h)
-  }, [config, viewFloor])
+  }, [plan, viewFloor])
 
   useFrame((state, delta) => {
     if (!topView || !controls.current) return

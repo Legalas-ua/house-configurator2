@@ -92,3 +92,8 @@ export interface HousePlan {
   floors: FloorPlan[]
   totalArea: number // м², сума всіх приміщень
 }
+
+// Звідки береться план:
+// 'template' — виводиться з конфігурації (generateHousePlan), як і раніше;
+// 'custom'   — лежить у сторі й редагується користувачем, конфігурація його не чіпає.
+export type PlanMode = 'template' | 'custom'
