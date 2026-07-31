@@ -4,7 +4,6 @@ import { ALL_EXTRAS } from '../../config/rooms'
 import { availableBedrooms, supportedExtras } from '../../config/layouts'
 import { floor2Limits } from '../../lib/lshape'
 import { addRoom, removeRoom } from '../../lib/editPlan'
-import { validatePlan } from '../../lib/validatePlan'
 import { t } from '../../locales'
 
 // Типи кімнат, які можна додати вручну. Сходів тут немає: вони наскрізні й
@@ -195,8 +194,6 @@ function RoomEditor() {
 
   return (
     <>
-      <IssueList />
-
       <div className="rooms__group">
         <span className="rooms__group-title">{texts.add}</span>
         <div className="chips">
@@ -232,37 +229,6 @@ function RoomEditor() {
         {selected && <p className="rooms__hint">{texts.joinHint}</p>}
       </div>
     </>
-  )
-}
-
-// Список помилок планування. Поки він не порожній — далі не пускаємо.
-function IssueList() {
-  const plan = useHousePlan()
-  const issues = validatePlan(plan)
-  const texts = t.steps.rooms.issues
-  if (issues.length === 0) return null
-
-  const name = (floor: number, id: string) => {
-    const room = plan.floors[floor]?.rooms.find((r) => r.id === id)
-    return room ? t.plan.roomNames[room.type] : id
-  }
-
-  return (
-    <div className="rooms__group">
-      <span className="rooms__group-title">{texts.title}</span>
-      <ul className="issues">
-        {issues.map((it, i) => (
-          <li key={i} className="issues__item">
-            {it.kind === 'overlap'
-              ? texts.overlap(name(it.floor, it.rooms[0]), name(it.floor, it.rooms[1]))
-              : it.kind === 'gap'
-                ? texts.gap(name(it.floor, it.rooms[0]), name(it.floor, it.rooms[1]), it.value ?? 0)
-                : texts.stairsArea(it.value ?? 0)}
-          </li>
-        ))}
-      </ul>
-      <p className="rooms__hint">{texts.blocked}</p>
-    </div>
   )
 }
 

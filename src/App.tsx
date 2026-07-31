@@ -5,6 +5,7 @@ import Landing from './components/Landing'
 import Panel from './components/Panel'
 import StepContent from './components/StepContent'
 import MiniStepper from './components/MiniStepper'
+import PlanIssues from './components/PlanIssues'
 import RoomTooltip from './components/RoomTooltip'
 import SceneRoot from './scene/SceneRoot'
 
@@ -44,6 +45,7 @@ export default function App() {
         >
           {t.viewport.topView}
         </button>
+        <PlanIssues />
       </main>
       <MiniStepper />
       <Panel />

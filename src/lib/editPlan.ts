@@ -89,11 +89,12 @@ export interface Junction {
   otherId: string
   x: number // середина спільного ребра — там і буде кнопка
   z: number
+  alongX: boolean // спільне ребро йде вздовж X (важливо, куди зсувати кнопку)
   joined: boolean
 }
 
 // Спільне ребро двох прямокутників: дотик по одній осі + перекриття по другій.
-function sharedEdge(a: RoomZone, b: RoomZone): { x: number; z: number } | null {
+function sharedEdge(a: RoomZone, b: RoomZone): { x: number; z: number; alongX: boolean } | null {
   const ax0 = a.x - a.width / 2
   const ax1 = a.x + a.width / 2
   const az0 = a.z - a.depth / 2
@@ -103,15 +104,19 @@ function sharedEdge(a: RoomZone, b: RoomZone): { x: number; z: number } | null {
   const bz0 = b.z - b.depth / 2
   const bz1 = b.z + b.depth / 2
 
+  // Вертикальне ребро (дотик по X): спільний відрізок тягнеться вздовж Z.
   const zOver = Math.min(az1, bz1) - Math.max(az0, bz0)
   if (zOver > EDGE_EPS) {
-    if (Math.abs(ax1 - bx0) < EDGE_EPS) return { x: ax1, z: (Math.max(az0, bz0) + Math.min(az1, bz1)) / 2 }
-    if (Math.abs(bx1 - ax0) < EDGE_EPS) return { x: ax0, z: (Math.max(az0, bz0) + Math.min(az1, bz1)) / 2 }
+    const z = (Math.max(az0, bz0) + Math.min(az1, bz1)) / 2
+    if (Math.abs(ax1 - bx0) < EDGE_EPS) return { x: ax1, z, alongX: false }
+    if (Math.abs(bx1 - ax0) < EDGE_EPS) return { x: ax0, z, alongX: false }
   }
+  // Горизонтальне ребро (дотик по Z): спільний відрізок тягнеться вздовж X.
   const xOver = Math.min(ax1, bx1) - Math.max(ax0, bx0)
   if (xOver > EDGE_EPS) {
-    if (Math.abs(az1 - bz0) < EDGE_EPS) return { x: (Math.max(ax0, bx0) + Math.min(ax1, bx1)) / 2, z: az1 }
-    if (Math.abs(bz1 - az0) < EDGE_EPS) return { x: (Math.max(ax0, bx0) + Math.min(ax1, bx1)) / 2, z: az0 }
+    const x = (Math.max(ax0, bx0) + Math.min(ax1, bx1)) / 2
+    if (Math.abs(az1 - bz0) < EDGE_EPS) return { x, z: az1, alongX: true }
+    if (Math.abs(bz1 - az0) < EDGE_EPS) return { x, z: az0, alongX: true }
   }
   return null
 }
@@ -125,7 +130,13 @@ export function junctionsOf(rooms: RoomZone[], id: string): Junction[] {
     if (other === self || !other.id) continue
     const mid = sharedEdge(self, other)
     if (!mid) continue
-    out.push({ otherId: other.id, x: mid.x, z: mid.z, joined: !!self.group && self.group === other.group })
+    out.push({
+      otherId: other.id,
+      x: mid.x,
+      z: mid.z,
+      alongX: mid.alongX,
+      joined: !!self.group && self.group === other.group,
+    })
   }
   return out
 }

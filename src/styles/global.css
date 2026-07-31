@@ -565,8 +565,32 @@ body {
   background: #2f6fb8;
 }
 
-/* Помилки планування */
-.issues {
+/* Помилки планування — плаваюче повідомлення в кутку сцени */
+.plan-issues {
+  position: absolute;
+  left: 60px;
+  bottom: 20px;
+  z-index: 10;
+  max-width: 340px;
+  padding: 12px 14px;
+  border: 1.5px solid rgba(224, 49, 49, 0.5);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1);
+  backdrop-filter: blur(6px);
+}
+
+.plan-issues__title {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #e03131;
+}
+
+.plan-issues__list {
   margin: 0;
   padding: 0;
   list-style: none;
@@ -575,14 +599,27 @@ body {
   gap: 6px;
 }
 
-.issues__item {
-  padding: 8px 10px;
+.plan-issues__item {
+  padding-left: 10px;
   border-left: 3px solid #e03131;
-  border-radius: 4px;
-  background: rgba(224, 49, 49, 0.08);
   font-size: 12px;
   line-height: 1.45;
   color: var(--ink);
+}
+
+.plan-issues__blocked {
+  display: block;
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+
+@media (max-width: 900px) {
+  .plan-issues {
+    left: 12px;
+    right: 12px;
+    max-width: none;
+  }
 }
 
 /* Ручний режим планування: підказка та рядок обраної кімнати */

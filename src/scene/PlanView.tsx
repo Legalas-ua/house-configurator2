@@ -224,15 +224,32 @@ function IssueMark({ rect }: { rect: PlanRect }) {
 // приміщення складної форми (без стіни між ними) або роз'єднати назад.
 function JoinButtons({
   junctions,
+  rect,
   onToggle,
 }: {
   junctions: Junction[]
+  rect: PlanRect // обрана кімната — щоб знати, де стоять повзунки
   onToggle: (otherId: string) => void
 }) {
+  // Повзунки сидять на серединах граней, і кнопка стику часто падає рівно на
+  // них. Якщо збіглись — відсуваємо кнопку вздовж того самого ребра і трохи
+  // піднімаємо, щоб вона не перехоплювала натискання на повзунок.
+  const handles = [
+    [rect.x - rect.width / 2, rect.z],
+    [rect.x + rect.width / 2, rect.z],
+    [rect.x, rect.z - rect.depth / 2],
+    [rect.x, rect.z + rect.depth / 2],
+  ]
+  const place = (j: Junction): [number, number, number] => {
+    const clash = handles.some(([hx, hz]) => Math.hypot(j.x - hx, j.z - hz) < 0.5)
+    if (!clash) return [j.x, 0.42, j.z]
+    const shift = 0.9
+    return j.alongX ? [j.x + shift, 0.75, j.z] : [j.x, 0.75, j.z + shift]
+  }
   return (
     <>
       {junctions.map((j) => (
-        <Html key={j.otherId} position={[j.x, 0.42, j.z]} center zIndexRange={[20, 0]}>
+        <Html key={j.otherId} position={place(j)} center zIndexRange={[20, 0]}>
           <button
             type="button"
             className={`plan-join${j.joined ? ' plan-join--on' : ''}`}
@@ -491,7 +508,7 @@ function PlanFloor({
   floor: FloorPlan
   floorIdx: number
   below?: FloorPlan // поверх під цим — його контур підказує межі
-  issues: PlanIssue[] // помилки ЦЬОГО поверху
+  issues: PlanIssue[] // помилки ВСЬОГО плану (фільтруємо всередині — див. нижче)
   showZones: boolean
   showSlab: boolean
   yOffset: number
@@ -511,7 +528,12 @@ function PlanFloor({
   const downAt = useRef<{ x: number; y: number } | null>(null)
 
   const selected = editable ? floor.rooms.find((r) => r.id === selectedRoom) : undefined
-  const bad = useMemo(() => badRooms(issues, floorIdx), [issues, floorIdx])
+  // ВАЖЛИВО: фільтруємо всередині, а не в батька. Якщо передати сюди
+  // issues.filter(...), це щоразу НОВИЙ масив → новий bad → новий target →
+  // useEffect зі setItems → рендер → знову новий масив. Саме цей цикл і
+  // «трусив» камеру, поки увімкнений ручний режим.
+  const floorIssues = useMemo(() => issues.filter((it) => it.floor === floorIdx), [issues, floorIdx])
+  const bad = useMemo(() => badRooms(floorIssues, floorIdx), [floorIssues, floorIdx])
   const junctions = useMemo(
     () => (selected?.id ? junctionsOf(floor.rooms, selected.id) : []),
     [floor.rooms, selected?.id],
@@ -706,13 +728,14 @@ function PlanFloor({
           <SizeLabels rect={{ x: selected.x, z: selected.z, width: selected.width, depth: selected.depth }} />
           <JoinButtons
             junctions={junctions}
+            rect={{ x: selected.x, z: selected.z, width: selected.width, depth: selected.depth }}
             onToggle={(otherId) => setCustomPlan(toggleJoin(plan, floorIdx, selected.id!, otherId))}
           />
         </>
       )}
 
       {/* Місця помилок планування */}
-      {editable && active && issues.map((it, i) => <IssueMark key={`issue-${i}`} rect={it.rect} />)}
+      {editable && active && floorIssues.map((it, i) => <IssueMark key={`issue-${i}`} rect={it.rect} />)}
       {drag && <DragPlane onMove={moveDrag} onDrop={endDrag} />}
     </group>
   )
@@ -749,7 +772,7 @@ export default function PlanView() {
             floor={fl}
             floorIdx={idx}
             below={idx > 0 ? plan.floors[idx - 1] : undefined}
-            issues={issues.filter((it) => it.floor === idx)}
+            issues={issues}
             editable={editable}
             showZones={showZones}
             showSlab={showSlab}
