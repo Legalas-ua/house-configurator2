@@ -1,0 +1,309 @@
+import type { FloorPlan, HouseConfig, HousePlan, RoomType, RoomZone, WindowType } from '../config/types'
+
+// ============================================================
+// Вікна як ДАНІ. Раніше отвори обчислювались просто в HouseShell і ніде не
+// зберігались — тож користувач не мав де їх правити. Тепер:
+//   generateWindows() — готовий варіант (та сама логіка, що й була)
+//   WindowSpec[]      — те, що можна покласти в стор і редагувати
+//   resolveWindow()   — spec + план -> конкретна геометрія отвору
+//
+// Вікно прив'язане до КІМНАТИ та СТОРОНИ, а не до абсолютних координат: посунув
+// кімнату — вікно поїхало з нею.
+// ============================================================
+
+export type Side = 'xmin' | 'xmax' | 'zmin' | 'zmax'
+
+export interface WindowSpec {
+  id: string
+  floor: number // індекс поверху
+  roomId: string
+  side: Side
+  u: number // зсув ЛІВОГО краю вікна від початку стіни, м
+  width: number
+  sill: number // низ отвору від підлоги
+  top: number // верх отвору
+  mullions: number // -1 = автоматично за шириною
+  door: boolean
+}
+
+// ---- Розміри та правила готового варіанту ----
+export const WIN_TOP = 2.7 // СПІЛЬНИЙ верх усіх вікон; змінюється лише низ
+export const WIN_MARGIN = 0.5
+export const MIN_WIN_W = 0.6
+export const MULLION_STEP = 1.4
+
+export const WIN_WIDTH: Partial<Record<RoomType, number>> = {
+  master: 1.8,
+  bedroom: 1.6,
+  livingKitchen: 2.6,
+  living: 1.9,
+  office: 1.3,
+  bathroom: 1.0,
+  closet: 0.6,
+  wardrobe: 0.8,
+  hall: 1.0,
+  stairs: 1.2,
+  corridor: 100, // галерея на всю стіну
+}
+
+// Приміщення, яким вікно не потрібне (комора — за вимогою замовника; тераса
+// взагалі надворі; шафи/гардероб — глухі).
+const NO_WINDOW_NEEDED: RoomType[] = ['pantry', 'terrace', 'storage', 'closet', 'wardrobe']
+
+// Двері (панорама в підлогу): кухня-вітальня та прихожа завжди; спальні/майстер
+// 1-го поверху — вихід у двір.
+export const isDoorRoom = (type: RoomType, floorIdx: number) =>
+  type === 'livingKitchen' || type === 'hall' || (floorIdx === 0 && (type === 'bedroom' || type === 'master'))
+
+// Підвіконня (верх завжди WIN_TOP). Санвузол/сходи — фіксовані.
+export function sillFor(floorIdx: number, type: RoomType, win: WindowType, asDoor: boolean): number {
+  if (type === 'bathroom') return WIN_TOP - 0.6
+  if (type === 'stairs') return floorIdx >= 1 ? 0.3 : 0
+  if (asDoor) return 0
+  if (win === 'panoramic') return floorIdx >= 1 ? 0.3 : 0
+  return 0.9
+}
+
+// ---- Геометрія сторін ----
+
+export interface Rect {
+  x0: number
+  x1: number
+  z0: number
+  z1: number
+}
+export const bounds = (r: { x: number; z: number; width: number; depth: number }): Rect => ({
+  x0: r.x - r.width / 2,
+  x1: r.x + r.width / 2,
+  z0: r.z - r.depth / 2,
+  z1: r.z + r.depth / 2,
+})
+
+const segOverlap = (a0: number, a1: number, b0: number, b1: number) => Math.min(a1, b1) - Math.max(a0, b0) > 0.05
+
+// Сусідня кімната за стороною (або наявність тераси за нею).
+export function neighborOf(rooms: RoomZone[], room: RoomZone, side: Side, wantTerrace: boolean): RoomZone | undefined {
+  const b = bounds(room)
+  return rooms.find((r2) => {
+    if (r2 === room) return false
+    if (wantTerrace ? r2.type !== 'terrace' : r2.type === 'terrace') return false
+    const c = bounds(r2)
+    if (side === 'xmax') return Math.abs(c.x0 - b.x1) < 0.05 && segOverlap(b.z0, b.z1, c.z0, c.z1)
+    if (side === 'xmin') return Math.abs(c.x1 - b.x0) < 0.05 && segOverlap(b.z0, b.z1, c.z0, c.z1)
+    if (side === 'zmax') return Math.abs(c.z0 - b.z1) < 0.05 && segOverlap(b.x0, b.x1, c.x0, c.x1)
+    return Math.abs(c.z1 - b.z0) < 0.05 && segOverlap(b.x0, b.x1, c.x0, c.x1)
+  })
+}
+
+// Стіна ЗОВНІШНЯ, якщо за нею немає іншої кімнати. Тільки на таких можна
+// ставити вікна — на перетині приміщень вікна не буває.
+export const isExterior = (rooms: RoomZone[], room: RoomZone, side: Side) => !neighborOf(rooms, room, side, false)
+export const facesTerrace = (rooms: RoomZone[], room: RoomZone, side: Side) => !!neighborOf(rooms, room, side, true)
+
+export interface WallSeg {
+  side: Side
+  horizontal: boolean // стіна тягнеться вздовж X
+  line: number // координата площини стіни
+  uStart: number // початок стіни вздовж її осі
+  len: number
+  rotY: number
+}
+
+export function wallOf(room: RoomZone, side: Side): WallSeg {
+  const b = bounds(room)
+  if (side === 'xmax') return { side, horizontal: false, line: b.x1, uStart: b.z0, len: b.z1 - b.z0, rotY: Math.PI / 2 }
+  if (side === 'xmin') return { side, horizontal: false, line: b.x0, uStart: b.z0, len: b.z1 - b.z0, rotY: -Math.PI / 2 }
+  if (side === 'zmax') return { side, horizontal: true, line: b.z1, uStart: b.x0, len: b.x1 - b.x0, rotY: 0 }
+  return { side, horizontal: true, line: b.z0, uStart: b.x0, len: b.x1 - b.x0, rotY: Math.PI }
+}
+
+export const ALL_SIDES: Side[] = ['xmax', 'xmin', 'zmax', 'zmin']
+
+// Сторони кімнати, на які МОЖНА ставити вікно.
+export function openSides(floor: FloorPlan, room: RoomZone): Side[] {
+  return ALL_SIDES.filter((s) => isExterior(floor.rooms, room, s))
+}
+
+// ---- Готовий варіант ----
+
+export function generateWindows(plan: HousePlan, config: HouseConfig): WindowSpec[] {
+  const win: WindowType = config.windows ?? 'standard'
+  const pitched = config.roof === 'pitched'
+  const out: WindowSpec[] = []
+
+  plan.floors.forEach((fl, floorIdx) => {
+    // Чи за цією стіною лежить дах нижнього рівня (напр. скат над кухнею-вітальнею).
+    // При СКАТНОМУ даху такі вікна прибираємо — їх перекриває схил.
+    const lowerSlab = floorIdx > 0 ? plan.floors[floorIdx - 1].slab.map(bounds) : []
+    const overLowerRoof = (side: Side, b: Rect) => {
+      if (!pitched || lowerSlab.length === 0) return false
+      const off = 0.6
+      const px = side === 'xmax' ? b.x1 + off : side === 'xmin' ? b.x0 - off : (b.x0 + b.x1) / 2
+      const pz = side === 'zmax' ? b.z1 + off : side === 'zmin' ? b.z0 - off : (b.z0 + b.z1) / 2
+      return lowerSlab.some((r) => px > r.x0 && px < r.x1 && pz > r.z0 && pz < r.z1)
+    }
+
+    fl.rooms.forEach((room) => {
+      const specW = WIN_WIDTH[room.type]
+      if (specW == null || !room.id) return
+      const b = bounds(room)
+      const sides = openSides(fl, room)
+        .filter((s) => !(overLowerRoof(s, b) && !facesTerrace(fl.rooms, room, s)))
+        .map((s) => wallOf(room, s))
+      if (sides.length === 0) return
+      sides.sort((a, c) => c.len - a.len)
+
+      const doorRoom = isDoorRoom(room.type, floorIdx)
+      // Прихожа і кухня-вітальня — двері спереду (фасад); решта — у двір.
+      const pref: Side = room.type === 'hall' || room.type === 'livingKitchen' ? 'zmax' : 'zmin'
+      const doorSide = doorRoom ? (sides.find((s) => s.side === pref) ?? sides[0]) : null
+
+      for (const sd of sides) {
+        const terraceExit = facesTerrace(fl.rooms, room, sd.side)
+        const asDoor = terraceExit || sd === doorSide
+        const kitchenDoor = asDoor && room.type === 'livingKitchen'
+        const width = terraceExit
+          ? Math.max(sd.len - 0.3, MIN_WIN_W)
+          : kitchenDoor
+            ? Math.max(sd.len - 1.0, 0.9)
+            : Math.min(specW, sd.len - WIN_MARGIN)
+        if (width < 0.4) continue
+        out.push({
+          id: `${floorIdx}-${room.id}-${sd.side}`,
+          floor: floorIdx,
+          roomId: room.id,
+          side: sd.side,
+          u: (sd.len - width) / 2, // по центру стіни
+          width,
+          sill: asDoor ? 0 : sillFor(floorIdx, room.type, win, false),
+          top: WIN_TOP,
+          mullions: -1,
+          door: asDoor,
+        })
+      }
+    })
+  })
+  return out
+}
+
+// ---- spec -> геометрія ----
+
+export interface ResolvedWindow extends WindowSpec {
+  baseY: number
+  horizontal: boolean
+  line: number
+  a: number // початок отвору вздовж стіни
+  b: number
+  rotY: number
+  fx: number // центр отвору у світі
+  fz: number
+}
+
+export function resolveWindows(plan: HousePlan, specs: WindowSpec[], floorH: number): ResolvedWindow[] {
+  const out: ResolvedWindow[] = []
+  for (const spec of specs) {
+    const fl = plan.floors[spec.floor]
+    const room = fl?.rooms.find((r) => r.id === spec.roomId)
+    if (!room) continue // кімнату прибрали — вікно зникає разом з нею
+    const w = wallOf(room, spec.side)
+    const width = Math.min(spec.width, w.len)
+    const u = Math.max(0, Math.min(spec.u, w.len - width))
+    const a = w.uStart + u
+    const b = a + width
+    const center = (a + b) / 2
+    out.push({
+      ...spec,
+      width,
+      u,
+      baseY: spec.floor * floorH,
+      horizontal: w.horizontal,
+      line: w.line,
+      a,
+      b,
+      rotY: w.rotY,
+      fx: w.horizontal ? center : w.line,
+      fz: w.horizontal ? w.line : center,
+    })
+  }
+  return out
+}
+
+// ---- Перевірка ----
+
+export interface WindowIssue {
+  floor: number
+  roomId: string
+  roomType: RoomType
+}
+
+// Приміщення без жодного вікна. Комору й решту глухих не чіпаємо.
+export function validateWindows(plan: HousePlan, specs: WindowSpec[]): WindowIssue[] {
+  const out: WindowIssue[] = []
+  plan.floors.forEach((fl, floor) => {
+    for (const room of fl.rooms) {
+      if (!room.id || NO_WINDOW_NEEDED.includes(room.type)) continue
+      // Глуха кімната всередині будинку — вікно поставити просто нікуди.
+      if (openSides(fl, room).length === 0) continue
+      if (specs.some((s) => s.floor === floor && s.roomId === room.id)) continue
+      out.push({ floor, roomId: room.id, roomType: room.type })
+    }
+  })
+  return out
+}
+
+// ---- Редагування ----
+
+export const WIN_GRID = 0.1 // крок прив'язки вікна вздовж стіни
+const snapW = (v: number) => Math.round(v / WIN_GRID) * WIN_GRID
+
+export function updateWindow(specs: WindowSpec[], id: string, patch: Partial<WindowSpec>): WindowSpec[] {
+  return specs.map((s) => (s.id === id ? { ...s, ...patch } : s))
+}
+
+export function removeWindow(specs: WindowSpec[], id: string): WindowSpec[] {
+  return specs.filter((s) => s.id !== id)
+}
+
+// Посунути/змінити вікно в межах його стіни. Вікно не може вийти за стіну й
+// не може стати вужчим за MIN_WIN_W.
+export function fitToWall(spec: WindowSpec, wall: WallSeg, u: number, width: number): WindowSpec {
+  const w = Math.max(MIN_WIN_W, Math.min(snapW(width), wall.len))
+  return { ...spec, width: w, u: Math.max(0, Math.min(snapW(u), wall.len - w)) }
+}
+
+// Нове вікно на найдовшій вільній зовнішній стіні кімнати.
+export function addWindow(
+  plan: HousePlan,
+  specs: WindowSpec[],
+  floor: number,
+  roomId: string,
+  win: WindowType,
+): { specs: WindowSpec[]; id: string } | null {
+  const fl = plan.floors[floor]
+  const room = fl?.rooms.find((r) => r.id === roomId)
+  if (!room) return null
+  const walls = openSides(fl, room)
+    .map((s) => wallOf(room, s))
+    .sort((a, b) => b.len - a.len)
+  if (walls.length === 0) return null
+
+  // Спершу пробуємо стіну, де ще немає вікон, — щоб не громадити їх поруч.
+  const busy = new Set(specs.filter((s) => s.floor === floor && s.roomId === roomId).map((s) => s.side))
+  const wall = walls.find((w) => !busy.has(w.side)) ?? walls[0]
+
+  const width = Math.max(MIN_WIN_W, Math.min(1.6, wall.len - WIN_MARGIN))
+  const id = `win-${roomId}-${wall.side}-${Date.now().toString(36)}`
+  const spec: WindowSpec = {
+    id,
+    floor,
+    roomId,
+    side: wall.side,
+    u: Math.max(0, (wall.len - width) / 2),
+    width,
+    sill: sillFor(floor, room.type, win, false),
+    top: WIN_TOP,
+    mullions: -1,
+    door: false,
+  }
+  return { specs: [...specs, spec], id }
+}

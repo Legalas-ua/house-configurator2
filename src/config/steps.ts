@@ -12,7 +12,7 @@ export type StepId = 'budget' | 'constructionType' | 'shape' | 'rooms' | 'window
 
 export interface StepDef {
   id: StepId
-  kind: 'slider' | 'cards' | 'rooms' // майбутнє: 'toggle', 'form'…
+  kind: 'slider' | 'cards' | 'rooms' | 'windows' // майбутнє: 'toggle', 'form'…
   configKey?: ConfigKey // композитні кроки (rooms) працюють з кількома ключами
   show3D: boolean
   slider?: { min: number; max: number; step: number }
@@ -47,7 +47,7 @@ export const STEPS: StepDef[] = [
   },
   {
     id: 'windows',
-    kind: 'cards',
+    kind: 'windows',
     configKey: 'windows',
     show3D: true,
     getOptions: () => WINDOW_TYPES,

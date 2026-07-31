@@ -1,10 +1,12 @@
-import { useConfigurator, useHousePlan } from '../state/store'
+import { useConfigurator, useHousePlan, useWindows } from '../state/store'
 import { STEPS } from '../config/steps'
 import { validatePlan } from '../lib/validatePlan'
+import { validateWindows } from '../lib/windows'
 import { t } from '../locales'
 import BudgetSlider from './fields/BudgetSlider'
 import OptionCards from './fields/OptionCards'
 import RoomsField from './fields/RoomsField'
+import WindowsField from './fields/WindowsField'
 import FloorsPicker from './fields/FloorsPicker'
 
 // Рендерить поточний крок за його описом (StepDef) — без знання про конкретику.
@@ -16,12 +18,16 @@ export default function StepContent() {
   const prevStep = useConfigurator((s) => s.prevStep)
 
   const planMode = useConfigurator((s) => s.planMode)
+  const windowsMode = useConfigurator((s) => s.windowsMode)
   const plan = useHousePlan()
+  const windows = useWindows()
 
   const step = STEPS[currentStep]
   const texts = t.steps[step.id]
-  // Помилки ручного планування не пускають далі — виправляти доведеться тут.
-  const blocked = step.id === 'rooms' && planMode === 'custom' && validatePlan(plan).length > 0
+  // Помилки ручного редагування не пускають далі — виправляти доведеться тут.
+  const blocked =
+    (step.id === 'rooms' && planMode === 'custom' && validatePlan(plan).length > 0) ||
+    (step.id === 'windows' && windowsMode === 'custom' && validateWindows(plan, windows).length > 0)
 
   return (
     <section className="step">
@@ -32,6 +38,7 @@ export default function StepContent() {
         {step.kind === 'slider' && <BudgetSlider step={step} />}
         {step.kind === 'cards' && <OptionCards step={step} />}
         {step.kind === 'rooms' && <RoomsField />}
+        {step.kind === 'windows' && <WindowsField step={step} />}
         {step.id === 'shape' && <FloorsPicker />}
       </div>
 

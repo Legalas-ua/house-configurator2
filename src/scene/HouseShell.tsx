@@ -1,12 +1,27 @@
-import { useMemo, useRef, type ReactNode } from 'react'
-import { useFrame } from '@react-three/fiber'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useFrame, type ThreeEvent } from '@react-three/fiber'
 import { easing } from 'maath'
 import { ExtrudeGeometry, Path, Shape, type Group, type Mesh } from 'three'
-import { useConfigurator, useHousePlan } from '../state/store'
+import { useConfigurator, useHousePlan, useWindows } from '../state/store'
 import { STEPS } from '../config/steps'
 import { ringContains, unionOutline, type Point, type Ring } from '../lib/outline'
+import {
+  bounds,
+  fitToWall,
+  isExterior,
+  neighborOf,
+  resolveWindows,
+  updateWindow,
+  wallOf,
+  MULLION_STEP,
+  type Rect,
+  type ResolvedWindow,
+  type Side,
+} from '../lib/windows'
 import { FOUNDATION_H } from '../config/plan'
-import type { FloorPlan, PlanRect, RoomType, RoomZone, WindowType } from '../config/types'
+import type { FloorPlan, HousePlan, PlanRect } from '../config/types'
+
+const HANDLE_COLOR = '#d9622b' // теракота — як і ручки зон на плані
 
 // ============================================================
 // 3D-оболонка будинку (Фази A+B). Показуємо ЛИШЕ на кроці «Вікна». Уся коробка
@@ -46,9 +61,7 @@ const ROOF_SLOPE = 0.35 // висота гребеня = проліт × 0.35 (�
 const ROOF_LIFT = 0.09 // на скільки схили підняті над верхом стіни
 const ROOF_COLOR = WALL_COLOR // ТИМЧАСОВО в колір стін — покриття ще не обране
 
-// ---- Вікна ----
-const WIN_TOP = 2.7 // СПІЛЬНИЙ верх усіх вікон; змінюється лише низ (підвіконня)
-const WIN_MARGIN = 0.5
+// ---- Вікна (розміри й правила — у lib/windows.ts) ----
 const FRAME_W = 0.06
 const FRAME_D = 0.1 // рама сидить у товщі стіни → вмонтована
 const GLASS_D = 0.03
@@ -56,7 +69,6 @@ const FRAME_COLOR = '#6b7075'
 const GLASS_COLOR = '#a9c6d6'
 const GLASS_OPACITY = 0.32
 const SWITCH_EASE = 0.4
-const MULLION_STEP = 1.4
 const DOOR_TRANSOM_Y = 2.2 // фрамуга над дверима — на 2200 від підлоги
 const DOOR_LEAF = 0.95 // ширина секції дверей (900–1000 мм)
 
@@ -72,64 +84,6 @@ const FENCE_H = 1.1
 const FENCE_D = 0.04
 const RAIL_H = 0.06
 const RAIL_W = 0.08
-
-const WIN_WIDTH: Partial<Record<RoomType, number>> = {
-  master: 1.8,
-  bedroom: 1.6,
-  livingKitchen: 2.6,
-  office: 1.3,
-  bathroom: 1.0,
-  closet: 0.6,
-  wardrobe: 0.8,
-  hall: 1.0,
-  stairs: 1.2,
-  corridor: 100, // галерея на всю стіну
-}
-
-// Двері (панорама в підлогу): кухня-вітальня та прихожа завжди; спальні/майстер
-// 1-го поверху — вихід у двір. Решта — звичайні вікна. Тераса — окремо.
-const isDoorRoom = (type: RoomType, floorIdx: number) =>
-  type === 'livingKitchen' || type === 'hall' || (floorIdx === 0 && (type === 'bedroom' || type === 'master'))
-
-// Підвіконня (верх завжди WIN_TOP). Санвузол/сходи — фіксовані (не перемикаються).
-// Двері — в підлогу. Решта: панорама — 1-й поверх у підлогу / 2-й 300мм; звичайні
-// — 900мм. Так вікна ПЕРЕМИКАЮТЬСЯ між типами на обох поверхах.
-function sillFor(floorIdx: number, type: RoomType, win: WindowType, asDoor: boolean): number {
-  if (type === 'bathroom') return WIN_TOP - 0.6
-  if (type === 'stairs') return floorIdx >= 1 ? 0.3 : 0
-  if (asDoor) return 0
-  if (win === 'panoramic') return floorIdx >= 1 ? 0.3 : 0
-  return 0.9
-}
-
-const segOverlap = (a0: number, a1: number, b0: number, b1: number) => Math.min(a1, b1) - Math.max(a0, b0) > 0.05
-
-interface Rect {
-  x0: number
-  x1: number
-  z0: number
-  z1: number
-}
-function bounds(r: PlanRect): Rect {
-  return { x0: r.x - r.width / 2, x1: r.x + r.width / 2, z0: r.z - r.depth / 2, z1: r.z + r.depth / 2 }
-}
-type Side = 'xmax' | 'xmin' | 'zmax' | 'zmin'
-
-// Сусідня кімната за стороною (або наявність тераси за нею).
-function neighborOf(rooms: RoomZone[], room: RoomZone, side: Side, wantTerrace: boolean): RoomZone | undefined {
-  const b = bounds(room)
-  return rooms.find((r2) => {
-    if (r2 === room) return false
-    if (wantTerrace ? r2.type !== 'terrace' : r2.type === 'terrace') return false
-    const c = bounds(r2)
-    if (side === 'xmax') return Math.abs(c.x0 - b.x1) < 0.05 && segOverlap(b.z0, b.z1, c.z0, c.z1)
-    if (side === 'xmin') return Math.abs(c.x1 - b.x0) < 0.05 && segOverlap(b.z0, b.z1, c.z0, c.z1)
-    if (side === 'zmax') return Math.abs(c.z0 - b.z1) < 0.05 && segOverlap(b.x0, b.x1, c.x0, c.x1)
-    return Math.abs(c.z1 - b.z0) < 0.05 && segOverlap(b.x0, b.x1, c.x0, c.x1)
-  })
-}
-const isExterior = (rooms: RoomZone[], room: RoomZone, side: Side) => !neighborOf(rooms, room, side, false)
-const facesTerrace = (rooms: RoomZone[], room: RoomZone, side: Side) => !!neighborOf(rooms, room, side, true)
 
 // Контур плити поверху (може бути кілька кілець: окремі частини + вирізи).
 const outline = (slab: PlanRect[]): Ring[] => unionOutline(slab)
@@ -199,20 +153,9 @@ function pushBox(out: Box[], horizontal: boolean, line: number, u0: number, u1: 
   else out.push({ x: line, y: vc, z: uc, dx: thick, dy: vlen, dz: ulen })
 }
 
-interface Opening {
-  key: string
-  baseY: number
-  horizontal: boolean
-  line: number
-  a: number
-  b: number
-  sill: number
-  rotY: number
-  fx: number
-  fz: number
-  width: number
-  isDoor: boolean
-}
+// Отвір = розв'язана специфікація вікна (lib/windows.ts). key лишаємо як
+// синонім id, щоб не переписувати всі місця, де він уже вживається.
+type Opening = ResolvedWindow & { key: string; isDoor: boolean }
 
 // Плита перекриття по кільцях контуру. Зовнішні кільця — окремі фігури,
 // внутрішні (вирізи) та проріз під сходи кладемо в те кільце, що їх містить.
@@ -278,7 +221,27 @@ const frameMat = { color: FRAME_COLOR, metalness: 0.85, roughness: 0.35 }
 
 // Деталізоване вікно, вмонтоване в отвір. Верх нерухомий, низ анімується (зміна
 // типу). Двері отримують горизонтальну фрамугу + вертикальні імпости.
-function Win({ rotY, x, z, baseY, width, sill, isDoor }: { rotY: number; x: number; z: number; baseY: number; width: number; sill: number; isDoor: boolean }) {
+function Win({
+  rotY,
+  x,
+  z,
+  baseY,
+  width,
+  sill,
+  top,
+  isDoor,
+  mullions,
+}: {
+  rotY: number
+  x: number
+  z: number
+  baseY: number
+  width: number
+  sill: number
+  top: number
+  isDoor: boolean
+  mullions: number // -1 = автоматично за шириною
+}) {
   const gW = Math.max(width - 2 * FRAME_W, 0.05)
   // Двері: ліворуч секція дверей (DOOR_LEAF) з фрамугою над нею; праворуч — вікно.
   const split = isDoor && width > DOOR_LEAF + 0.3
@@ -286,18 +249,14 @@ function Win({ rotY, x, z, baseY, width, sill, isDoor }: { rotY: number; x: numb
   const mullX = useMemo(() => {
     const xs: number[] = []
     if (split) xs.push(boundary) // імпост між дверима і вікном
-    // додаткові імпости у широкій віконній частині
+    // Скільки імпостів у ВІКОННІЙ частині: або задано вручну, або за кроком.
     const wsStart = split ? boundary : -width / 2
     const wsW = width / 2 - wsStart
-    if (split && wsW > 1.4) {
-      const n = Math.max(1, Math.round(wsW / MULLION_STEP) - 1)
-      for (let k = 1; k <= n; k++) xs.push(wsStart + (k * wsW) / (n + 1))
-    } else if (!isDoor && width > 1.4) {
-      const n = Math.max(1, Math.round(width / MULLION_STEP) - 1)
-      for (let k = 1; k <= n; k++) xs.push(-width / 2 + (k * width) / (n + 1))
-    }
+    const auto = wsW > 1.4 ? Math.max(1, Math.round(wsW / MULLION_STEP) - 1) : 0
+    const n = mullions >= 0 ? mullions : auto
+    for (let k = 1; k <= n; k++) xs.push(wsStart + (k * wsW) / (n + 1))
     return xs
-  }, [width, isDoor, split, boundary])
+  }, [width, split, boundary, mullions])
   // Фрамуга — лише над секцією дверей (або над усім, якщо секція вузька).
   const transomA = -width / 2
   const transomB = split ? boundary : width / 2
@@ -309,13 +268,13 @@ function Win({ rotY, x, z, baseY, width, sill, isDoor }: { rotY: number; x: numb
     const cs = s.current
     if (bottom.current) bottom.current.position.y = cs + FRAME_W / 2
     if (stretch.current) {
-      stretch.current.position.y = (cs + WIN_TOP) / 2
-      stretch.current.scale.y = Math.max(WIN_TOP - cs, 0.01)
+      stretch.current.position.y = (cs + top) / 2
+      stretch.current.scale.y = Math.max(top - cs, 0.01)
     }
   })
   return (
     <group rotation-y={rotY} position={[x, baseY, z]}>
-      <mesh position={[0, WIN_TOP - FRAME_W / 2, 0]}>
+      <mesh position={[0, top - FRAME_W / 2, 0]}>
         <boxGeometry args={[width, FRAME_W, FRAME_D]} />
         <meshStandardMaterial {...frameMat} />
       </mesh>
@@ -397,86 +356,142 @@ function RoofTier({ baseY, open, children }: { baseY: number; open: boolean; chi
   )
 }
 
+// ---- Ручне редагування вікон ----
+// Клікаєш по вікну — вибираєш; тягнеш його — їде ВЗДОВЖ своєї стіни (за межі
+// стіни не вийде); дві теракотові ручки на краях міняють ширину. Вертикальні
+// розміри, імпости й двері — у панелі: мишею по фасаду це незручно.
+
+const WIN_HANDLE = 0.22
+
+interface WinDrag {
+  id: string
+  mode: 'move' | 'left' | 'right'
+  start: number // координата захоплення вздовж стіни
+  u: number
+  width: number
+}
+
+function WindowEditor({ openings, plan }: { openings: Opening[]; plan: HousePlan }) {
+  const windows = useWindows()
+  const setCustomWindows = useConfigurator((s) => s.setCustomWindows)
+  const selected = useConfigurator((s) => s.selectedWindow)
+  const setSelected = useConfigurator((s) => s.setSelectedWindow)
+  const setDragging = useConfigurator((s) => s.setDragging)
+  const [drag, setDrag] = useState<WinDrag | null>(null)
+
+  useEffect(() => {
+    if (!drag) return
+    const up = () => {
+      setDrag(null)
+      setDragging(false)
+    }
+    window.addEventListener('pointerup', up)
+    return () => window.removeEventListener('pointerup', up)
+  }, [drag, setDragging])
+
+  // Координата курсора вздовж стіни цього вікна.
+  const along = (o: Opening, p: { x: number; z: number }) => (o.horizontal ? p.x : p.z)
+
+  const grab = (o: Opening, mode: WinDrag['mode'], e: ThreeEvent<PointerEvent>) => {
+    e.stopPropagation()
+    setSelected(o.id)
+    setDragging(true)
+    setDrag({ id: o.id, mode, start: along(o, e.point), u: o.u, width: o.width })
+  }
+
+  const move = (p: { x: number; z: number }) => {
+    if (!drag) return
+    const o = openings.find((x) => x.id === drag.id)
+    const spec = windows.find((w) => w.id === drag.id)
+    if (!o || !spec) return
+    const room = plan.floors[spec.floor]?.rooms.find((r) => r.id === spec.roomId)
+    if (!room) return
+    const wall = wallOf(room, spec.side)
+    const d = along(o, p) - drag.start
+    // Знак: на стінах xmin/zmax вісь стіни спрямована так само, як світова.
+    const next =
+      drag.mode === 'move'
+        ? fitToWall(spec, wall, drag.u + d, drag.width)
+        : drag.mode === 'left'
+          ? fitToWall(spec, wall, drag.u + d, drag.width - d)
+          : fitToWall(spec, wall, drag.u, drag.width + d)
+    setCustomWindows(updateWindow(windows, drag.id, next))
+  }
+
+  const sel = openings.find((o) => o.id === selected)
+
+  return (
+    <>
+      {/* Прозорі накладки поверх кожного вікна — по них ловимо клік і тягнемо */}
+      {openings.map((o) => (
+        <mesh
+          key={`hit-${o.id}`}
+          position={[o.fx, o.baseY + (o.sill + o.top) / 2, o.fz]}
+          rotation-y={o.rotY}
+          onPointerDown={(e) => grab(o, 'move', e)}
+        >
+          <boxGeometry args={[o.width, Math.max(o.top - o.sill, 0.1), 0.3]} />
+          <meshBasicMaterial
+            color={o.id === selected ? HANDLE_COLOR : '#ffffff'}
+            transparent
+            opacity={o.id === selected ? 0.28 : 0.001}
+            depthWrite={false}
+          />
+        </mesh>
+      ))}
+
+      {/* Ручки ширини по краях обраного вікна */}
+      {sel && (
+        <group rotation-y={sel.rotY} position={[sel.fx, sel.baseY + (sel.sill + sel.top) / 2, sel.fz]}>
+          {(['left', 'right'] as const).map((side) => (
+            <mesh
+              key={side}
+              position={[(side === 'left' ? -1 : 1) * (sel.width / 2), 0, 0.08]}
+              onPointerDown={(e) => grab(sel, side, e)}
+            >
+              <boxGeometry args={[WIN_HANDLE, WIN_HANDLE, WIN_HANDLE]} />
+              <meshStandardMaterial color={HANDLE_COLOR} emissive={HANDLE_COLOR} emissiveIntensity={0.45} />
+            </mesh>
+          ))}
+        </group>
+      )}
+
+      {/* Ловець руху курсора під час перетягування */}
+      {drag && (
+        <mesh
+          rotation={[-Math.PI / 2, 0, 0]}
+          position={[0, 1.2, 0]}
+          onPointerMove={(e) => {
+            e.stopPropagation()
+            move(e.point)
+          }}
+        >
+          <planeGeometry args={[200, 200]} />
+          <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+        </mesh>
+      )}
+    </>
+  )
+}
+
 export default function HouseShell() {
   const config = useConfigurator((s) => s.config)
   const currentStep = useConfigurator((s) => s.currentStep)
 
   const plan = useHousePlan()
+  const windows = useWindows()
   const stepId = STEPS[currentStep].id
   const show = stepId === 'windows' || stepId === 'roof' // коробка видима на «Вікна» і «Дах»
   const roofStep = stepId === 'roof' // дах видно ЛИШЕ на своєму кроці
+  const windowsMode = useConfigurator((s) => s.windowsMode)
+  const editWindows = stepId === 'windows' && windowsMode === 'custom'
   const ref = useRef<Group>(null)
 
-  const openings = useMemo(() => {
-    const win: WindowType = config.windows ?? 'standard'
-    const out: Opening[] = []
-    const pitched = config.roof === 'pitched'
-    plan.floors.forEach((fl, floorIdx) => {
-      const baseY = floorIdx * FLOOR_H
-      // Чи за цією стіною лежить дах нижнього рівня (напр. скат над кухнею-вітальнею).
-      // При СКАТНОМУ даху такі вікна прибираємо — їх перекриває схил.
-      const lowerSlab = floorIdx > 0 ? plan.floors[floorIdx - 1].slab.map(bounds) : []
-      const overLowerRoof = (side: Side, b: Rect) => {
-        if (!pitched || lowerSlab.length === 0) return false
-        const off = 0.6
-        const px = side === 'xmax' ? b.x1 + off : side === 'xmin' ? b.x0 - off : (b.x0 + b.x1) / 2
-        const pz = side === 'zmax' ? b.z1 + off : side === 'zmin' ? b.z0 - off : (b.z0 + b.z1) / 2
-        return lowerSlab.some((r) => px > r.x0 && px < r.x1 && pz > r.z0 && pz < r.z1)
-      }
-      fl.rooms.forEach((room) => {
-        const specW = WIN_WIDTH[room.type]
-        if (specW == null) return
-        const b = bounds(room)
-        const cand: { side: Side; horizontal: boolean; line: number; center: number; len: number; rotY: number }[] = [
-          { side: 'xmax', horizontal: false, line: b.x1, center: (b.z0 + b.z1) / 2, len: b.z1 - b.z0, rotY: Math.PI / 2 },
-          { side: 'xmin', horizontal: false, line: b.x0, center: (b.z0 + b.z1) / 2, len: b.z1 - b.z0, rotY: -Math.PI / 2 },
-          { side: 'zmax', horizontal: true, line: b.z1, center: (b.x0 + b.x1) / 2, len: b.x1 - b.x0, rotY: 0 },
-          { side: 'zmin', horizontal: true, line: b.z0, center: (b.x0 + b.x1) / 2, len: b.x1 - b.x0, rotY: Math.PI },
-        ]
-        const sides = cand.filter(
-          (c) =>
-            isExterior(fl.rooms, room, c.side) &&
-            // скат нижнього даху перекриває це вікно (вихід на терасу лишаємо)
-            !(overLowerRoof(c.side, b) && !facesTerrace(fl.rooms, room, c.side)),
-        )
-        if (sides.length === 0) return
-        sides.sort((a, c) => c.len - a.len)
-        // Дверна сторона: прихожа — з фасаду (zmax); кухня/інші — у двір (zmin).
-        const doorRoom = isDoorRoom(room.type, floorIdx)
-        // Прихожа і кухня-вітальня — двері спереду (фасад); решта дверних кімнат — у двір.
-        const pref: Side = room.type === 'hall' || room.type === 'livingKitchen' ? 'zmax' : 'zmin'
-        const doorSide = doorRoom ? (sides.find((s) => s.side === pref) ?? sides[0]) : null
-        sides.forEach((sd) => {
-          const terraceExit = facesTerrace(fl.rooms, room, sd.side)
-          const asDoor = terraceExit || sd === doorSide
-          // Двері кухні-вітальні — широкі (панорамні на фасаді), щоб не лишалося пустого фронту.
-          const kitchenDoor = asDoor && room.type === 'livingKitchen'
-          const width = terraceExit
-            ? Math.max(sd.len - 0.3, 0.6)
-            : kitchenDoor
-              ? Math.max(sd.len - 1.0, 0.9)
-              : Math.min(specW, sd.len - WIN_MARGIN)
-          if (width < 0.4) return
-          const sill = asDoor ? 0 : sillFor(floorIdx, room.type, win, false)
-          out.push({
-            key: `${floorIdx}-${room.id ?? room.type}-${sd.side}`,
-            baseY,
-            horizontal: sd.horizontal,
-            line: sd.line,
-            a: sd.center - width / 2,
-            b: sd.center + width / 2,
-            sill,
-            rotY: sd.rotY,
-            fx: sd.horizontal ? sd.center : sd.line,
-            fz: sd.horizontal ? sd.line : sd.center,
-            width,
-            isDoor: asDoor,
-          })
-        })
-      })
-    })
-    return out
-  }, [plan, config.windows, config.roof])
+  // Отвори = розв'язані специфікації вікон (готові або власні — вирішує стор).
+  const openings = useMemo<Opening[]>(
+    () => resolveWindows(plan, windows, FLOOR_H).map((w) => ({ ...w, key: w.id, isDoor: w.door })),
+    [plan, windows],
+  )
 
   // Стіни: простінки + перемички НАД отворами (простінок під підвіконням — окремо,
   // анімований Spandrel). Верх перемички = FLOOR_H, низ отвору = WIN_TOP.
@@ -497,7 +512,7 @@ export default function HouseShell() {
         let cursor = e.min
         for (const o of eo) {
           if (o.a > cursor) pushBox(boxes, e.horizontal, e.line, cursor, o.a, -TIER_LAP, FLOOR_H, baseY, t)
-          pushBox(boxes, e.horizontal, e.line, o.a, o.b, WIN_TOP, FLOOR_H, baseY, t)
+          pushBox(boxes, e.horizontal, e.line, o.a, o.b, o.top, FLOOR_H, baseY, t)
           cursor = o.b
         }
         pushBox(boxes, e.horizontal, e.line, cursor, e.max, -TIER_LAP, FLOOR_H, baseY, t)
@@ -820,8 +835,22 @@ export default function HouseShell() {
       ))}
 
       {openings.map((o) => (
-        <Win key={o.key} rotY={o.rotY} x={o.fx} z={o.fz} baseY={o.baseY} width={o.width} sill={o.sill} isDoor={o.isDoor} />
+        <Win
+          key={o.key}
+          rotY={o.rotY}
+          x={o.fx}
+          z={o.fz}
+          baseY={o.baseY}
+          width={o.width}
+          sill={o.sill}
+          top={o.top}
+          isDoor={o.isDoor}
+          mullions={o.mullions}
+        />
       ))}
+
+      {/* Ручне редагування вікон: вибір, перетягування вздовж стіни, ручки ширини */}
+      {editWindows && <WindowEditor openings={openings} plan={plan} />}
 
       {fences.map((f, i) => (
         <group key={`fence-${i}`}>
