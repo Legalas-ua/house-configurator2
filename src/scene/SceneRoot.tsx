@@ -10,8 +10,6 @@ import PlanView from './PlanView'
 import HouseShell from './HouseShell'
 
 const FOV = 40
-const FOCUS_EASE = 0.5 // плавність перельоту до обраної кімнати й назад
-const PLAN_FLOOR_H = 3.0 // крок поверхів у вигляді плану (як у PlanView)
 
 // Плавний переліт камери у вид зверху, поки topView активний.
 // Висота підбирається під розмір плану, щоб великі будинки (5 спалень)
@@ -20,18 +18,7 @@ const PLAN_FLOOR_H = 3.0 // крок поверхів у вигляді план
 function CameraRig({ controls }: { controls: React.RefObject<OrbitControlsImpl | null> }) {
   const topView = useConfigurator((s) => s.topView)
   const viewFloor = useConfigurator((s) => s.viewFloor)
-  const selectedRoom = useConfigurator((s) => s.selectedRoom)
   const plan = useHousePlan()
-
-  // Точка, навколо якої крутиться камера: обрана кімната або центр сцени.
-  // Ціль веде easing, тож перехід туди й назад плавний.
-  const focus = useMemo<[number, number, number]>(() => {
-    if (!selectedRoom) return [0, 1.2, 0]
-    const idx = plan.floors.findIndex((fl) => fl.rooms.some((r) => r.id === selectedRoom))
-    const room = idx >= 0 ? plan.floors[idx].rooms.find((r) => r.id === selectedRoom) : undefined
-    if (!room) return [0, 1.2, 0]
-    return [room.x, idx * PLAN_FLOOR_H + 0.2, room.z]
-  }, [selectedRoom, plan])
 
   const fitHeight = useMemo(() => {
     const floor = plan.floors[Math.min(viewFloor, plan.floors.length) - 1]
@@ -46,18 +33,10 @@ function CameraRig({ controls }: { controls: React.RefObject<OrbitControlsImpl |
   }, [plan, viewFloor])
 
   useFrame((state, delta) => {
-    const c = controls.current
-    if (!c) return
-    if (topView) {
-      easing.damp3(state.camera.position, [0, fitHeight, 0.4], 0.45, delta)
-      easing.damp3(c.target, [0, 0, 0], 0.45, delta)
-      c.update()
-      return
-    }
-    // OrbitControls крутиться навколо target — ведемо його до обраної кімнати
-    // (і назад до центру, коли вибір знято).
-    easing.damp3(c.target, focus, FOCUS_EASE, delta)
-    c.update()
+    if (!topView || !controls.current) return
+    easing.damp3(state.camera.position, [0, fitHeight, 0.4], 0.45, delta)
+    easing.damp3(controls.current.target, [0, 0, 0], 0.45, delta)
+    controls.current.update()
   })
 
   return null

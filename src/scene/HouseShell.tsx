@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react'
+import { useMemo, useRef, type ReactNode } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { easing } from 'maath'
 import { ExtrudeGeometry, Path, Shape, type Group, type Mesh } from 'three'
@@ -379,6 +379,24 @@ function Spandrel({ horizontal, line, a, b, baseY, sill }: { horizontal: boolean
   )
 }
 
+// Рівень даху: росте вгору ВІД своєї площини (origin групи на baseY, діти
+// зміщені назад на -baseY). Так скат/парапет з'являється просто на перекритті,
+// а не тягнеться від землі крізь увесь будинок.
+function RoofTier({ baseY, open, children }: { baseY: number; open: boolean; children: ReactNode }) {
+  const ref = useRef<Group>(null)
+  useFrame((_, dt) => {
+    const g = ref.current
+    if (!g) return
+    easing.damp(g.scale, 'y', open ? 1 : 0.0001, ROOF_EASE, dt)
+    g.visible = open || g.scale.y > 0.02
+  })
+  return (
+    <group ref={ref} position={[0, baseY, 0]} visible={false} scale={[1, 0.0001, 1]}>
+      <group position={[0, -baseY, 0]}>{children}</group>
+    </group>
+  )
+}
+
 export default function HouseShell() {
   const config = useConfigurator((s) => s.config)
   const currentStep = useConfigurator((s) => s.currentStep)
@@ -387,8 +405,6 @@ export default function HouseShell() {
   const stepId = STEPS[currentStep].id
   const show = stepId === 'windows' || stepId === 'roof' // коробка видима на «Вікна» і «Дах»
   const roofStep = stepId === 'roof' // дах видно ЛИШЕ на своєму кроці
-  const roofRef = useRef<Group>(null)
-  const roofBaseY = FLOOR_H // найнижчий рівень даху — звідси він і виростає
   const ref = useRef<Group>(null)
 
   const openings = useMemo(() => {
@@ -584,23 +600,26 @@ export default function HouseShell() {
   const fences = useMemo(() => {
     const out: { baseY: number; horizontal: boolean; cx: number; cz: number; len: number }[] = []
     plan.floors.forEach((fl, floorIdx) => {
-      const terrace = fl.rooms.find((r) => r.type === 'terrace')
-      if (!terrace || fl.slab.length !== 1) return
-      const s = bounds(fl.slab[0])
-      const t = bounds(terrace)
       const baseY = floorIdx * FLOOR_H
-      const edges = [
-        { horizontal: true, c: t.z0, a: t.x0, b: t.x1, on: Math.abs(t.z0 - s.z0) < 0.05 },
-        { horizontal: true, c: t.z1, a: t.x0, b: t.x1, on: Math.abs(t.z1 - s.z1) < 0.05 },
-        { horizontal: false, c: t.x0, a: t.z0, b: t.z1, on: Math.abs(t.x0 - s.x0) < 0.05 },
-        { horizontal: false, c: t.x1, a: t.z0, b: t.z1, on: Math.abs(t.x1 - s.x1) < 0.05 },
-      ]
-      edges.forEach((e) => {
-        if (!e.on) return
-        const mid = (e.a + e.b) / 2
-        // len БЕЗ подовження → панелі не перетинаються (без мерехтіння скла).
-        out.push({ baseY, horizontal: e.horizontal, cx: e.horizontal ? mid : e.c, cz: e.horizontal ? e.c : mid, len: e.b - e.a })
-      })
+      // Паркан ставимо по ВІДКРИТИХ сторонах кожної тераси — тобто там, де за
+      // нею немає сусідньої кімнати. Раніше умова була прив'язана до плити з
+      // одного прямокутника, тож на ручному плані (плита = самі кімнати) і на
+      // терасі 2-го поверху паркан не з'являвся зовсім.
+      for (const terrace of fl.rooms.filter((r) => r.type === 'terrace')) {
+        const t = bounds(terrace)
+        const edges: { side: Side; horizontal: boolean; c: number; a: number; b: number }[] = [
+          { side: 'zmin', horizontal: true, c: t.z0, a: t.x0, b: t.x1 },
+          { side: 'zmax', horizontal: true, c: t.z1, a: t.x0, b: t.x1 },
+          { side: 'xmin', horizontal: false, c: t.x0, a: t.z0, b: t.z1 },
+          { side: 'xmax', horizontal: false, c: t.x1, a: t.z0, b: t.z1 },
+        ]
+        edges.forEach((e) => {
+          if (!isExterior(fl.rooms, terrace, e.side)) return // до будинку — без паркану
+          const mid = (e.a + e.b) / 2
+          // len БЕЗ подовження → панелі не перетинаються (без мерехтіння скла).
+          out.push({ baseY, horizontal: e.horizontal, cx: e.horizontal ? mid : e.c, cz: e.horizontal ? e.c : mid, len: e.b - e.a })
+        })
+      }
     })
     return out
   }, [plan])
@@ -608,15 +627,19 @@ export default function HouseShell() {
   // Плоский дах: парапети по периметру КОЖНОГО рівня даху (верх + дах над денним
   // крилом/вітальнею). Ребро, накрите верхнім поверхом (там його стіни), пропускаємо.
   const parapets = useMemo(() => {
-    const boxes: Box[] = []
+    // Групуємо по рівнях даху: кожен рівень анімується ВІД своєї площини.
+    const tiers = new Map<number, Box[]>()
     const N = plan.floors.length
-    // Геометрію будуємо незалежно від кроку — видимістю керує анімована група
-    // (інакше при поверненні назад дах зникав би миттєво, без анімації).
-    if (N === 0 || config.roof !== 'flat') return boxes
+    // Геометрію будуємо незалежно від кроку І від обраного типу — видимістю
+    // керують анімовані групи. Інакше при перемиканні типу даху одна геометрія
+    // зникала б миттєво, а друга миттєво з'являлась, без анімації.
+    if (N === 0) return [] as { roofY: number; boxes: Box[] }[]
     plan.floors.forEach((fl, idx) => {
       const roofY = (idx + 1) * FLOOR_H
       const t = wallT(idx + 1) // парапет — ярус над стіною свого поверху
       const pt = postT(idx + 1)
+      const boxes: Box[] = tiers.get(roofY) ?? []
+      tiers.set(roofY, boxes)
       // «Накрите» рахуємо по ПОВНІЙ плиті верхнього поверху (враховує терасу):
       // під терасою парапету немає (там скляний паркан); без тераси ця смуга —
       // відкритий дах, тож парапет по контуру з'являється.
@@ -655,15 +678,15 @@ export default function HouseShell() {
         }
       }
     })
-    return boxes
-  }, [plan, config.roof])
+    return [...tiers].map(([roofY, boxes]) => ({ roofY, boxes })).filter((t) => t.boxes.length > 0)
+  }, [plan])
 
   // Скатний дах (скандинавський, без звісів): двосхилі призми точно по контуру
   // стін — над верхнім поверхом і над кожним нижнім рівнем, не накритим зверху.
   const gables = useMemo(() => {
-    const out: { geo: ExtrudeGeometry; x: number; y: number; z: number; rotY: number }[] = []
+    const out: { roofY: number; geo: ExtrudeGeometry; x: number; y: number; z: number; rotY: number }[] = []
     const N = plan.floors.length
-    if (N === 0 || config.roof !== 'pitched') return out
+    if (N === 0) return out
     plan.floors.forEach((fl, idx) => {
       const roofY = (idx + 1) * FLOOR_H
       let rects: Rect[]
@@ -701,6 +724,7 @@ export default function HouseShell() {
         // спускається назад у стіну на TIER_LAP — дах сидить на стіні, а не в ній.
         const skirt = ROOF_LIFT + TIER_LAP
         out.push({
+          roofY,
           geo: ridgeAlongZ ? gableGeometry(w, d, h, skirt) : gableGeometry(d, w, h, skirt),
           x: (r.x0 + r.x1) / 2,
           y: roofY + ROOF_LIFT,
@@ -710,20 +734,20 @@ export default function HouseShell() {
       }
     })
     return out
-  }, [plan, config.roof])
+  }, [plan])
+
+  // Скати, згруповані по рівнях — щоб кожен ріс від СВОЄЇ площини.
+  const gableTiers = useMemo(() => {
+    const map = new Map<number, typeof gables>()
+    for (const g of gables) map.set(g.roofY, [...(map.get(g.roofY) ?? []), g])
+    return [...map].map(([roofY, items]) => ({ roofY, items }))
+  }, [gables])
 
   useFrame((_, dt) => {
     const g = ref.current
     if (!g) return
     easing.damp(g.scale, 'y', show ? 1 : 0.0001, RISE_EASE, dt)
     g.visible = show || g.scale.y > 0.02 // лишаємось видимими, поки коробка зникає
-    // Дах виростає окремо, ВІД лінії даху вгору (тому власна група з origin на
-    // roofBaseY). Так він піднімається на місце, а не проростає крізь будинок.
-    const r = roofRef.current
-    if (r) {
-      easing.damp(r.scale, 'y', roofStep ? 1 : 0.0001, ROOF_EASE, dt)
-      r.visible = roofStep || r.scale.y > 0.02
-    }
   })
 
   return (
@@ -770,24 +794,30 @@ export default function HouseShell() {
         </mesh>
       ))}
 
-      {/* Дах у власній групі з origin на лінії даху: масштаб по Y підіймає
-          його ЗВІДТИ вгору, а не розтягує від землі крізь будинок. */}
-      <group ref={roofRef} position={[0, roofBaseY, 0]} visible={false} scale={[1, 0.0001, 1]}>
-        <group position={[0, -roofBaseY, 0]}>
-          {parapets.map((b, i) => (
+      {/* Кожен рівень даху росте ВІД СВОЄЇ площини (origin групи = roofY), а не
+          від землі крізь будинок. Обидва типи існують завжди — видимістю керує
+          `open`, тому перемикання плоский/скатний теж анімується: один тип
+          сідає, другий піднімається. */}
+      {parapets.map((tier) => (
+        <RoofTier key={`flat-${tier.roofY}`} baseY={tier.roofY} open={roofStep && config.roof === 'flat'}>
+          {tier.boxes.map((b, i) => (
             <mesh key={`parapet-${i}`} position={[b.x, b.y, b.z]} castShadow receiveShadow>
               <boxGeometry args={[b.dx, b.dy, b.dz]} />
               <meshStandardMaterial color={WALL_COLOR} roughness={0.9} />
             </mesh>
           ))}
+        </RoofTier>
+      ))}
 
-          {gables.map((g, i) => (
+      {gableTiers.map((tier) => (
+        <RoofTier key={`pitched-${tier.roofY}`} baseY={tier.roofY} open={roofStep && config.roof === 'pitched'}>
+          {tier.items.map((g, i) => (
             <mesh key={`gable-${i}`} geometry={g.geo} position={[g.x, g.y, g.z]} rotation-y={g.rotY} castShadow receiveShadow>
               <meshStandardMaterial color={ROOF_COLOR} roughness={0.75} />
             </mesh>
           ))}
-        </group>
-      </group>
+        </RoofTier>
+      ))}
 
       {openings.map((o) => (
         <Win key={o.key} rotY={o.rotY} x={o.fx} z={o.fz} baseY={o.baseY} width={o.width} sill={o.sill} isDoor={o.isDoor} />
