@@ -656,6 +656,14 @@ body {
   }
 }
 
+/* Група-попередження: дах перекрив вікна */
+.rooms__group--warn {
+  padding: 12px;
+  border: 1.5px solid rgba(224, 49, 49, 0.45);
+  border-radius: 10px;
+  background: rgba(224, 49, 49, 0.06);
+}
+
 /* Підзаголовок групи всередині картки обраного об'єкта */
 .rooms__subtitle {
   display: block;

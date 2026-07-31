@@ -755,7 +755,7 @@ export default function PlanView() {
   const issues = useMemo(() => (editable ? validatePlan(plan) : []), [editable, plan])
   // Плиту показуємо на «формі» тощо, але не на «кімнати» (зони) і не на «вікна»/«дах»
   // (там основу дає 3D-оболонка HouseShell).
-  const showSlab = !showZones && stepId !== 'windows' && stepId !== 'roof'
+  const showSlab = !showZones && stepId !== 'windows' && stepId !== 'roofZones' && stepId !== 'roof'
 
   if (plan.floors.length === 0) return null
 

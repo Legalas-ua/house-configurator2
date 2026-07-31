@@ -189,6 +189,9 @@ export default function RoofView() {
               setHover((cur) => (cur === p.id ? null : cur))
             }}
             onPointerDown={(e) => (drawing ? grab(p, 'move', e) : (e.stopPropagation(), setSelected(p.id)))}
+            // Без цього pointerup доходить до підкладки під зоною, і вона
+            // одразу ж знімає щойно зроблений вибір.
+            onPointerUp={(e) => e.stopPropagation()}
           >
             <planeGeometry args={[p.width, p.depth]} />
             <meshBasicMaterial

@@ -235,3 +235,51 @@ export function validateRoof(plan: HousePlan, parts: RoofPart[]): RoofIssue[] {
   }
   return issues
 }
+
+// ---- Колізії даху з вікнами ----
+// Скат чи парапет може перекрити вікно. Рахуємо на рівні ВИСОТ: беремо низ
+// даху над віконним отвором і дивимось, чи він нижчий за верх вікна.
+
+export interface RoofWindowClash {
+  windowId: string
+  partId: string
+}
+
+// Висота НИЗУ даху над точкою (x,z) у межах зони, від рівня покриття.
+function roofBottomAt(part: RoofPart, x: number, z: number): number | null {
+  const b = box(part)
+  if (x < b.x0 - EPS || x > b.x1 + EPS || z < b.z0 - EPS || z > b.z1 + EPS) return null
+  if (part.kind === 'flat') return part.parapetH // парапет стоїть суцільною стінкою
+  const w = b.x1 - b.x0
+  const d = b.z1 - b.z0
+  const alongZ = part.rotation % 180 === 0 ? d >= w : d < w
+  const span = alongZ ? w : d
+  const tan = Math.tan((part.pitch * Math.PI) / 180)
+  // Відстань від НИЖЧОГО краю схилу вздовж напрямку падіння.
+  const u = alongZ ? x - b.x0 : z - b.z0
+  if (part.kind === 'mono') {
+    const fromLow = part.rotation >= 180 ? span - u : u
+    return fromLow * tan
+  }
+  // Двосхилий: від найближчого краю до гребеня посередині.
+  return Math.min(u, span - u) * tan
+}
+
+// Вікна, які перекриває дах. Дах над рівнем L лежить рівно на підлозі поверху
+// L+1, тож ріже він саме ТАМТЕШНІ вікна: якщо схил (чи парапет) над місцем
+// вікна піднявся вище за його підвіконня — вікно виходить у дах.
+export function roofWindowClashes(
+  parts: RoofPart[],
+  windows: { id: string; floor: number; sill: number; fx: number; fz: number }[],
+): RoofWindowClash[] {
+  const out: RoofWindowClash[] = []
+  for (const w of windows) {
+    for (const part of parts) {
+      if (part.level !== w.floor - 1) continue
+      const h = roofBottomAt(part, w.fx, w.fz)
+      if (h == null) continue
+      if (h > w.sill + 0.05) out.push({ windowId: w.id, partId: part.id })
+    }
+  }
+  return out
+}

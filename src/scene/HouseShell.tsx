@@ -893,6 +893,7 @@ export default function HouseShell() {
   // малюються просто поверх неї.
   const show = stepId === 'windows' || stepId === 'roofZones' || stepId === 'roof'
   const roofStep = stepId === 'roof' // дах видно ЛИШЕ на своєму кроці
+  const selectedRoofPart = useConfigurator((s) => s.selectedRoofPart)
   const windowsMode = useConfigurator((s) => s.windowsMode)
   const editWindows = stepId === 'windows' && windowsMode === 'custom'
   const ref = useRef<Group>(null)
@@ -1055,43 +1056,75 @@ export default function HouseShell() {
   // йшла по контуру цілого рівня — тепер по намальованих зонах, тож на
   // різних частинах будинку може бути різний дах.
   const parapets = useMemo(() => {
-    const tiers = new Map<number, Box[]>()
-    if (plan.floors.length === 0) return [] as { roofY: number; boxes: Box[] }[]
+    const tiers = new Map<number, { partId: string; boxes: Box[] }[]>()
+    if (plan.floors.length === 0) return [] as { roofY: number; groups: { partId: string; boxes: Box[] }[] }[]
     for (const part of roof) {
       if (part.kind !== 'flat') continue
       const roofY = (part.level + 1) * FLOOR_H
       const t = part.parapetT
       const pt = t + 0.004
-      const boxes: Box[] = tiers.get(roofY) ?? []
-      tiers.set(roofY, boxes)
+      const boxes: Box[] = []
       const b = bounds(part)
-      const edges: { horizontal: boolean; line: number; min: number; max: number }[] = [
-        { horizontal: true, line: b.z0, min: b.x0, max: b.x1 },
-        { horizontal: true, line: b.z1, min: b.x0, max: b.x1 },
-        { horizontal: false, line: b.x0, min: b.z0, max: b.z1 },
-        { horizontal: false, line: b.x1, min: b.z0, max: b.z1 },
+      // Ребра, накриті поверхом ВИЩЕ, парапету не потребують: там уже стоїть
+      // зовнішня стіна верхнього поверху, і парапет лише колізив би з нею.
+      const upper = plan.floors[part.level + 1]?.slab.map(bounds) ?? []
+      const edges: { horizontal: boolean; line: number; min: number; max: number; nx: number; nz: number }[] = [
+        { horizontal: true, line: b.z0, min: b.x0, max: b.x1, nx: 0, nz: -1 },
+        { horizontal: true, line: b.z1, min: b.x0, max: b.x1, nx: 0, nz: 1 },
+        { horizontal: false, line: b.x0, min: b.z0, max: b.z1, nx: -1, nz: 0 },
+        { horizontal: false, line: b.x1, min: b.z0, max: b.z1, nx: 1, nz: 0 },
       ]
       for (const e of edges) {
-        pushBox(boxes, e.horizontal, e.line, e.min, e.max, -TIER_LAP, part.parapetH, roofY, t)
-        // Стовпчики на кінцях — кути парапету змикаються без дірок.
-        for (const u of [e.min, e.max]) {
-          boxes.push({
-            x: e.horizontal ? u : e.line,
-            y: roofY + (part.parapetH - TIER_LAP) / 2,
-            z: e.horizontal ? e.line : u,
-            dx: pt,
-            dy: part.parapetH + TIER_LAP,
-            dz: pt,
-          })
+        // Відрізаємо накриті ділянки ребра, а не пропускаємо ребро цілком.
+        const cuts = upper
+          .filter((u) =>
+            e.horizontal
+              ? e.line > u.z0 - 0.05 && e.line < u.z1 + 0.05
+              : e.line > u.x0 - 0.05 && e.line < u.x1 + 0.05,
+          )
+          .map((u) =>
+            e.horizontal
+              ? ([Math.max(u.x0, e.min), Math.min(u.x1, e.max)] as [number, number])
+              : ([Math.max(u.z0, e.min), Math.min(u.z1, e.max)] as [number, number]),
+          )
+          .filter(([p0, p1]) => p1 - p0 > 0.1)
+          .sort((p0, p1) => p0[0] - p1[0])
+        const spans: [number, number][] = []
+        let cur = e.min
+        for (const [c0, c1] of cuts) {
+          if (c0 > cur + 0.05) spans.push([cur, c0])
+          cur = Math.max(cur, c1)
+        }
+        if (e.max > cur + 0.05) spans.push([cur, e.max])
+
+        // Зовнішня грань парапету — рівно грань СТІНИ, а товщина росте
+        // ВСЕРЕДИНУ. Інакше парапет випирає за фасад.
+        const line = e.line + (e.nx + e.nz) * (WALL_T / 2 - t / 2)
+        for (const [u0, u1] of spans) {
+          pushBox(boxes, e.horizontal, line, u0, u1, -TIER_LAP, part.parapetH, roofY, t)
+          for (const u of [u0, u1]) {
+            boxes.push({
+              x: e.horizontal ? u : line,
+              y: roofY + (part.parapetH - TIER_LAP) / 2,
+              z: e.horizontal ? line : u,
+              dx: pt,
+              dy: part.parapetH + TIER_LAP,
+              dz: pt,
+            })
+          }
         }
       }
+      if (boxes.length === 0) continue
+      const list = tiers.get(roofY) ?? []
+      list.push({ partId: part.id, boxes })
+      tiers.set(roofY, list)
     }
-    return [...tiers].map(([roofY, boxes]) => ({ roofY, boxes })).filter((x) => x.boxes.length > 0)
+    return [...tiers].map(([roofY, groups]) => ({ roofY, groups }))
   }, [plan, roof])
 
   // Скатні та односхилі зони: призма над прямокутником зони.
   const gables = useMemo(() => {
-    const out: { roofY: number; geo: ExtrudeGeometry; x: number; y: number; z: number; rotY: number; wallLike: boolean }[] = []
+    const out: { roofY: number; partId: string; geo: ExtrudeGeometry; x: number; y: number; z: number; rotY: number; wallLike: boolean }[] = []
     if (plan.floors.length === 0) return out
     for (const part of roof) {
       if (part.kind === 'flat') continue
@@ -1114,10 +1147,10 @@ export default function HouseShell() {
       if (mono) {
         // Односхилий: висота на ПОВНИЙ проліт (схил один, а не два).
         const mh = span * tan
-        out.push({ roofY, geo: monoGeometry(pw, pd, mh, skirt, true), x, y, z, rotY, wallLike: true })
-        out.push({ roofY, geo: monoGeometry(pw, pd, mh, skirt, false), x, y, z, rotY, wallLike: false })
+        out.push({ roofY, partId: part.id, geo: monoGeometry(pw, pd, mh, skirt, true), x, y, z, rotY, wallLike: true })
+        out.push({ roofY, partId: part.id, geo: monoGeometry(pw, pd, mh, skirt, false), x, y, z, rotY, wallLike: false })
       } else {
-        out.push({ roofY, geo: gableGeometry(pw, pd, (span / 2) * tan, skirt), x, y, z, rotY, wallLike: false })
+        out.push({ roofY, partId: part.id, geo: gableGeometry(pw, pd, (span / 2) * tan, skirt), x, y, z, rotY, wallLike: false })
       }
     }
     return out
@@ -1187,12 +1220,20 @@ export default function HouseShell() {
           сідає, другий піднімається. */}
       {parapets.map((tier) => (
         <RoofTier key={`flat-${tier.roofY}`} baseY={tier.roofY} open={roofStep}>
-          {tier.boxes.map((b, i) => (
-            <mesh key={`parapet-${i}`} position={[b.x, b.y, b.z]} castShadow receiveShadow>
-              <boxGeometry args={[b.dx, b.dy, b.dz]} />
-              <meshStandardMaterial color={WALL_COLOR} roughness={0.9} />
-            </mesh>
-          ))}
+          {tier.groups.map((g) =>
+            g.boxes.map((b, i) => (
+              <mesh key={`parapet-${g.partId}-${i}`} position={[b.x, b.y, b.z]} castShadow receiveShadow>
+                <boxGeometry args={[b.dx, b.dy, b.dz]} />
+                {/* Обрана частина даху світиться ЦІЛКОМ, а не лише площиною */}
+                <meshStandardMaterial
+                  color={WALL_COLOR}
+                  roughness={0.9}
+                  emissive={HANDLE_COLOR}
+                  emissiveIntensity={g.partId === selectedRoofPart ? 0.35 : 0}
+                />
+              </mesh>
+            )),
+          )}
         </RoofTier>
       ))}
 
@@ -1202,7 +1243,12 @@ export default function HouseShell() {
             <mesh key={`gable-${i}`} geometry={g.geo} position={[g.x, g.y, g.z]} rotation-y={g.rotY} castShadow receiveShadow>
               {/* wallLike — це клин під похилою плитою: продовження СТІНИ, тож
                   і колір стінний, а не покрівельний. */}
-              <meshStandardMaterial color={g.wallLike ? WALL_COLOR : ROOF_COLOR} roughness={0.75} />
+              <meshStandardMaterial
+                color={g.wallLike ? WALL_COLOR : ROOF_COLOR}
+                roughness={0.75}
+                emissive={HANDLE_COLOR}
+                emissiveIntensity={g.partId === selectedRoofPart ? 0.35 : 0}
+              />
             </mesh>
           ))}
         </RoofTier>

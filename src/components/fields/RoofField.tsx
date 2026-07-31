@@ -1,8 +1,9 @@
-import { useConfigurator, useHousePlan, useRoof } from '../../state/store'
+import { useConfigurator, useHousePlan, useRoof, useWindows } from '../../state/store'
 import type { PlanMode } from '../../config/types'
 import type { StepDef } from '../../config/steps'
 import {
   roofLevels,
+  roofWindowClashes,
   stepOverhang,
   updateRoofPart,
   OVERHANG,
@@ -11,6 +12,7 @@ import {
   PITCH,
   type RoofKind,
 } from '../../lib/roof'
+import { resolveWindows, updateWindow, removeWindow, WIN_TOP, MIN_WIN_W } from '../../lib/windows'
 import { t } from '../../locales'
 import OptionCards from './OptionCards'
 
@@ -57,6 +59,8 @@ function RoofEditorPanel() {
 
   return (
     <>
+      <RoofClashes />
+
       <div className="rooms__group">
         <span className="rooms__group-title">{texts.selected}</span>
         {!part ? (
@@ -182,6 +186,100 @@ function Range({
           +
         </button>
       </div>
+    </div>
+  )
+}
+
+// Вікна, які перекрив дах. Клікаєш вікно зі списку — і тут же правиш його
+// висоти, поки колізія не зникне; або просто видаляєш.
+function RoofClashes() {
+  const plan = useHousePlan()
+  const parts = useRoof()
+  const windows = useWindows()
+  const setCustomWindows = useConfigurator((s) => s.setCustomWindows)
+  const picked = useConfigurator((s) => s.selectedWindow)
+  const setPicked = useConfigurator((s) => s.setSelectedWindow)
+  const texts = t.steps.roof.clash
+
+  const resolved = resolveWindows(plan, windows, 3.2)
+  const clashes = roofWindowClashes(
+    parts,
+    resolved.map((w) => ({ id: w.id, floor: w.floor, sill: w.sill, fx: w.fx, fz: w.fz })),
+  )
+  const ids = [...new Set(clashes.map((c) => c.windowId))]
+  const spec = ids.includes(picked ?? '') ? windows.find((w) => w.id === picked) : undefined
+
+  if (ids.length === 0) {
+    return picked ? (
+      <div className="rooms__group">
+        <p className="rooms__hint">{texts.resolved}</p>
+        <button type="button" className="chip" onClick={() => setPicked(null)}>
+          {texts.save}
+        </button>
+      </div>
+    ) : null
+  }
+
+  const room = (id: string) => {
+    const w = windows.find((x) => x.id === id)
+    const r = w && plan.floors[w.floor]?.rooms.find((x) => x.id === w.roomId)
+    return r ? t.plan.roomNames[r.type] : id
+  }
+  const patch = (p: Parameters<typeof updateWindow>[2]) => spec && setCustomWindows(updateWindow(windows, spec.id, p))
+
+  return (
+    <div className="rooms__group rooms__group--warn">
+      <span className="rooms__group-title">{texts.title}</span>
+      <div className="chips">
+        {ids.map((id) => (
+          <button
+            key={id}
+            type="button"
+            className={`chip${picked === id ? ' chip--on' : ''}`}
+            onClick={() => setPicked(id)}
+          >
+            {room(id)}
+          </button>
+        ))}
+      </div>
+
+      {!spec ? (
+        <p className="rooms__hint">{texts.pick}</p>
+      ) : (
+        <>
+          <div className="rooms__selected">
+            <span>{room(spec.id)}</span>
+            <button
+              type="button"
+              className="chip"
+              onClick={() => {
+                setCustomWindows(removeWindow(windows, spec.id))
+                setPicked(null)
+              }}
+            >
+              {texts.remove}
+            </button>
+          </div>
+          <Range
+            label={texts.sill}
+            value={spec.sill}
+            range={{ min: 0, max: WIN_TOP - 0.4, step: 0.1 }}
+            onChange={(v) => patch({ sill: v })}
+          />
+          <Range
+            label={texts.top}
+            value={spec.top}
+            range={{ min: 0.4, max: WIN_TOP, step: 0.1 }}
+            onChange={(v) => patch({ top: v })}
+          />
+          <Range
+            label={texts.width}
+            value={spec.width}
+            range={{ min: MIN_WIN_W, max: 6, step: 0.1 }}
+            onChange={(v) => patch({ width: v })}
+          />
+        </>
+      )}
     </div>
   )
 }
