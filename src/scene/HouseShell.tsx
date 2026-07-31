@@ -70,7 +70,6 @@ const FOUND_COLOR = '#bdb6a7' // цоколь темніший за плиту �
 const FOUND_OUT = WALL_T / 2 + 0.04 // виступ цоколя за зовнішню грань стіни
 const RISE_EASE = 0.5
 const ROOF_EASE = 0.42 // дах виростає трохи жвавіше за коробку
-const PARAPET_H = 0.45 // висота парапету плоського даху
 const ROOF_LIFT = 0.09 // на скільки схили підняті над верхом стіни
 const ROOF_T = 0.22 // товщина похилої плити односхилого даху
 const ROOF_COLOR = WALL_COLOR // ТИМЧАСОВО в колір стін — покриття ще не обране
@@ -102,9 +101,6 @@ const FENCE_H = 1.1
 const FENCE_D = 0.04
 const RAIL_H = 0.06
 const RAIL_W = 0.08
-
-// Контур плити поверху (може бути кілька кілець: окремі частини + вирізи).
-const outline = (slab: PlanRect[]): Ring[] => unionOutline(slab)
 
 // Контур СТІН: та сама плита, але з вирізаною терасою — вона відкрита, її не
 // обносять стінами й не накривають дахом.
@@ -506,10 +502,13 @@ function WindowEditor({ openings, plan }: { openings: Opening[]; plan: HousePlan
   const setSelectedWall = useConfigurator((s) => s.setSelectedWall)
   const setDragging = useConfigurator((s) => s.setDragging)
   const setHovered = useConfigurator((s) => s.setHovered)
+  const adding = useConfigurator((s) => s.addingWindow)
+  const setAdding = useConfigurator((s) => s.setAddingWindow)
   const selectedDoor = useConfigurator((s) => s.selectedDoor)
   const [drag, setDrag] = useState<WinDrag | null>(null)
   const [hoverWall, setHoverWall] = useState<string | null>(null)
   const [hoverWin, setHoverWin] = useState<string | null>(null)
+  const downAt = useRef<{ x: number; y: number } | null>(null)
 
   // Редагуються вікна ВСІХ поверхів одразу — перемикати поверхи тут зайве.
   const mine = openings
@@ -523,6 +522,18 @@ function WindowEditor({ openings, plan }: { openings: Opening[]; plan: HousePlan
     window.addEventListener('pointerup', up)
     return () => window.removeEventListener('pointerup', up)
   }, [drag, setDragging])
+
+  // Esc знімає вибір вікна і виходить із режиму додавання.
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      setSelected(null)
+      setSelectedWall(null)
+      setAdding(false)
+    }
+    window.addEventListener('keydown', key)
+    return () => window.removeEventListener('keydown', key)
+  }, [setSelected, setSelectedWall, setAdding])
 
   // Координата курсора вздовж стіни цього вікна.
   const along = (o: Opening, p: { x: number; z: number }) => (o.horizontal ? p.x : p.z)
@@ -604,6 +615,28 @@ function WindowEditor({ openings, plan }: { openings: Opening[]; plan: HousePlan
 
   return (
     <>
+      {/* Клік по порожньому місцю знімає вибір і виходить із режиму додавання.
+          Поріг у 4 px — щоб обертання камери вибір не скидало. */}
+      <mesh
+        rotation={[-Math.PI / 2, 0, 0]}
+        position={[0, -0.05, 0]}
+        onPointerDown={(e) => {
+          downAt.current = { x: e.nativeEvent.clientX, y: e.nativeEvent.clientY }
+        }}
+        onPointerUp={(e) => {
+          const d = downAt.current
+          downAt.current = null
+          if (d && Math.hypot(e.nativeEvent.clientX - d.x, e.nativeEvent.clientY - d.y) < 4) {
+            setSelected(null)
+            setSelectedWall(null)
+            setAdding(false)
+          }
+        }}
+      >
+        <planeGeometry args={[200, 200]} />
+        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+      </mesh>
+
       {/* Заслінки по кімнатах: без них промінь пролітає крізь будинок і клік
           потрапляє на стіну з ПРОТИЛЕЖНОГО боку (суцільні стіни подій не
           ловлять, тож нічого не перекривають). */}
@@ -628,9 +661,10 @@ function WindowEditor({ openings, plan }: { openings: Opening[]; plan: HousePlan
           )),
       )}
 
-      {/* Стіни: підсвічуються під курсором і по кліку. Смуга рівно та, у межах
-          якої дозволено рухати вікно, — щоб було видно робочу зону стіни. */}
-      {walls.map((w) => {
+      {/* Стіни клікабельні ЛИШЕ в режимі додавання вікна: інакше вони
+          перехоплювали б кліки, якими рухають самі вікна. */}
+      {adding &&
+        walls.map((w) => {
         const { from, to } = wallRange(w.wall)
         const mid = w.wall.uStart + (from + to) / 2
         const active = selectedWall === w.key
@@ -685,8 +719,8 @@ function WindowEditor({ openings, plan }: { openings: Opening[]; plan: HousePlan
               depthWrite={false}
             />
           </mesh>
-        )
-      })}
+          )
+        })}
 
       {/* Накладки поверх вікон. Виносимо їх ДАЛІ за накладки стін (WALL_PICK_OUT),
           інакше стіна завжди перехоплює клік і вікно вибрати неможливо. */}
@@ -1015,135 +1049,75 @@ export default function HouseShell() {
 
   // Плоский дах: парапети по периметру КОЖНОГО рівня даху (верх + дах над денним
   // крилом/вітальнею). Ребро, накрите верхнім поверхом (там його стіни), пропускаємо.
+  // Плоскі зони даху: парапет по периметру КОЖНОЇ зони. Раніше геометрія
+  // йшла по контуру цілого рівня — тепер по намальованих зонах, тож на
+  // різних частинах будинку може бути різний дах.
   const parapets = useMemo(() => {
-    // Групуємо по рівнях даху: кожен рівень анімується ВІД своєї площини.
     const tiers = new Map<number, Box[]>()
-    const N = plan.floors.length
-    // Геометрію будуємо незалежно від кроку І від обраного типу — видимістю
-    // керують анімовані групи. Інакше при перемиканні типу даху одна геометрія
-    // зникала б миттєво, а друга миттєво з'являлась, без анімації.
-    if (N === 0) return [] as { roofY: number; boxes: Box[] }[]
-    plan.floors.forEach((fl, idx) => {
-      const roofY = (idx + 1) * FLOOR_H
-      const part = roof.find((r) => r.level === idx)
-      if (part && part.kind !== 'flat') return // цей рівень накритий скатом
-      const parapetH = part?.parapetH ?? PARAPET_H
-      // Товщина парапету — рівно та, що задав користувач. Раніше вона
-      // клампилась товщиною стіни, тож повзунок не робив нічого. Мінімум
-      // діапазону (0.2) більший за стіну (0.178), тож грані не збігаються
-      // і мерехтіння не повертається.
-      const t = part?.parapetT ?? wallT(idx + 1)
+    if (plan.floors.length === 0) return [] as { roofY: number; boxes: Box[] }[]
+    for (const part of roof) {
+      if (part.kind !== 'flat') continue
+      const roofY = (part.level + 1) * FLOOR_H
+      const t = part.parapetT
       const pt = t + 0.004
       const boxes: Box[] = tiers.get(roofY) ?? []
       tiers.set(roofY, boxes)
-      // «Накрите» рахуємо по ПОВНІЙ плиті верхнього поверху (враховує терасу):
-      // під терасою парапету немає (там скляний паркан); без тераси ця смуга —
-      // відкритий дах, тож парапет по контуру з'являється.
-      const upper = idx < N - 1 ? edgesOf(outline(plan.floors[idx + 1].slab)) : []
-      for (const e of edgesOf(wallOutline(fl))) {
-        // ВІДРІЗАЄМО лише накриту ЧАСТИНУ ребра, а не пропускаємо ребро цілком —
-        // інакше довга бічна стіна (спільна з 2-м поверхом) губила свій парапет,
-        // і над кухнею/майстром лишалася 1 стінка замість 3.
-        const cuts = upper
-          .filter((u) => u.horizontal === e.horizontal && Math.abs(u.line - e.line) < 0.05)
-          .map((u) => [Math.max(u.min, e.min), Math.min(u.max, e.max)] as [number, number])
-          .filter(([a, b]) => b - a > 0.1)
-          .sort((a, b) => a[0] - b[0])
-        let cur = e.min
-        const spans: [number, number][] = []
-        for (const [a, b] of cuts) {
-          if (a > cur + 0.05) spans.push([cur, a])
-          cur = Math.max(cur, b)
-        }
-        if (e.max > cur + 0.05) spans.push([cur, e.max])
-        for (const [a, b] of spans) {
-          // Парапет — наступний ярус над стіною свого поверху: заходить у неї
-          // на TIER_LAP і тонший на TIER_STEP (див. коментар про яруси).
-          pushBox(boxes, e.horizontal, e.line, a, b, -TIER_LAP, parapetH, roofY, t)
-          // Стовпчики на КІНЦЯХ кожної ділянки — кути парапету змикаються без дірок.
-          for (const u of [a, b]) {
-            boxes.push({
-              x: e.horizontal ? u : e.line,
-              y: roofY + (parapetH - TIER_LAP) / 2,
-              z: e.horizontal ? e.line : u,
-              dx: pt,
-              dy: parapetH + TIER_LAP,
-              dz: pt,
-            })
-          }
+      const b = bounds(part)
+      const edges: { horizontal: boolean; line: number; min: number; max: number }[] = [
+        { horizontal: true, line: b.z0, min: b.x0, max: b.x1 },
+        { horizontal: true, line: b.z1, min: b.x0, max: b.x1 },
+        { horizontal: false, line: b.x0, min: b.z0, max: b.z1 },
+        { horizontal: false, line: b.x1, min: b.z0, max: b.z1 },
+      ]
+      for (const e of edges) {
+        pushBox(boxes, e.horizontal, e.line, e.min, e.max, -TIER_LAP, part.parapetH, roofY, t)
+        // Стовпчики на кінцях — кути парапету змикаються без дірок.
+        for (const u of [e.min, e.max]) {
+          boxes.push({
+            x: e.horizontal ? u : e.line,
+            y: roofY + (part.parapetH - TIER_LAP) / 2,
+            z: e.horizontal ? e.line : u,
+            dx: pt,
+            dy: part.parapetH + TIER_LAP,
+            dz: pt,
+          })
         }
       }
-    })
-    return [...tiers].map(([roofY, boxes]) => ({ roofY, boxes })).filter((t) => t.boxes.length > 0)
+    }
+    return [...tiers].map(([roofY, boxes]) => ({ roofY, boxes })).filter((x) => x.boxes.length > 0)
   }, [plan, roof])
 
-  // Скатний дах (скандинавський, без звісів): двосхилі призми точно по контуру
-  // стін — над верхнім поверхом і над кожним нижнім рівнем, не накритим зверху.
+  // Скатні та односхилі зони: призма над прямокутником зони.
   const gables = useMemo(() => {
     const out: { roofY: number; geo: ExtrudeGeometry; x: number; y: number; z: number; rotY: number; wallLike: boolean }[] = []
-    const N = plan.floors.length
-    if (N === 0) return out
-    plan.floors.forEach((fl, idx) => {
-      const roofY = (idx + 1) * FLOOR_H
-      const part = roof.find((r) => r.level === idx)
-      if (!part || part.kind === 'flat') return // цей рівень під парапетом
-      let rects: Rect[]
-      if (idx === N - 1) {
-        // Верхній поверх — по контуру СТІН (без тераси: її дах не накриває).
-        // Габарит контуру: одна двосхила призма на весь верх, як і було.
-        const pts = wallOutline(fl).flatMap((r) => r.pts)
-        if (pts.length === 0) return
-        const xs = pts.map((p) => p[0])
-        const zs = pts.map((p) => p[1])
-        rects = [{ x0: Math.min(...xs), x1: Math.max(...xs), z0: Math.min(...zs), z1: Math.max(...zs) }]
+    if (plan.floors.length === 0) return out
+    for (const part of roof) {
+      if (part.kind === 'flat') continue
+      const roofY = (part.level + 1) * FLOOR_H
+      const r = bounds(part)
+      const over = 2 * part.overhang
+      const w = r.x1 - r.x0 + WALL_T + 0.004 + over
+      const d = r.z1 - r.z0 + WALL_T + 0.004 + over
+      // 0° — гребінь уздовж довшої сторони, 90° — упоперек.
+      const ridgeAlongZ = part.rotation % 180 === 0 ? d >= w : d < w
+      const span = ridgeAlongZ ? w : d
+      const skirt = ROOF_LIFT + TIER_LAP
+      const [pw, pd] = ridgeAlongZ ? [w, d] : [d, w]
+      const x = (r.x0 + r.x1) / 2
+      const z = (r.z0 + r.z1) / 2
+      const y = roofY + ROOF_LIFT
+      const mono = part.kind === 'mono'
+      const rotY = (ridgeAlongZ ? 0 : Math.PI / 2) + (mono && part.rotation >= 180 ? Math.PI : 0)
+      const tan = Math.tan((part.pitch * Math.PI) / 180)
+      if (mono) {
+        // Односхилий: висота на ПОВНИЙ проліт (схил один, а не два).
+        const mh = span * tan
+        out.push({ roofY, geo: monoGeometry(pw, pd, mh, skirt, true), x, y, z, rotY, wallLike: true })
+        out.push({ roofY, geo: monoGeometry(pw, pd, mh, skirt, false), x, y, z, rotY, wallLike: false })
       } else {
-        // Нижній рівень — лише ті прямокутники, що НЕ під верхнім поверхом.
-        const up = plan.floors[idx + 1].slab.map(bounds)
-        rects = fl.slab.map(bounds).filter((r) => {
-          const area = (r.x1 - r.x0) * (r.z1 - r.z0)
-          const cov = up.reduce(
-            (s, u) =>
-              s +
-              Math.max(0, Math.min(u.x1, r.x1) - Math.max(u.x0, r.x0)) * Math.max(0, Math.min(u.z1, r.z1) - Math.max(u.z0, r.z0)),
-            0,
-          )
-          return cov < area * 0.6
-        })
+        out.push({ roofY, geo: gableGeometry(pw, pd, (span / 2) * tan, skirt), x, y, z, rotY, wallLike: false })
       }
-      for (const r of rects) {
-        // +0.004 понад товщину стіни: скат має ВИСТУПАТИ за грань стіни, а не
-        // лежати з нею в одній площині — інакше по карнизу йде те саме мерехтіння.
-        // Звіс виносить дах за грань стіни; +0.004 — щоб скат не лежав рівно
-        // в площині стіни (те саме правило про мерехтіння).
-        const over = 2 * part.overhang
-        const w = r.x1 - r.x0 + WALL_T + 0.004 + over
-        const d = r.z1 - r.z0 + WALL_T + 0.004 + over
-        // Поворот задає користувач: 0° — гребінь уздовж довшої сторони,
-        // 90° — упоперек.
-        const ridgeAlongZ = part.rotation % 180 === 0 ? d >= w : d < w
-        const span = ridgeAlongZ ? w : d
-        const h = (span / 2) * Math.tan((part.pitch * Math.PI) / 180)
-        // Схили починаються на ROOF_LIFT ВИЩЕ верху стіни, а спідниця під ними
-        // спускається назад у стіну на TIER_LAP — дах сидить на стіні, а не в ній.
-        const skirt = ROOF_LIFT + TIER_LAP
-        const mono = part.kind === 'mono'
-        const [pw, pd] = ridgeAlongZ ? [w, d] : [d, w]
-        const x = (r.x0 + r.x1) / 2
-        const z = (r.z0 + r.z1) / 2
-        const y = roofY + ROOF_LIFT
-        // Односхилий має чотири напрямки: 180°/270° розвертають скат.
-        const rotY = (ridgeAlongZ ? 0 : Math.PI / 2) + (mono && part.rotation >= 180 ? Math.PI : 0)
-        // Односхилий у односхилого висота рахується на ПОВНИЙ проліт, а не на
-        // половину: схил один, а не два.
-        const mh = span * Math.tan((part.pitch * Math.PI) / 180)
-        if (mono) {
-          out.push({ roofY, geo: monoGeometry(pw, pd, mh, skirt, true), x, y, z, rotY, wallLike: true })
-          out.push({ roofY, geo: monoGeometry(pw, pd, mh, skirt, false), x, y, z, rotY, wallLike: false })
-        } else {
-          out.push({ roofY, geo: gableGeometry(pw, pd, h, skirt), x, y, z, rotY, wallLike: false })
-        }
-      }
-    })
+    }
     return out
   }, [plan, roof])
 

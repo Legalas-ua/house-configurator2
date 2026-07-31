@@ -85,7 +85,7 @@ const planReset = (index: number) => ({
   selectedWindow: null,
   selectedWall: null,
   selectedDoor: null,
-  selectedRoofLevel: null,
+  selectedRoofPart: null,
   ...(index < ROOMS_STEP ? { planMode: 'template' as const, customPlan: null } : {}),
   ...(index < WINDOWS_STEP ? { windowsMode: 'template' as const, customWindows: null } : {}),
 })
@@ -103,10 +103,12 @@ interface ConfiguratorState {
   selectedWindow: string | null
   selectedWall: string | null // стіна, обрана для додавання вікна
   selectedDoor: number | null // індекс дверей усередині обраного вікна
+  addingWindow: boolean // режим «обери стіну» — лише тоді стіни клікабельні
   // Дах: готовий варіант (тип із config.roof) або свій набір частин.
   roofMode: PlanMode
   customRoof: RoofPart[] | null
-  selectedRoofLevel: number | null
+  selectedRoofPart: string | null // id обраної зони даху
+  roofLevel: number // рівень даху, який зараз редагують
   selectedRoom: string | null // id кімнати, яку зараз редагують (ручний режим)
   dragging: boolean // тягнуть зону на плані → камеру треба знерухомити
   showGrid: boolean // сітка прив'язки під планом (лише в ручному режимі)
@@ -125,9 +127,11 @@ interface ConfiguratorState {
   setSelectedWindow: (id: string | null) => void
   setSelectedWall: (key: string | null) => void
   setSelectedDoor: (i: number | null) => void
+  setAddingWindow: (on: boolean) => void
   setRoofMode: (mode: PlanMode) => void
   setCustomRoof: (parts: RoofPart[]) => void
-  setSelectedRoofLevel: (level: number | null) => void
+  setSelectedRoofPart: (id: string | null) => void
+  setRoofLevel: (level: number) => void
   setSelectedRoom: (id: string | null) => void
   setDragging: (on: boolean) => void
   setShowGrid: (on: boolean) => void
@@ -150,9 +154,11 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
   selectedWindow: null,
   selectedWall: null,
   selectedDoor: null,
+  addingWindow: false,
   roofMode: 'template',
   customRoof: null,
-  selectedRoofLevel: null,
+  selectedRoofPart: null,
+  roofLevel: 0,
   selectedRoom: null,
   dragging: false,
   showGrid: true,
@@ -211,22 +217,28 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
 
   setSelectedDoor: (i) => set({ selectedDoor: i }),
 
+  // Вимикаючи режим, одразу знімаємо вибір стіни — інакше вона лишалась би
+  // підсвіченою, хоч кліки по стінах уже не ловляться.
+  setAddingWindow: (on) => set({ addingWindow: on, selectedWall: on ? null : null }),
+
   // Ручний дах стартує з готового набору — людина правит, а не малює з нуля.
   setRoofMode: (mode) =>
     set((s) => {
       if (mode === s.roofMode) return s
-      if (mode === 'template') return { roofMode: 'template', customRoof: null, selectedRoofLevel: null }
+      if (mode === 'template') return { roofMode: 'template', customRoof: null, selectedRoofPart: null }
       const plan = s.customPlan ?? generateHousePlan(s.config)
       return {
         roofMode: 'custom',
         customRoof: s.customRoof ?? generateRoof(plan, s.config.roof === 'pitched' ? 'gable' : 'flat'),
-        selectedRoofLevel: null,
+        selectedRoofPart: null,
       }
     }),
 
   setCustomRoof: (parts) => set({ roofMode: 'custom', customRoof: parts }),
 
-  setSelectedRoofLevel: (level) => set({ selectedRoofLevel: level }),
+  setSelectedRoofPart: (id) => set({ selectedRoofPart: id }),
+
+  setRoofLevel: (level) => set({ roofLevel: level, selectedRoofPart: null }),
 
   setSelectedRoom: (id) => set({ selectedRoom: id }),
 

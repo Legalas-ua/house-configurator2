@@ -61,6 +61,8 @@ function WindowEditorPanel() {
   const selectedWindow = useConfigurator((s) => s.selectedWindow)
   const setSelectedWindow = useConfigurator((s) => s.setSelectedWindow)
   const selectedWall = useConfigurator((s) => s.selectedWall)
+  const adding = useConfigurator((s) => s.addingWindow)
+  const setAdding = useConfigurator((s) => s.setAddingWindow)
   const selectedDoor = useConfigurator((s) => s.selectedDoor)
   const setSelectedDoor = useConfigurator((s) => s.setSelectedDoor)
   const setSelectedWall = useConfigurator((s) => s.setSelectedWall)
@@ -86,7 +88,14 @@ function WindowEditorPanel() {
     <>
       <div className="rooms__group">
         <span className="rooms__group-title">{texts.add}</span>
-        {parsed ? (
+        {!adding ? (
+          <>
+            <button type="button" className="chip" onClick={() => setAdding(true)}>
+              {texts.startAdding}
+            </button>
+            <p className="rooms__hint">{texts.startAddingHint}</p>
+          </>
+        ) : parsed ? (
           <>
             <button
               type="button"
@@ -105,6 +114,7 @@ function WindowEditorPanel() {
                 setCustomWindows(res.specs)
                 setSelectedWindow(res.id)
                 setSelectedWall(null)
+                setAdding(false)
               }}
             >
               {texts.addTo(t.plan.roomNames[parsed.room.type])}
@@ -114,7 +124,12 @@ function WindowEditorPanel() {
             </p>
           </>
         ) : (
-          <p className="rooms__hint">{texts.pickWall}</p>
+          <>
+            <p className="rooms__hint">{texts.pickWall}</p>
+            <button type="button" className="chip" onClick={() => setAdding(false)}>
+              {texts.doneAdding}
+            </button>
+          </>
         )}
       </div>
 
@@ -265,16 +280,19 @@ function Stepper({
     auto && value < 0
       ? t.steps.windows.editor.autoValue
       : `${value.toFixed(stepSize < 1 ? 1 : 0)}${suffix}`
-  const round = (v: number) => Math.round(v / stepSize) * stepSize
+  // Рахуємо в ЩАБЛЯХ, а не додаємо крок до дробу: 0.9 + 0.1 у двійковому
+  // числі дає 1.0000000000000002, і наступне округлення перестрибувало
+  // рівно через 1.0.
+  const move = (dir: 1 | -1) => onChange((Math.round(value / stepSize) + dir) * stepSize)
   return (
     <div className="counter">
       <span className="counter__label">{label}</span>
       <div className="counter__controls">
-        <button type="button" className="counter__btn" onClick={() => onChange(round(value - stepSize))} aria-label={`${label}: менше`}>
+        <button type="button" className="counter__btn" onClick={() => move(-1)} aria-label={`${label}: менше`}>
           −
         </button>
         <span className="counter__value">{shown}</span>
-        <button type="button" className="counter__btn" onClick={() => onChange(round(value + stepSize))} aria-label={`${label}: більше`}>
+        <button type="button" className="counter__btn" onClick={() => move(1)} aria-label={`${label}: більше`}>
           +
         </button>
       </div>
