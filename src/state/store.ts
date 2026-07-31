@@ -240,7 +240,11 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
 
   nextStep: () =>
     set((s) => {
-      if (!STEPS[s.currentStep].isComplete(s.config)) return s
+      const stepId = STEPS[s.currentStep].id
+      // Ті самі ручні режими, що й у кнопці: там вибору картками немає.
+      const custom =
+        (stepId === 'windows' && s.windowsMode === 'custom') || (stepId === 'roof' && s.roofMode === 'custom')
+      if (!custom && !STEPS[s.currentStep].isComplete(s.config)) return s
       // Друга лінія оборони поруч із неактивною кнопкою: помилки ручного
       // планування не дають піти далі жодним шляхом.
       if (s.currentStep === ROOMS_STEP && s.customPlan && validatePlan(s.customPlan).length > 0) return s

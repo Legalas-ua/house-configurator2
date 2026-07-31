@@ -24,6 +24,6 @@ export const ROOM_COLORS: Record<RoomType, string> = {
   closet: '#b06fbf', // пурпурово-рожевий гардероб (майстер)
   pantry: '#9fce5f', // зелена комора
   stairs: '#7d766a',
-  terrace: '#d8c39a',
+  terrace: '#7fb5a6', // м'ятно-зелений: тераса надворі, її не сплутати з коридором
   storage: '#c9a9bd',
 }

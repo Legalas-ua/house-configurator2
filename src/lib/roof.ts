@@ -25,7 +25,10 @@ export interface RoofPart {
 export const PARAPET_H = { min: 0.3, max: 1.5, step: 0.1 }
 export const PARAPET_T = { min: 0.2, max: 0.5, step: 0.05 }
 export const PITCH = { min: 10, max: 60, step: 5 }
+// Звіс: або зовсім без нього, або від 300 мм. Проміжних значень не буває —
+// 100-200 мм на фасаді просто не читаються.
 export const OVERHANG = { min: 0.3, max: 1.0, step: 0.1 }
+export const NO_OVERHANG = 0
 
 export const DEFAULTS: Omit<RoofPart, 'level' | 'kind'> = {
   parapetH: 0.45,
@@ -48,7 +51,7 @@ export function normalizeRoof(part: RoofPart): RoofPart {
     // Скатний має два осмислені напрямки (гребінь уздовж / упоперек),
     // односхилий — чотири (куди дивиться схил). Плоскому поворот байдужий.
     rotation: ((Math.round(part.rotation / 90) * 90) % (part.kind === 'gable' ? 180 : 360) + 360) % 360,
-    overhang: clampStep(part.overhang, OVERHANG),
+    overhang: part.overhang < OVERHANG.min / 2 ? NO_OVERHANG : clampStep(part.overhang, OVERHANG),
   }
 }
 
@@ -76,6 +79,12 @@ const area = (plan: HousePlan, i: number) =>
 // Готовий варіант: усі відкриті рівні одним типом (те, що вибрано на кроці).
 export function generateRoof(plan: HousePlan, kind: RoofKind): RoofPart[] {
   return roofLevels(plan).map((level) => normalizeRoof({ level, kind, ...DEFAULTS }))
+}
+
+// Наступне/попереднє значення звісу з урахуванням «нуля» окремим щаблем.
+export function stepOverhang(v: number, dir: 1 | -1): number {
+  if (dir > 0) return v < OVERHANG.min ? OVERHANG.min : Math.min(OVERHANG.max, v + OVERHANG.step)
+  return v <= OVERHANG.min + 1e-9 ? NO_OVERHANG : v - OVERHANG.step
 }
 
 export function updateRoofPart(parts: RoofPart[], level: number, patch: Partial<RoofPart>): RoofPart[] {

@@ -17,7 +17,6 @@ import {
   type Side,
 } from '../../lib/windows'
 import { t } from '../../locales'
-import FloorTabs from './FloorTabs'
 import OptionCards from './OptionCards'
 
 // Крок «Вікна». Готовий варіант — ті самі картки типу (звичайні/панорамні).
@@ -30,8 +29,6 @@ export default function WindowsField({ step }: { step: StepDef }) {
 
   return (
     <>
-      {mode === 'custom' && <FloorTabs withHide={false} />}
-
       <div className="rooms__group">
         <span className="rooms__group-title">{texts.mode.title}</span>
         <div className="chips">
@@ -60,7 +57,6 @@ function WindowEditorPanel() {
   const plan = useHousePlan()
   const windows = useWindows()
   const config = useConfigurator((s) => s.config)
-  const viewFloor = useConfigurator((s) => s.viewFloor)
   const setCustomWindows = useConfigurator((s) => s.setCustomWindows)
   const selectedWindow = useConfigurator((s) => s.selectedWindow)
   const setSelectedWindow = useConfigurator((s) => s.setSelectedWindow)
@@ -71,7 +67,9 @@ function WindowEditorPanel() {
   const texts = t.steps.windows.editor
 
   const spec = windows.find((w) => w.id === selectedWindow)
-  const floorIdx = Math.min(viewFloor, plan.floors.length) - 1
+  // Ключ стіни несе свій поверх — редагуємо всі поверхи разом.
+  const wallFloor = selectedWall ? Number(selectedWall.slice(0, selectedWall.indexOf('-'))) : 0
+  const floorIdx = Number.isFinite(wallFloor) ? wallFloor : 0
   const floor = plan.floors[floorIdx]
   const patch = (p: Parameters<typeof updateWindow>[2]) =>
     spec && setCustomWindows(updateWindow(windows, spec.id, p))

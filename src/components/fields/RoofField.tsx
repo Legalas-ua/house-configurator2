@@ -3,6 +3,7 @@ import type { PlanMode } from '../../config/types'
 import type { StepDef } from '../../config/steps'
 import {
   roofLevels,
+  stepOverhang,
   updateRoofPart,
   OVERHANG,
   PARAPET_H,
@@ -104,7 +105,33 @@ function RoofEditorPanel() {
           ) : (
             <>
               <Range label={texts.pitch} value={part.pitch} range={PITCH} suffix="°" onChange={(v) => patch({ pitch: v })} />
-              <Range label={texts.overhang} value={part.overhang} range={OVERHANG} onChange={(v) => patch({ overhang: v })} />
+              {/* Звіс має окремий «нуль»: або без нього, або від 300 мм. */}
+              <div className="counter">
+                <span className="counter__label">{texts.overhang}</span>
+                <div className="counter__controls">
+                  <button
+                    type="button"
+                    className="counter__btn"
+                    disabled={part.overhang <= 0}
+                    onClick={() => patch({ overhang: stepOverhang(part.overhang, -1) })}
+                    aria-label={`${texts.overhang}: менше`}
+                  >
+                    −
+                  </button>
+                  <span className="counter__value">
+                    {part.overhang <= 0 ? texts.noOverhang : `${part.overhang.toFixed(1)} м`}
+                  </span>
+                  <button
+                    type="button"
+                    className="counter__btn"
+                    disabled={part.overhang >= OVERHANG.max - 1e-9}
+                    onClick={() => patch({ overhang: stepOverhang(part.overhang, 1) })}
+                    aria-label={`${texts.overhang}: більше`}
+                  >
+                    +
+                  </button>
+                </div>
+              </div>
               <div className="rooms__group">
                 <span className="rooms__group-title">{texts.rotation}</span>
                 <div className="chips">

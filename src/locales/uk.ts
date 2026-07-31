@@ -151,6 +151,7 @@ export const uk = {
         parapetT: 'Товщина парапету',
         pitch: 'Кут скату',
         overhang: 'Звіс',
+        noOverhang: 'без звісу',
         rotation: 'Поворот',
       },
     },

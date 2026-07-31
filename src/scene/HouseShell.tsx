@@ -72,6 +72,7 @@ const RISE_EASE = 0.5
 const ROOF_EASE = 0.42 // дах виростає трохи жвавіше за коробку
 const PARAPET_H = 0.45 // висота парапету плоського даху
 const ROOF_LIFT = 0.09 // на скільки схили підняті над верхом стіни
+const ROOF_T = 0.22 // товщина похилої плити односхилого даху
 const ROOF_COLOR = WALL_COLOR // ТИМЧАСОВО в колір стін — покриття ще не обране
 
 // ---- Вікна (розміри й правила — у lib/windows.ts) ----
@@ -221,18 +222,37 @@ function plateGeometry(rings: Ring[], hole: Rect | null, depth = PLATE_T): Extru
 // skirt — пряма спідниця під схилами. Без неї схил сходить у нуль рівно на
 // верху стіни, і дах виглядає втопленим у неї; спідниця дає краю товщину й
 // піднімає початок схилу над стіною.
-function gableGeometry(width: number, depth: number, height: number, skirt: number, mono = false): ExtrudeGeometry {
+function gableGeometry(width: number, depth: number, height: number, skirt: number): ExtrudeGeometry {
   const s = new Shape()
   s.moveTo(-width / 2, -skirt)
   s.lineTo(width / 2, -skirt)
-  if (mono) {
-    // Односхилий: один суцільний скат від нижчого краю до вищого.
+  s.lineTo(width / 2, 0)
+  s.lineTo(0, height)
+  s.lineTo(-width / 2, 0)
+  s.closePath()
+  const g = new ExtrudeGeometry(s, { depth, bevelEnabled: false })
+  g.translate(0, 0, -depth / 2)
+  return g
+}
+
+// Односхилий дах — НЕ трикутник у розрізі: це похила плита завтовшки ROOF_T,
+// а під нею стіни доростають до неї (клин у кольорі стіни). fill=true віддає
+// цей клин, fill=false — саму плиту.
+function monoGeometry(width: number, depth: number, height: number, skirt: number, fill: boolean): ExtrudeGeometry {
+  const s = new Shape()
+  // Вертикальна товщина плити більша за ROOF_T рівно настільки, наскільки
+  // вона нахилена, — тоді ПЕРПЕНДИКУЛЯРНА товщина виходить рівно ROOF_T.
+  const tv = ROOF_T * Math.hypot(width, height) / Math.max(width, 1e-6)
+  if (fill) {
+    s.moveTo(-width / 2, -skirt)
+    s.lineTo(width / 2, -skirt)
     s.lineTo(width / 2, height)
     s.lineTo(-width / 2, 0)
   } else {
-    s.lineTo(width / 2, 0)
-    s.lineTo(0, height)
-    s.lineTo(-width / 2, 0)
+    s.moveTo(-width / 2, 0)
+    s.lineTo(width / 2, height)
+    s.lineTo(width / 2, height + tv)
+    s.lineTo(-width / 2, tv)
   }
   s.closePath()
   const g = new ExtrudeGeometry(s, { depth, bevelEnabled: false })
@@ -477,16 +497,13 @@ function WindowEditor({ openings, plan }: { openings: Opening[]; plan: HousePlan
   const setSelectedWall = useConfigurator((s) => s.setSelectedWall)
   const setDragging = useConfigurator((s) => s.setDragging)
   const setHovered = useConfigurator((s) => s.setHovered)
-  const viewFloor = useConfigurator((s) => s.viewFloor)
   const selectedDoor = useConfigurator((s) => s.selectedDoor)
   const [drag, setDrag] = useState<WinDrag | null>(null)
   const [hoverWall, setHoverWall] = useState<string | null>(null)
   const [hoverWin, setHoverWin] = useState<string | null>(null)
 
-  // Редагуємо ПО ЧЕРЗІ: лише вікна активного поверху. Решта видно, але вони
-  // не ловлять клік — інакше на двоповерховому будинку легко влучити не туди.
-  const floorIdx = Math.min(viewFloor, plan.floors.length) - 1
-  const mine = openings.filter((o) => o.floor === floorIdx)
+  // Редагуються вікна ВСІХ поверхів одразу — перемикати поверхи тут зайве.
+  const mine = openings
 
   useEffect(() => {
     if (!drag) return
@@ -532,19 +549,22 @@ function WindowEditor({ openings, plan }: { openings: Opening[]; plan: HousePlan
   const midY = (o: Opening) => o.baseY + (o.sill + o.top) / 2
 
   // Стіни активного поверху, на які можна ставити вікна.
-  const walls = useMemo(() => {
-    const fl = plan.floors[floorIdx]
-    if (!fl) return []
-    return fl.rooms
-      .filter((r) => r.id && r.type !== 'terrace')
-      .flatMap((room) =>
-        openSides(fl, room).map((side) => ({
-          key: `${floorIdx}-${room.id}-${side}`,
-          room,
-          wall: wallOf(room, side),
-        })),
-      )
-  }, [plan, floorIdx])
+  const walls = useMemo(
+    () =>
+      plan.floors.flatMap((fl, i) =>
+        fl.rooms
+          .filter((r) => r.id && r.type !== 'terrace')
+          .flatMap((room) =>
+            openSides(fl, room).map((side) => ({
+              key: `${i}-${room.id}-${side}`,
+              floor: i,
+              room,
+              wall: wallOf(room, side),
+            })),
+          ),
+      ),
+    [plan],
+  )
 
   // Межі, у яких дозволено рухати ОБРАНЕ вікно, — показуємо пунктиром.
   const limits = useMemo(() => {
@@ -572,20 +592,26 @@ function WindowEditor({ openings, plan }: { openings: Opening[]; plan: HousePlan
       {/* Заслінки по кімнатах: без них промінь пролітає крізь будинок і клік
           потрапляє на стіну з ПРОТИЛЕЖНОГО боку (суцільні стіни подій не
           ловлять, тож нічого не перекривають). */}
-      {plan.floors[floorIdx]?.rooms.map((r) => (
-        <mesh
-          key={`block-${r.id}`}
-          position={[r.x, floorIdx * FLOOR_H + WALL_H / 2, r.z]}
-          onPointerDown={(e) => e.stopPropagation()}
-          onPointerOver={(e) => {
-            e.stopPropagation()
-            setHoverWall(null)
-          }}
-        >
-          <boxGeometry args={[Math.max(r.width - 0.5, 0.1), WALL_H, Math.max(r.depth - 0.5, 0.1)]} />
-          <meshBasicMaterial transparent opacity={0} depthWrite={false} />
-        </mesh>
-      ))}
+      {plan.floors.flatMap((fl, i) =>
+        fl.rooms
+          // Над терасою заслінки НЕМАЄ: вона накривала вікна, що виходять на
+          // терасу, і крізь неї (та скляний паркан) вікно було не вибрати.
+          .filter((r) => r.type !== 'terrace')
+          .map((r) => (
+            <mesh
+              key={`block-${i}-${r.id}`}
+              position={[r.x, i * FLOOR_H + WALL_H / 2, r.z]}
+              onPointerDown={(e) => e.stopPropagation()}
+              onPointerOver={(e) => {
+                e.stopPropagation()
+                setHoverWall(null)
+              }}
+            >
+              <boxGeometry args={[Math.max(r.width - 0.5, 0.1), WALL_H, Math.max(r.depth - 0.5, 0.1)]} />
+              <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+            </mesh>
+          )),
+      )}
 
       {/* Стіни: підсвічуються під курсором і по кліку. Смуга рівно та, у межах
           якої дозволено рухати вікно, — щоб було видно робочу зону стіни. */}
@@ -602,7 +628,7 @@ function WindowEditor({ openings, plan }: { openings: Opening[]; plan: HousePlan
             key={`wall-${w.key}`}
             position={[
               (w.wall.horizontal ? mid : w.wall.line) + nx,
-              floorIdx * FLOOR_H + WALL_H / 2,
+              w.floor * FLOOR_H + WALL_H / 2,
               (w.wall.horizontal ? w.wall.line : mid) + nz,
             ]}
             rotation-y={w.wall.rotY}
@@ -806,7 +832,6 @@ export default function HouseShell() {
   const show = stepId === 'windows' || stepId === 'roof' // коробка видима на «Вікна» і «Дах»
   const roofStep = stepId === 'roof' // дах видно ЛИШЕ на своєму кроці
   const windowsMode = useConfigurator((s) => s.windowsMode)
-  const viewFloor = useConfigurator((s) => s.viewFloor)
   const editWindows = stepId === 'windows' && windowsMode === 'custom'
   const ref = useRef<Group>(null)
 
@@ -977,9 +1002,11 @@ export default function HouseShell() {
       const part = roof.find((r) => r.level === idx)
       if (part && part.kind !== 'flat') return // цей рівень накритий скатом
       const parapetH = part?.parapetH ?? PARAPET_H
-      // Товщину парапету задає користувач, але вона не має вилазити за стіну
-      // товщі себе — інакше повертається мерехтіння на стику ярусів.
-      const t = Math.min(part?.parapetT ?? wallT(idx + 1), wallT(idx + 1))
+      // Товщина парапету — рівно та, що задав користувач. Раніше вона
+      // клампилась товщиною стіни, тож повзунок не робив нічого. Мінімум
+      // діапазону (0.2) більший за стіну (0.178), тож грані не збігаються
+      // і мерехтіння не повертається.
+      const t = part?.parapetT ?? wallT(idx + 1)
       const pt = t + 0.004
       const boxes: Box[] = tiers.get(roofY) ?? []
       tiers.set(roofY, boxes)
@@ -1027,7 +1054,7 @@ export default function HouseShell() {
   // Скатний дах (скандинавський, без звісів): двосхилі призми точно по контуру
   // стін — над верхнім поверхом і над кожним нижнім рівнем, не накритим зверху.
   const gables = useMemo(() => {
-    const out: { roofY: number; geo: ExtrudeGeometry; x: number; y: number; z: number; rotY: number }[] = []
+    const out: { roofY: number; geo: ExtrudeGeometry; x: number; y: number; z: number; rotY: number; wallLike: boolean }[] = []
     const N = plan.floors.length
     if (N === 0) return out
     plan.floors.forEach((fl, idx) => {
@@ -1074,15 +1101,21 @@ export default function HouseShell() {
         // спускається назад у стіну на TIER_LAP — дах сидить на стіні, а не в ній.
         const skirt = ROOF_LIFT + TIER_LAP
         const mono = part.kind === 'mono'
-        out.push({
-          roofY,
-          geo: ridgeAlongZ ? gableGeometry(w, d, h, skirt, mono) : gableGeometry(d, w, h, skirt, mono),
-          x: (r.x0 + r.x1) / 2,
-          y: roofY + ROOF_LIFT,
-          z: (r.z0 + r.z1) / 2,
-          // Односхилий має чотири напрямки: 180°/270° просто розвертають скат.
-          rotY: (ridgeAlongZ ? 0 : Math.PI / 2) + (mono && part.rotation >= 180 ? Math.PI : 0),
-        })
+        const [pw, pd] = ridgeAlongZ ? [w, d] : [d, w]
+        const x = (r.x0 + r.x1) / 2
+        const z = (r.z0 + r.z1) / 2
+        const y = roofY + ROOF_LIFT
+        // Односхилий має чотири напрямки: 180°/270° розвертають скат.
+        const rotY = (ridgeAlongZ ? 0 : Math.PI / 2) + (mono && part.rotation >= 180 ? Math.PI : 0)
+        // Односхилий у односхилого висота рахується на ПОВНИЙ проліт, а не на
+        // половину: схил один, а не два.
+        const mh = span * Math.tan((part.pitch * Math.PI) / 180)
+        if (mono) {
+          out.push({ roofY, geo: monoGeometry(pw, pd, mh, skirt, true), x, y, z, rotY, wallLike: true })
+          out.push({ roofY, geo: monoGeometry(pw, pd, mh, skirt, false), x, y, z, rotY, wallLike: false })
+        } else {
+          out.push({ roofY, geo: gableGeometry(pw, pd, h, skirt), x, y, z, rotY, wallLike: false })
+        }
       }
     })
     return out
@@ -1102,19 +1135,6 @@ export default function HouseShell() {
     g.visible = show || g.scale.y > 0.02 // лишаємось видимими, поки коробка зникає
   })
 
-  // Поки редагуємо вікна одного поверху, сусідній ледь притлумлюємо — видно,
-  // що зараз працюємо не з ним, але будинок читається цілком.
-  const activeFloor = Math.min(viewFloor, plan.floors.length) - 1
-  // key змінюється разом із прозорістю НАВМИСНО: three.js не перекомпілює
-  // матеріал, коли `transparent` міняють на льоту, тож без ремонта поверх
-  // просто лишався б непрозорим (та сама пастка, що й у fadeMaterial).
-  const dimAt = (y: number) => {
-    const dim = editWindows && plan.floors.length > 1 && Math.floor(y / FLOOR_H) !== activeFloor
-    return dim
-      ? { key: 'dim', transparent: true, opacity: 0.35, depthWrite: false }
-      : { key: 'solid' }
-  }
-
   return (
     <group ref={ref} visible={false} scale={[1, 0.0001, 1]}>
       {/* Цоколь — усередині анімованої групи, тож виростає разом зі стінами. */}
@@ -1127,7 +1147,7 @@ export default function HouseShell() {
       {walls.map((b, i) => (
         <mesh key={`wall-${i}`} position={[b.x, b.y, b.z]} castShadow receiveShadow>
           <boxGeometry args={[b.dx, b.dy, b.dz]} />
-          <meshStandardMaterial color={WALL_COLOR} roughness={0.9} {...dimAt(b.y)} />
+          <meshStandardMaterial color={WALL_COLOR} roughness={0.9} />
         </mesh>
       ))}
 
@@ -1138,7 +1158,7 @@ export default function HouseShell() {
       {partitions.wallB.map((b, i) => (
         <mesh key={`part-${i}`} position={[b.x, b.y, b.z]} castShadow receiveShadow>
           <boxGeometry args={[b.dx, b.dy, b.dz]} />
-          <meshStandardMaterial color={WALL_COLOR} roughness={0.9} {...dimAt(b.y)} />
+          <meshStandardMaterial color={WALL_COLOR} roughness={0.9} />
         </mesh>
       ))}
       {partitions.doorB.map((b, i) => (
@@ -1178,7 +1198,9 @@ export default function HouseShell() {
         <RoofTier key={`pitched-${tier.roofY}`} baseY={tier.roofY} open={roofStep}>
           {tier.items.map((g, i) => (
             <mesh key={`gable-${i}`} geometry={g.geo} position={[g.x, g.y, g.z]} rotation-y={g.rotY} castShadow receiveShadow>
-              <meshStandardMaterial color={ROOF_COLOR} roughness={0.75} />
+              {/* wallLike — це клин під похилою плитою: продовження СТІНИ, тож
+                  і колір стінний, а не покрівельний. */}
+              <meshStandardMaterial color={g.wallLike ? WALL_COLOR : ROOF_COLOR} roughness={0.75} />
             </mesh>
           ))}
         </RoofTier>

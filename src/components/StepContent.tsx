@@ -20,6 +20,7 @@ export default function StepContent() {
 
   const planMode = useConfigurator((s) => s.planMode)
   const windowsMode = useConfigurator((s) => s.windowsMode)
+  const roofMode = useConfigurator((s) => s.roofMode)
   const plan = useHousePlan()
   const windows = useWindows()
 
@@ -29,6 +30,11 @@ export default function StepContent() {
   const blocked =
     (step.id === 'rooms' && planMode === 'custom' && validatePlan(plan).length > 0) ||
     (step.id === 'windows' && windowsMode === 'custom' && validateWindows(plan, windows).length > 0)
+  // У ручному режимі тип вікон/даху картками не обирають, тож step.isComplete
+  // (він дивиться на config) там ніколи не спрацював би — кнопка «Далі»
+  // лишалась би сірою назавжди.
+  const customStep =
+    (step.id === 'windows' && windowsMode === 'custom') || (step.id === 'roof' && roofMode === 'custom')
 
   return (
     <section className="step">
@@ -53,7 +59,7 @@ export default function StepContent() {
           type="button"
           className="btn btn--primary"
           onClick={nextStep}
-          disabled={currentStep === STEPS.length - 1 || !step.isComplete(config) || blocked}
+          disabled={currentStep === STEPS.length - 1 || (!customStep && !step.isComplete(config)) || blocked}
         >
           {t.nav.next}
         </button>
