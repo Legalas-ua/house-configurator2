@@ -18,6 +18,7 @@ import { generateHousePlan } from '../lib/floorplan'
 import { normalizePlan } from '../lib/editPlan'
 import { validatePlan } from '../lib/validatePlan'
 import { generateWindows, validateWindows, type WindowSpec } from '../lib/windows'
+import { generateRoof, type RoofPart } from '../lib/roof'
 import { floor2Limits } from '../lib/lshape'
 
 // Крок, з якого починається планування. Повернення НА ПОПЕРЕДНІЙ крок скидає
@@ -84,6 +85,7 @@ const planReset = (index: number) => ({
   selectedWindow: null,
   selectedWall: null,
   selectedDoor: null,
+  selectedRoofLevel: null,
   ...(index < ROOMS_STEP ? { planMode: 'template' as const, customPlan: null } : {}),
   ...(index < WINDOWS_STEP ? { windowsMode: 'template' as const, customWindows: null } : {}),
 })
@@ -101,6 +103,10 @@ interface ConfiguratorState {
   selectedWindow: string | null
   selectedWall: string | null // стіна, обрана для додавання вікна
   selectedDoor: number | null // індекс дверей усередині обраного вікна
+  // Дах: готовий варіант (тип із config.roof) або свій набір частин.
+  roofMode: PlanMode
+  customRoof: RoofPart[] | null
+  selectedRoofLevel: number | null
   selectedRoom: string | null // id кімнати, яку зараз редагують (ручний режим)
   dragging: boolean // тягнуть зону на плані → камеру треба знерухомити
   showGrid: boolean // сітка прив'язки під планом (лише в ручному режимі)
@@ -119,6 +125,9 @@ interface ConfiguratorState {
   setSelectedWindow: (id: string | null) => void
   setSelectedWall: (key: string | null) => void
   setSelectedDoor: (i: number | null) => void
+  setRoofMode: (mode: PlanMode) => void
+  setCustomRoof: (parts: RoofPart[]) => void
+  setSelectedRoofLevel: (level: number | null) => void
   setSelectedRoom: (id: string | null) => void
   setDragging: (on: boolean) => void
   setShowGrid: (on: boolean) => void
@@ -141,6 +150,9 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
   selectedWindow: null,
   selectedWall: null,
   selectedDoor: null,
+  roofMode: 'template',
+  customRoof: null,
+  selectedRoofLevel: null,
   selectedRoom: null,
   dragging: false,
   showGrid: true,
@@ -199,6 +211,23 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
 
   setSelectedDoor: (i) => set({ selectedDoor: i }),
 
+  // Ручний дах стартує з готового набору — людина правит, а не малює з нуля.
+  setRoofMode: (mode) =>
+    set((s) => {
+      if (mode === s.roofMode) return s
+      if (mode === 'template') return { roofMode: 'template', customRoof: null, selectedRoofLevel: null }
+      const plan = s.customPlan ?? generateHousePlan(s.config)
+      return {
+        roofMode: 'custom',
+        customRoof: s.customRoof ?? generateRoof(plan, s.config.roof === 'pitched' ? 'gable' : 'flat'),
+        selectedRoofLevel: null,
+      }
+    }),
+
+  setCustomRoof: (parts) => set({ roofMode: 'custom', customRoof: parts }),
+
+  setSelectedRoofLevel: (level) => set({ selectedRoofLevel: level }),
+
   setSelectedRoom: (id) => set({ selectedRoom: id }),
 
   setDragging: (on) => set({ dragging: on }),
@@ -249,6 +278,17 @@ export function useHousePlan(): HousePlan {
   const config = useConfigurator((s) => s.config)
   const customPlan = useConfigurator((s) => s.customPlan)
   return useMemo(() => customPlan ?? generateHousePlan(config), [customPlan, config])
+}
+
+// Те саме для даху: свій набір частин або готовий за обраним типом.
+export function useRoof(): RoofPart[] {
+  const config = useConfigurator((s) => s.config)
+  const customRoof = useConfigurator((s) => s.customRoof)
+  const plan = useHousePlan()
+  return useMemo(
+    () => customRoof ?? generateRoof(plan, config.roof === 'pitched' ? 'gable' : 'flat'),
+    [customRoof, plan, config.roof],
+  )
 }
 
 // Те саме для вікон: свій набір, якщо він є, інакше готовий за планом.

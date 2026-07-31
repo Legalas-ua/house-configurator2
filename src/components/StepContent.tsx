@@ -7,6 +7,7 @@ import BudgetSlider from './fields/BudgetSlider'
 import OptionCards from './fields/OptionCards'
 import RoomsField from './fields/RoomsField'
 import WindowsField from './fields/WindowsField'
+import RoofField from './fields/RoofField'
 import FloorsPicker from './fields/FloorsPicker'
 
 // Рендерить поточний крок за його описом (StepDef) — без знання про конкретику.
@@ -39,6 +40,7 @@ export default function StepContent() {
         {step.kind === 'cards' && <OptionCards step={step} />}
         {step.kind === 'rooms' && <RoomsField />}
         {step.kind === 'windows' && <WindowsField step={step} />}
+        {step.kind === 'roof' && <RoofField step={step} />}
         {step.id === 'shape' && <FloorsPicker />}
       </div>
 

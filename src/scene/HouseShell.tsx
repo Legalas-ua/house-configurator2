@@ -11,7 +11,7 @@ import {
   type Group,
   type Mesh,
 } from 'three'
-import { useConfigurator, useHousePlan, useWindows } from '../state/store'
+import { useConfigurator, useHousePlan, useRoof, useWindows } from '../state/store'
 import { STEPS } from '../config/steps'
 import { ringContains, unionOutline, type Point, type Ring } from '../lib/outline'
 import {
@@ -71,7 +71,6 @@ const FOUND_OUT = WALL_T / 2 + 0.04 // виступ цоколя за зовні
 const RISE_EASE = 0.5
 const ROOF_EASE = 0.42 // дах виростає трохи жвавіше за коробку
 const PARAPET_H = 0.45 // висота парапету плоського даху
-const ROOF_SLOPE = 0.35 // висота гребеня = проліт × 0.35 (≈35°, скандинавський)
 const ROOF_LIFT = 0.09 // на скільки схили підняті над верхом стіни
 const ROOF_COLOR = WALL_COLOR // ТИМЧАСОВО в колір стін — покриття ще не обране
 
@@ -87,6 +86,8 @@ const DOOR_TRANSOM_Y = 2.2 // фрамуга над дверима — на 2200
 const DOOR_JAMB = 0.07 // коробка дверей: трохи товща за раму вікна
 const DOOR_LEAF_D = 0.05 // товщина полотна
 const DOOR_GAP = 0.01 // зазор під полотном
+const DOOR_FRAME_COLOR = '#23262a' // чорна обкантовка скляних дверей
+const NARROW_WIN = 1.2 // вужче за це — двері на всю ширину вікна
 
 // ---- Перегородки та внутрішні двері ----
 const PART_T = 0.1
@@ -220,13 +221,19 @@ function plateGeometry(rings: Ring[], hole: Rect | null, depth = PLATE_T): Extru
 // skirt — пряма спідниця під схилами. Без неї схил сходить у нуль рівно на
 // верху стіни, і дах виглядає втопленим у неї; спідниця дає краю товщину й
 // піднімає початок схилу над стіною.
-function gableGeometry(width: number, depth: number, height: number, skirt: number): ExtrudeGeometry {
+function gableGeometry(width: number, depth: number, height: number, skirt: number, mono = false): ExtrudeGeometry {
   const s = new Shape()
   s.moveTo(-width / 2, -skirt)
   s.lineTo(width / 2, -skirt)
-  s.lineTo(width / 2, 0)
-  s.lineTo(0, height)
-  s.lineTo(-width / 2, 0)
+  if (mono) {
+    // Односхилий: один суцільний скат від нижчого краю до вищого.
+    s.lineTo(width / 2, height)
+    s.lineTo(-width / 2, 0)
+  } else {
+    s.lineTo(width / 2, 0)
+    s.lineTo(0, height)
+    s.lineTo(-width / 2, 0)
+  }
   s.closePath()
   const g = new ExtrudeGeometry(s, { depth, bevelEnabled: false })
   g.translate(0, 0, -depth / 2)
@@ -234,6 +241,7 @@ function gableGeometry(width: number, depth: number, height: number, skirt: numb
 }
 
 const frameMat = { color: FRAME_COLOR, metalness: 0.85, roughness: 0.35 }
+const doorFrameMat = { color: DOOR_FRAME_COLOR, metalness: 0.6, roughness: 0.4 }
 
 // Деталізоване вікно, вмонтоване в отвір. Верх нерухомий, низ анімується (зміна
 // типу). Двері отримують горизонтальну фрамугу + вертикальні імпости.
@@ -267,7 +275,9 @@ function Win({
     const used = new Map<number, number>()
     for (const d of doors) {
       const slot = Math.max(0, Math.min(d.slot, panels - 1))
-      if (!used.has(slot)) used.set(slot, Math.min(d.width, width))
+      // У вузькому вікні двері займають ВЕСЬ отвір: лишати поруч смужку скла
+      // в кілька сантиметрів немає сенсу — це вже не вікно, а щілина.
+      if (!used.has(slot)) used.set(slot, width <= NARROW_WIN ? width : Math.min(d.width, width))
     }
     const doorTotal = [...used.values()].reduce((s, v) => s + v, 0)
     const others = panels - used.size
@@ -308,33 +318,51 @@ function Win({
         <meshStandardMaterial {...frameMat} />
       </mesh>
 
-      {/* Двері: фрамуга над секцією, власна коробка по периметру стулки,
-          полотно й ручка — щоб двері читались як двері, а не як скло. */}
+      {/* Двері — СКЛЯНІ у чорній рамі: фрамуга над секцією, обкантовка по
+          периметру стулки, скло всередині та ручка. */}
       {doorSpans.map((d, i) => {
         const w = d.b - d.a
         const c = (d.a + d.b) / 2
+        const leafH = DOOR_TRANSOM_Y - DOOR_GAP
         return (
           <group key={`door-${i}`}>
             <mesh position={[c, DOOR_TRANSOM_Y, 0]}>
               <boxGeometry args={[w, FRAME_W, FRAME_D]} />
               <meshStandardMaterial {...frameMat} />
             </mesh>
-            {/* Коробка дверей — трохи товща за раму вікна */}
+            {/* Обкантовка стулки: боковини + низ + верх, чорні */}
             {[d.a + DOOR_JAMB / 2, d.b - DOOR_JAMB / 2].map((jx, k) => (
               <mesh key={k} position={[jx, DOOR_TRANSOM_Y / 2, 0]}>
                 <boxGeometry args={[DOOR_JAMB, DOOR_TRANSOM_Y, FRAME_D * 1.15]} />
-                <meshStandardMaterial {...frameMat} />
+                <meshStandardMaterial {...doorFrameMat} />
               </mesh>
             ))}
-            {/* Полотно */}
-            <mesh position={[c, (DOOR_TRANSOM_Y - DOOR_GAP) / 2 + DOOR_GAP, -0.005]}>
-              <boxGeometry args={[Math.max(w - 2 * DOOR_JAMB, 0.1), DOOR_TRANSOM_Y - DOOR_GAP, DOOR_LEAF_D]} />
-              <meshStandardMaterial color={DOOR_COLOR} roughness={0.6} />
+            <mesh position={[c, DOOR_GAP + DOOR_JAMB / 2, 0]}>
+              <boxGeometry args={[w, DOOR_JAMB, FRAME_D * 1.15]} />
+              <meshStandardMaterial {...doorFrameMat} />
+            </mesh>
+            <mesh position={[c, leafH - DOOR_JAMB / 2, 0]}>
+              <boxGeometry args={[w, DOOR_JAMB, FRAME_D * 1.15]} />
+              <meshStandardMaterial {...doorFrameMat} />
+            </mesh>
+            {/* Скло стулки */}
+            <mesh position={[c, DOOR_GAP + leafH / 2, -0.005]}>
+              <boxGeometry
+                args={[Math.max(w - 2 * DOOR_JAMB, 0.05), Math.max(leafH - 2 * DOOR_JAMB, 0.05), GLASS_D]}
+              />
+              <meshStandardMaterial
+                color={GLASS_COLOR}
+                metalness={0}
+                roughness={0.05}
+                transparent
+                opacity={GLASS_OPACITY}
+                depthWrite={false}
+              />
             </mesh>
             {/* Ручка */}
             <mesh position={[d.b - DOOR_JAMB - 0.12, 1.05, DOOR_LEAF_D]}>
               <boxGeometry args={[0.14, 0.03, 0.05]} />
-              <meshStandardMaterial {...frameMat} />
+              <meshStandardMaterial {...doorFrameMat} />
             </mesh>
           </group>
         )
@@ -428,6 +456,18 @@ interface WinDrag {
 // грань вікна (і навпаки) на двох сторонах світу з чотирьох.
 const flipped = (side: Side) => side === 'xmax' || side === 'zmin'
 
+// Наскільки виносимо прозорі накладки за грань стіни. Вікно ДАЛІ за стіну —
+// тоді промінь спершу зустрічає вікно, і його можна вибрати; інакше стіна
+// перехоплює всі кліки на собі.
+const WALL_PICK_OUT = 0.14
+const WIN_PICK_OUT = 0.26
+
+// Зовнішня нормаль сторони, помножена на відстань.
+const outward = (side: Side, d: number): [number, number] => [
+  side === 'xmax' ? d : side === 'xmin' ? -d : 0,
+  side === 'zmax' ? d : side === 'zmin' ? -d : 0,
+]
+
 function WindowEditor({ openings, plan }: { openings: Opening[]; plan: HousePlan }) {
   const windows = useWindows()
   const setCustomWindows = useConfigurator((s) => s.setCustomWindows)
@@ -441,6 +481,7 @@ function WindowEditor({ openings, plan }: { openings: Opening[]; plan: HousePlan
   const selectedDoor = useConfigurator((s) => s.selectedDoor)
   const [drag, setDrag] = useState<WinDrag | null>(null)
   const [hoverWall, setHoverWall] = useState<string | null>(null)
+  const [hoverWin, setHoverWin] = useState<string | null>(null)
 
   // Редагуємо ПО ЧЕРЗІ: лише вікна активного поверху. Решта видно, але вони
   // не ловлять клік — інакше на двоповерховому будинку легко влучити не туди.
@@ -555,9 +596,7 @@ function WindowEditor({ openings, plan }: { openings: Opening[]; plan: HousePlan
         const hot = hoverWall === w.key
         // Виносимо назовні за грань стіни, щоб накладка ловила клік раніше за
         // саму стіну й не тонула в її товщі.
-        const out = 0.14
-        const nx = w.wall.side === 'xmax' ? out : w.wall.side === 'xmin' ? -out : 0
-        const nz = w.wall.side === 'zmax' ? out : w.wall.side === 'zmin' ? -out : 0
+        const [nx, nz] = outward(w.wall.side, WALL_PICK_OUT)
         return (
           <mesh
             key={`wall-${w.key}`}
@@ -608,23 +647,38 @@ function WindowEditor({ openings, plan }: { openings: Opening[]; plan: HousePlan
         )
       })}
 
-      {/* Накладки поверх вікон активного поверху — клік і перетягування */}
-      {mine.map((o) => (
-        <mesh
-          key={`hit-${o.id}`}
-          position={[o.fx, midY(o), o.fz]}
-          rotation-y={o.rotY}
-          onPointerDown={(e) => grab(o, 'move', e)}
-        >
-          <boxGeometry args={[o.width, Math.max(o.top - o.sill, 0.1), 0.3]} />
-          <meshBasicMaterial
-            color={o.id === selected ? HANDLE_COLOR : '#ffffff'}
-            transparent
-            opacity={o.id === selected ? 0.28 : 0.001}
-            depthWrite={false}
-          />
-        </mesh>
-      ))}
+      {/* Накладки поверх вікон. Виносимо їх ДАЛІ за накладки стін (WALL_PICK_OUT),
+          інакше стіна завжди перехоплює клік і вікно вибрати неможливо. */}
+      {mine.map((o) => {
+        const [ox, oz] = outward(o.side, WIN_PICK_OUT)
+        const hot = hoverWin === o.id
+        return (
+          <mesh
+            key={`hit-${o.id}`}
+            position={[o.fx + ox, midY(o), o.fz + oz]}
+            rotation-y={o.rotY}
+            onPointerOver={(e) => {
+              e.stopPropagation()
+              setHoverWin(o.id)
+              setHoverWall(null)
+              setHovered(null)
+            }}
+            onPointerOut={(e) => {
+              e.stopPropagation()
+              setHoverWin((cur) => (cur === o.id ? null : cur))
+            }}
+            onPointerDown={(e) => grab(o, 'move', e)}
+          >
+            <boxGeometry args={[o.width, Math.max(o.top - o.sill, 0.1), 0.12]} />
+            <meshBasicMaterial
+              color={HANDLE_COLOR}
+              transparent
+              opacity={o.id === selected ? 0.3 : hot ? 0.16 : 0.001}
+              depthWrite={false}
+            />
+          </mesh>
+        )
+      })}
 
       {/* Пунктирні межі, у яких можна рухати обране вікно */}
       {limits && (
@@ -743,11 +797,11 @@ function GuideLine({
 }
 
 export default function HouseShell() {
-  const config = useConfigurator((s) => s.config)
   const currentStep = useConfigurator((s) => s.currentStep)
 
   const plan = useHousePlan()
   const windows = useWindows()
+  const roof = useRoof()
   const stepId = STEPS[currentStep].id
   const show = stepId === 'windows' || stepId === 'roof' // коробка видима на «Вікна» і «Дах»
   const roofStep = stepId === 'roof' // дах видно ЛИШЕ на своєму кроці
@@ -920,8 +974,13 @@ export default function HouseShell() {
     if (N === 0) return [] as { roofY: number; boxes: Box[] }[]
     plan.floors.forEach((fl, idx) => {
       const roofY = (idx + 1) * FLOOR_H
-      const t = wallT(idx + 1) // парапет — ярус над стіною свого поверху
-      const pt = postT(idx + 1)
+      const part = roof.find((r) => r.level === idx)
+      if (part && part.kind !== 'flat') return // цей рівень накритий скатом
+      const parapetH = part?.parapetH ?? PARAPET_H
+      // Товщину парапету задає користувач, але вона не має вилазити за стіну
+      // товщі себе — інакше повертається мерехтіння на стику ярусів.
+      const t = Math.min(part?.parapetT ?? wallT(idx + 1), wallT(idx + 1))
+      const pt = t + 0.004
       const boxes: Box[] = tiers.get(roofY) ?? []
       tiers.set(roofY, boxes)
       // «Накрите» рахуємо по ПОВНІЙ плиті верхнього поверху (враховує терасу):
@@ -947,15 +1006,15 @@ export default function HouseShell() {
         for (const [a, b] of spans) {
           // Парапет — наступний ярус над стіною свого поверху: заходить у неї
           // на TIER_LAP і тонший на TIER_STEP (див. коментар про яруси).
-          pushBox(boxes, e.horizontal, e.line, a, b, -TIER_LAP, PARAPET_H, roofY, t)
+          pushBox(boxes, e.horizontal, e.line, a, b, -TIER_LAP, parapetH, roofY, t)
           // Стовпчики на КІНЦЯХ кожної ділянки — кути парапету змикаються без дірок.
           for (const u of [a, b]) {
             boxes.push({
               x: e.horizontal ? u : e.line,
-              y: roofY + (PARAPET_H - TIER_LAP) / 2,
+              y: roofY + (parapetH - TIER_LAP) / 2,
               z: e.horizontal ? e.line : u,
               dx: pt,
-              dy: PARAPET_H + TIER_LAP,
+              dy: parapetH + TIER_LAP,
               dz: pt,
             })
           }
@@ -963,7 +1022,7 @@ export default function HouseShell() {
       }
     })
     return [...tiers].map(([roofY, boxes]) => ({ roofY, boxes })).filter((t) => t.boxes.length > 0)
-  }, [plan])
+  }, [plan, roof])
 
   // Скатний дах (скандинавський, без звісів): двосхилі призми точно по контуру
   // стін — над верхнім поверхом і над кожним нижнім рівнем, не накритим зверху.
@@ -973,6 +1032,8 @@ export default function HouseShell() {
     if (N === 0) return out
     plan.floors.forEach((fl, idx) => {
       const roofY = (idx + 1) * FLOOR_H
+      const part = roof.find((r) => r.level === idx)
+      if (!part || part.kind === 'flat') return // цей рівень під парапетом
       let rects: Rect[]
       if (idx === N - 1) {
         // Верхній поверх — по контуру СТІН (без тераси: її дах не накриває).
@@ -999,26 +1060,33 @@ export default function HouseShell() {
       for (const r of rects) {
         // +0.004 понад товщину стіни: скат має ВИСТУПАТИ за грань стіни, а не
         // лежати з нею в одній площині — інакше по карнизу йде те саме мерехтіння.
-        const w = r.x1 - r.x0 + WALL_T + 0.004
-        const d = r.z1 - r.z0 + WALL_T + 0.004
-        const ridgeAlongZ = d >= w // гребінь — уздовж довшої сторони
+        // Звіс виносить дах за грань стіни; +0.004 — щоб скат не лежав рівно
+        // в площині стіни (те саме правило про мерехтіння).
+        const over = 2 * part.overhang
+        const w = r.x1 - r.x0 + WALL_T + 0.004 + over
+        const d = r.z1 - r.z0 + WALL_T + 0.004 + over
+        // Поворот задає користувач: 0° — гребінь уздовж довшої сторони,
+        // 90° — упоперек.
+        const ridgeAlongZ = part.rotation % 180 === 0 ? d >= w : d < w
         const span = ridgeAlongZ ? w : d
-        const h = span * ROOF_SLOPE
+        const h = (span / 2) * Math.tan((part.pitch * Math.PI) / 180)
         // Схили починаються на ROOF_LIFT ВИЩЕ верху стіни, а спідниця під ними
         // спускається назад у стіну на TIER_LAP — дах сидить на стіні, а не в ній.
         const skirt = ROOF_LIFT + TIER_LAP
+        const mono = part.kind === 'mono'
         out.push({
           roofY,
-          geo: ridgeAlongZ ? gableGeometry(w, d, h, skirt) : gableGeometry(d, w, h, skirt),
+          geo: ridgeAlongZ ? gableGeometry(w, d, h, skirt, mono) : gableGeometry(d, w, h, skirt, mono),
           x: (r.x0 + r.x1) / 2,
           y: roofY + ROOF_LIFT,
           z: (r.z0 + r.z1) / 2,
-          rotY: ridgeAlongZ ? 0 : Math.PI / 2,
+          // Односхилий має чотири напрямки: 180°/270° просто розвертають скат.
+          rotY: (ridgeAlongZ ? 0 : Math.PI / 2) + (mono && part.rotation >= 180 ? Math.PI : 0),
         })
       }
     })
     return out
-  }, [plan])
+  }, [plan, roof])
 
   // Скати, згруповані по рівнях — щоб кожен ріс від СВОЄЇ площини.
   const gableTiers = useMemo(() => {
@@ -1037,10 +1105,15 @@ export default function HouseShell() {
   // Поки редагуємо вікна одного поверху, сусідній ледь притлумлюємо — видно,
   // що зараз працюємо не з ним, але будинок читається цілком.
   const activeFloor = Math.min(viewFloor, plan.floors.length) - 1
-  const dimAt = (y: number) =>
-    editWindows && plan.floors.length > 1 && Math.floor(y / FLOOR_H) !== activeFloor
-      ? { transparent: true, opacity: 0.35 }
-      : {}
+  // key змінюється разом із прозорістю НАВМИСНО: three.js не перекомпілює
+  // матеріал, коли `transparent` міняють на льоту, тож без ремонта поверх
+  // просто лишався б непрозорим (та сама пастка, що й у fadeMaterial).
+  const dimAt = (y: number) => {
+    const dim = editWindows && plan.floors.length > 1 && Math.floor(y / FLOOR_H) !== activeFloor
+    return dim
+      ? { key: 'dim', transparent: true, opacity: 0.35, depthWrite: false }
+      : { key: 'solid' }
+  }
 
   return (
     <group ref={ref} visible={false} scale={[1, 0.0001, 1]}>
@@ -1091,7 +1164,7 @@ export default function HouseShell() {
           `open`, тому перемикання плоский/скатний теж анімується: один тип
           сідає, другий піднімається. */}
       {parapets.map((tier) => (
-        <RoofTier key={`flat-${tier.roofY}`} baseY={tier.roofY} open={roofStep && config.roof === 'flat'}>
+        <RoofTier key={`flat-${tier.roofY}`} baseY={tier.roofY} open={roofStep}>
           {tier.boxes.map((b, i) => (
             <mesh key={`parapet-${i}`} position={[b.x, b.y, b.z]} castShadow receiveShadow>
               <boxGeometry args={[b.dx, b.dy, b.dz]} />
@@ -1102,7 +1175,7 @@ export default function HouseShell() {
       ))}
 
       {gableTiers.map((tier) => (
-        <RoofTier key={`pitched-${tier.roofY}`} baseY={tier.roofY} open={roofStep && config.roof === 'pitched'}>
+        <RoofTier key={`pitched-${tier.roofY}`} baseY={tier.roofY} open={roofStep}>
           {tier.items.map((g, i) => (
             <mesh key={`gable-${i}`} geometry={g.geo} position={[g.x, g.y, g.z]} rotation-y={g.rotY} castShadow receiveShadow>
               <meshStandardMaterial color={ROOF_COLOR} roughness={0.75} />
@@ -1133,7 +1206,16 @@ export default function HouseShell() {
         <group key={`fence-${i}`}>
           <mesh position={[f.cx, f.baseY + FENCE_H / 2, f.cz]}>
             <boxGeometry args={f.horizontal ? [f.len, FENCE_H, FENCE_D] : [FENCE_D, FENCE_H, f.len]} />
-            <meshStandardMaterial color={GLASS_COLOR} metalness={0} roughness={0.05} transparent opacity={0.26} />
+            {/* depthWrite=false — інакше прозорі панелі паркану пишуть у буфер
+                глибини й на стиках дають дрібні артефакти. */}
+            <meshStandardMaterial
+              color={GLASS_COLOR}
+              metalness={0}
+              roughness={0.05}
+              transparent
+              opacity={0.26}
+              depthWrite={false}
+            />
           </mesh>
           <mesh position={[f.cx, f.baseY + FENCE_H + RAIL_H / 2, f.cz]}>
             <boxGeometry args={f.horizontal ? [f.len + RAIL_W, RAIL_H, RAIL_W] : [RAIL_W, RAIL_H, f.len + RAIL_W]} />
