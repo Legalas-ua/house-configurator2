@@ -1,13 +1,15 @@
-import { useConfigurator, useHousePlan, useWindows } from '../state/store'
+import { useConfigurator, useHousePlan, useRoof, useWindows } from '../state/store'
 import { STEPS } from '../config/steps'
 import { validatePlan } from '../lib/validatePlan'
 import { validateWindows } from '../lib/windows'
+import { validateRoof } from '../lib/roof'
 import { t } from '../locales'
 import BudgetSlider from './fields/BudgetSlider'
 import OptionCards from './fields/OptionCards'
 import RoomsField from './fields/RoomsField'
 import WindowsField from './fields/WindowsField'
 import RoofField from './fields/RoofField'
+import RoofZonesField from './fields/RoofZonesField'
 import FloorsPicker from './fields/FloorsPicker'
 
 // Рендерить поточний крок за його описом (StepDef) — без знання про конкретику.
@@ -21,6 +23,7 @@ export default function StepContent() {
   const planMode = useConfigurator((s) => s.planMode)
   const windowsMode = useConfigurator((s) => s.windowsMode)
   const roofMode = useConfigurator((s) => s.roofMode)
+  const roof = useRoof()
   const plan = useHousePlan()
   const windows = useWindows()
 
@@ -29,12 +32,14 @@ export default function StepContent() {
   // Помилки ручного редагування не пускають далі — виправляти доведеться тут.
   const blocked =
     (step.id === 'rooms' && planMode === 'custom' && validatePlan(plan).length > 0) ||
-    (step.id === 'windows' && windowsMode === 'custom' && validateWindows(plan, windows).length > 0)
+    (step.id === 'windows' && windowsMode === 'custom' && validateWindows(plan, windows).length > 0) ||
+    (step.id === 'roofZones' && roofMode === 'custom' && validateRoof(plan, roof).length > 0)
   // У ручному режимі тип вікон/даху картками не обирають, тож step.isComplete
   // (він дивиться на config) там ніколи не спрацював би — кнопка «Далі»
   // лишалась би сірою назавжди.
   const customStep =
-    (step.id === 'windows' && windowsMode === 'custom') || (step.id === 'roof' && roofMode === 'custom')
+    (step.id === 'windows' && windowsMode === 'custom') ||
+    ((step.id === 'roof' || step.id === 'roofZones') && roofMode === 'custom')
 
   return (
     <section className="step">
@@ -46,6 +51,7 @@ export default function StepContent() {
         {step.kind === 'cards' && <OptionCards step={step} />}
         {step.kind === 'rooms' && <RoomsField />}
         {step.kind === 'windows' && <WindowsField step={step} />}
+        {step.kind === 'roofZones' && <RoofZonesField />}
         {step.kind === 'roof' && <RoofField step={step} />}
         {step.id === 'shape' && <FloorsPicker />}
       </div>

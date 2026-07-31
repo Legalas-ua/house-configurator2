@@ -2,8 +2,6 @@ import { useConfigurator, useHousePlan, useRoof } from '../../state/store'
 import type { PlanMode } from '../../config/types'
 import type { StepDef } from '../../config/steps'
 import {
-  addRoofPart,
-  removeRoofPart,
   roofLevels,
   stepOverhang,
   updateRoofPart,
@@ -49,62 +47,16 @@ function RoofEditorPanel() {
   const parts = useRoof()
   const setCustomRoof = useConfigurator((s) => s.setCustomRoof)
   const selected = useConfigurator((s) => s.selectedRoofPart)
-  const setSelected = useConfigurator((s) => s.setSelectedRoofPart)
-  const roofLevel = useConfigurator((s) => s.roofLevel)
-  const setRoofLevel = useConfigurator((s) => s.setRoofLevel)
   const texts = t.steps.roof.editor
 
   const levels = roofLevels(plan)
   if (levels.length === 0) return <p className="rooms__hint">{texts.noLevels}</p>
 
-  // Якщо на покритті цього поверху даху не треба, крок сам стає на наступний.
-  const level = levels.includes(roofLevel) ? roofLevel : levels[0]
-  const part = parts.find((p) => p.id === selected && p.level === level)
-
+  const part = parts.find((p) => p.id === selected)
   const patch = (p: Parameters<typeof updateRoofPart>[2]) => part && setCustomRoof(updateRoofPart(parts, part.id, p))
 
   return (
     <>
-      {levels.length > 1 && (
-        <div className="rooms__group">
-          <span className="rooms__group-title">{texts.level}</span>
-          <div className="chips">
-            {levels.map((l) => (
-              <button
-                key={l}
-                type="button"
-                className={`chip${level === l ? ' chip--on' : ''}`}
-                onClick={() => setRoofLevel(l)}
-              >
-                {texts.overFloor(l + 1)}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      <div className="rooms__group">
-        <span className="rooms__group-title">{texts.addZone}</span>
-        <div className="chips">
-          {KINDS.map((k) => (
-            <button
-              key={k}
-              type="button"
-              className="chip"
-              onClick={() => {
-                const res = addRoofPart(plan, parts, level, k)
-                if (!res) return
-                setCustomRoof(res.parts)
-                setSelected(res.id)
-              }}
-            >
-              {texts.kinds[k]}
-            </button>
-          ))}
-        </div>
-        <p className="rooms__hint">{texts.drawHint}</p>
-      </div>
-
       <div className="rooms__group">
         <span className="rooms__group-title">{texts.selected}</span>
         {!part ? (
@@ -115,16 +67,6 @@ function RoofEditorPanel() {
               <span>
                 {texts.kinds[part.kind]} · {part.width.toFixed(1)} × {part.depth.toFixed(1)} м
               </span>
-              <button
-                type="button"
-                className="chip"
-                onClick={() => {
-                  setCustomRoof(removeRoofPart(parts, part.id))
-                  setSelected(null)
-                }}
-              >
-                {texts.remove}
-              </button>
             </div>
 
             <span className="rooms__subtitle">{texts.kind}</span>

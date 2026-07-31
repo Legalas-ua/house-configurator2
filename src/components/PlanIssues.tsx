@@ -1,8 +1,9 @@
 import type { ReactNode } from 'react'
-import { useConfigurator, useHousePlan, useWindows } from '../state/store'
+import { useConfigurator, useHousePlan, useRoof, useWindows } from '../state/store'
 import { STEPS } from '../config/steps'
 import { validatePlan } from '../lib/validatePlan'
 import { validateWindows } from '../lib/windows'
+import { validateRoof } from '../lib/roof'
 import { t } from '../locales'
 
 // Помилки ручного редагування — плаваючим повідомленням у кутку сцени, а НЕ в
@@ -13,6 +14,8 @@ export default function PlanIssues() {
   const windowsMode = useConfigurator((s) => s.windowsMode)
   const plan = useHousePlan()
   const windows = useWindows()
+  const roof = useRoof()
+  const roofMode = useConfigurator((s) => s.roofMode)
   const stepId = STEPS[currentStep].id
 
   if (stepId === 'rooms' && planMode === 'custom') {
@@ -49,6 +52,21 @@ export default function PlanIssues() {
         {issues.map((it) => (
           <li key={`${it.floor}-${it.roomId}`} className="plan-issues__item">
             {texts.noWindow(t.plan.roomNames[it.roomType])}
+          </li>
+        ))}
+      </Card>
+    )
+  }
+
+  if (stepId === 'roofZones' && roofMode === 'custom') {
+    const issues = validateRoof(plan, roof)
+    if (issues.length === 0) return null
+    const texts = t.steps.roofZones.issues
+    return (
+      <Card title={texts.title} blocked={texts.blocked}>
+        {issues.map((it, i) => (
+          <li key={i} className="plan-issues__item">
+            {it.kind === 'uncovered' ? texts.uncovered(it.level + 1) : texts.outside(it.level + 1)}
           </li>
         ))}
       </Card>

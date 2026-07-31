@@ -1,0 +1,111 @@
+import { useConfigurator, useHousePlan, useRoof } from '../../state/store'
+import type { PlanMode } from '../../config/types'
+import { addRoofPart, removeRoofPart, roofLevels, type RoofKind } from '../../lib/roof'
+import { t } from '../../locales'
+
+const KINDS: RoofKind[] = ['flat', 'gable', 'mono']
+
+// Крок «Форма даху»: тільки МАЛЮВАННЯ зон. Параметри — на наступному кроці,
+// коли дах уже виріс в об'ємі й нічого не перекриває.
+export default function RoofZonesField() {
+  const mode = useConfigurator((s) => s.roofMode)
+  const setMode = useConfigurator((s) => s.setRoofMode)
+  const plan = useHousePlan()
+  const parts = useRoof()
+  const setCustomRoof = useConfigurator((s) => s.setCustomRoof)
+  const selected = useConfigurator((s) => s.selectedRoofPart)
+  const setSelected = useConfigurator((s) => s.setSelectedRoofPart)
+  const roofLevel = useConfigurator((s) => s.roofLevel)
+  const setRoofLevel = useConfigurator((s) => s.setRoofLevel)
+  const texts = t.steps.roof
+
+  const levels = roofLevels(plan)
+  const level = levels.includes(roofLevel) ? roofLevel : (levels[0] ?? 0)
+  const part = parts.find((p) => p.id === selected)
+
+  return (
+    <>
+      <div className="rooms__group">
+        <span className="rooms__group-title">{texts.mode.title}</span>
+        <div className="chips">
+          {(['template', 'custom'] as PlanMode[]).map((m) => (
+            <button key={m} type="button" className={`chip${mode === m ? ' chip--on' : ''}`} onClick={() => setMode(m)}>
+              {texts.mode[m]}
+            </button>
+          ))}
+        </div>
+        <p className="rooms__hint">{mode === 'custom' ? texts.mode.customHint : texts.mode.templateHint}</p>
+      </div>
+
+      {mode === 'custom' && levels.length === 0 && <p className="rooms__hint">{texts.editor.noLevels}</p>}
+
+      {mode === 'custom' && levels.length > 0 && (
+        <>
+          {/* Рівні, де дах не потрібен, у списку не з'являються взагалі */}
+          {levels.length > 1 && (
+            <div className="rooms__group">
+              <span className="rooms__group-title">{texts.editor.level}</span>
+              <div className="chips">
+                {levels.map((l) => (
+                  <button
+                    key={l}
+                    type="button"
+                    className={`chip${level === l ? ' chip--on' : ''}`}
+                    onClick={() => setRoofLevel(l)}
+                  >
+                    {texts.editor.overFloor(l + 1)}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="rooms__group">
+            <span className="rooms__group-title">{texts.editor.addZone}</span>
+            <div className="chips">
+              {KINDS.map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  className="chip"
+                  onClick={() => {
+                    const res = addRoofPart(plan, parts, level, k)
+                    if (!res) return
+                    setCustomRoof(res.parts)
+                    setSelected(res.id)
+                  }}
+                >
+                  {texts.editor.kinds[k]}
+                </button>
+              ))}
+            </div>
+            <p className="rooms__hint">{texts.editor.drawHint}</p>
+          </div>
+
+          <div className="rooms__group">
+            <span className="rooms__group-title">{texts.editor.selected}</span>
+            {!part ? (
+              <p className="rooms__hint">{texts.editor.none}</p>
+            ) : (
+              <div className="rooms__selected">
+                <span>
+                  {texts.editor.kinds[part.kind]} · {part.width.toFixed(1)} × {part.depth.toFixed(1)} м
+                </span>
+                <button
+                  type="button"
+                  className="chip"
+                  onClick={() => {
+                    setCustomRoof(removeRoofPart(parts, part.id))
+                    setSelected(null)
+                  }}
+                >
+                  {texts.editor.remove}
+                </button>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </>
+  )
+}

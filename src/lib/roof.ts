@@ -1,6 +1,6 @@
 import type { HousePlan, PlanRect } from '../config/types'
 import { GRID, MIN_SIDE, snap } from './editPlan'
-import { unionOutline } from './outline'
+import { ringContains, unionOutline } from './outline'
 
 // ============================================================
 // Дах як ДАНІ — за тим самим принципом, що план і вікна.
@@ -71,21 +71,27 @@ export function normalizeRoof(part: RoofPart): RoofPart {
   }
 }
 
-const area = (plan: HousePlan, i: number) =>
-  (plan.floors[i]?.slab ?? []).reduce((s, r) => s + r.width * r.depth, 0)
+// Площа кільця (шнурівка) — потрібна лише за модулем.
+function ringArea(pts: [number, number][]): number {
+  let a = 0
+  for (let i = 0; i < pts.length; i++) {
+    const [x0, z0] = pts[i]
+    const [x1, z1] = pts[(i + 1) % pts.length]
+    a += x0 * z1 - x1 * z0
+  }
+  return Math.abs(a) / 2
+}
 
-// Рівні, де дах справді потрібен. Рівень N відкритий, якщо його покриття не
-// сховане поверхом N+1 повністю.
+// Рівні, де дах справді потрібен: там, де ПІСЛЯ вирахування поверху вище й
+// власних терас лишилась помітна площа. Тераса — надвір, над нею даху не буває,
+// а те, що накрите поверхом вище, — це вже не дах.
 export function roofLevels(plan: HousePlan): number[] {
   const out: number[] = []
-  const n = plan.floors.length
-  for (let i = 0; i < n; i++) {
-    if (i === n - 1) {
-      out.push(i) // верхній поверх завжди треба накрити
-      continue
-    }
-    // Поверх вище менший — над різницею лишається відкрите покриття.
-    if (area(plan, i) - area(plan, i + 1) > 2) out.push(i)
+  for (let i = 0; i < plan.floors.length; i++) {
+    const open = levelOutline(plan, i)
+      .filter((r) => !r.hole)
+      .reduce((s, r) => s + ringArea(r.pts), 0)
+    if (open > 2) out.push(i)
   }
   return out
 }
@@ -96,7 +102,9 @@ export function levelOutline(plan: HousePlan, level: number) {
   const fl = plan.floors[level]
   if (!fl) return []
   const above = level < plan.floors.length - 1 ? plan.floors[level + 1].slab : []
-  return unionOutline(fl.slab, above)
+  // Тераса САМОГО цього рівня — відкрита ділянка, даху над нею не треба.
+  const terraces = fl.rooms.filter((r) => r.type === 'terrace')
+  return unionOutline(fl.slab, [...above, ...terraces])
 }
 
 // Габарит відкритого покриття — стартовий прямокутник зони.
@@ -164,3 +172,66 @@ export function addRoofPart(
 }
 
 export { GRID as ROOF_GRID }
+
+// ---- Перевірка покриття ----
+
+export interface RoofIssue {
+  level: number
+  kind: 'uncovered' | 'outside'
+  rect: PlanRect
+}
+
+const EPS = 1e-4
+const box = (r: PlanRect) => ({
+  x0: r.x - r.width / 2,
+  x1: r.x + r.width / 2,
+  z0: r.z - r.depth / 2,
+  z1: r.z + r.depth / 2,
+})
+
+function axis(values: number[]): number[] {
+  const out: number[] = []
+  for (const v of [...values].sort((a, b) => a - b)) {
+    if (out.length === 0 || v - out[out.length - 1] > EPS) out.push(v)
+  }
+  return out
+}
+
+// Ріжемо площину координатами контуру та зон і дивимось на кожну комірку:
+// «під дахом, але поза контуром» і «в контурі, але без даху» — дві помилки.
+export function validateRoof(plan: HousePlan, parts: RoofPart[]): RoofIssue[] {
+  const issues: RoofIssue[] = []
+  for (const level of roofLevels(plan)) {
+    const rings = levelOutline(plan, level).filter((r) => !r.hole)
+    if (rings.length === 0) continue
+    const zones = parts.filter((p) => p.level === level).map(box)
+    const pts = rings.flatMap((r) => r.pts)
+    const xs = axis([...pts.map((p) => p[0]), ...zones.flatMap((z) => [z.x0, z.x1])])
+    const zs = axis([...pts.map((p) => p[1]), ...zones.flatMap((z) => [z.z0, z.z1])])
+
+    const gaps: { minX: number; maxX: number; minZ: number; maxZ: number } | null = null
+    const collect = (want: boolean) => {
+      let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity
+      for (let i = 0; i < xs.length - 1; i++) {
+        const cx = (xs[i] + xs[i + 1]) / 2
+        for (let j = 0; j < zs.length - 1; j++) {
+          const cz = (zs[j] + zs[j + 1]) / 2
+          const inOutline = rings.some((r) => ringContains(r.pts, [cx, cz]))
+          const inZone = zones.some((z) => cx > z.x0 && cx < z.x1 && cz > z.z0 && cz < z.z1)
+          // want=true шукаємо «в контурі без даху», false — «дах поза контуром»
+          if (want ? !(inOutline && !inZone) : !(!inOutline && inZone)) continue
+          minX = Math.min(minX, xs[i]); maxX = Math.max(maxX, xs[i + 1])
+          minZ = Math.min(minZ, zs[j]); maxZ = Math.max(maxZ, zs[j + 1])
+        }
+      }
+      if (minX === Infinity || maxX - minX < 0.2 || maxZ - minZ < 0.2) return null
+      return { x: (minX + maxX) / 2, z: (minZ + maxZ) / 2, width: maxX - minX, depth: maxZ - minZ }
+    }
+    void gaps
+    const un = collect(true)
+    if (un) issues.push({ level, kind: 'uncovered', rect: un })
+    const out = collect(false)
+    if (out) issues.push({ level, kind: 'outside', rect: out })
+  }
+  return issues
+}

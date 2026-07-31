@@ -14,7 +14,6 @@ import type { PlanRect } from '../config/types'
 // ============================================================
 
 const FLOOR_H = 3.2 // крок поверху — як у HouseShell
-const ZONE_H = 0.12
 const HANDLE = 0.45
 const HANDLE_COLOR = '#d9622b'
 const OUTLINE_COLOR = '#2f6fb8'
@@ -74,10 +73,15 @@ export default function RoofView() {
 
   const [drag, setDrag] = useState<Drag | null>(null)
   const downAt = useRef<{ x: number; y: number } | null>(null)
+  const [hover, setHover] = useState<string | null>(null)
 
   const levels = roofLevels(plan)
   const level = levels.includes(roofLevel) ? roofLevel : (levels[0] ?? 0)
-  const active = STEPS[currentStep].id === 'roof' && roofMode === 'custom' && levels.length > 0
+  const stepId = STEPS[currentStep].id
+  // draw — крок «Форма даху»: пласкі зони з ручками, дах ще не виріс.
+  // pick — крок «Дах»: зони вже об'ємні, тут лише вибираємо частину.
+  const drawing = stepId === 'roofZones'
+  const active = (drawing || stepId === 'roof') && roofMode === 'custom' && levels.length > 0
 
   // Контур покриття рівня — орієнтир, куди можна ставити зони.
   const outlineGeo = useMemo(() => {
@@ -116,7 +120,8 @@ export default function RoofView() {
   if (!active) return null
 
   const y = (level + 1) * FLOOR_H
-  const mine = parts.filter((p) => p.level === level)
+  // На кроці налаштувань поверх не обирають — показуємо всі зони одразу.
+  const mine = drawing ? parts.filter((p) => p.level === level) : parts
   const sel = mine.find((p) => p.id === selected)
 
   const grab = (part: RoofPart, mode: DragMode, e: ThreeEvent<PointerEvent>) => {
@@ -131,7 +136,7 @@ export default function RoofView() {
     setCustomRoof(updateRoofPart(parts, drag.id, dragRect(drag, x, z)))
   }
 
-  const handles: { mode: DragMode; x: number; z: number }[] = sel
+  const handles: { mode: DragMode; x: number; z: number }[] = sel && drawing
     ? [
         { mode: 'xmin', x: sel.x - sel.width / 2, z: sel.z },
         { mode: 'xmax', x: sel.x + sel.width / 2, z: sel.z },
@@ -159,25 +164,43 @@ export default function RoofView() {
         <meshBasicMaterial transparent opacity={0} depthWrite={false} />
       </mesh>
 
+      {drawing && (
       <lineSegments geometry={outlineGeo} position={[0, 0.05, 0]}>
         <lineBasicMaterial color={OUTLINE_COLOR} transparent opacity={0.85} depthTest={false} />
       </lineSegments>
+      )}
 
-      {mine.map((p) => (
-        <mesh
-          key={p.id}
-          position={[p.x, 0.06 + ZONE_H / 2, p.z]}
-          onPointerDown={(e) => grab(p, 'move', e)}
-        >
-          <boxGeometry args={[p.width, ZONE_H, p.depth]} />
-          <meshStandardMaterial
-            color={KIND_COLOR[p.kind]}
-            roughness={0.6}
-            emissive="#ffffff"
-            emissiveIntensity={p.id === selected ? 0.35 : 0}
-          />
-        </mesh>
-      ))}
+      {mine.map((p) => {
+        // Зона малюється ПЛОЩИНОЮ, а не об'ємом: об'єм перекривав би ручки.
+        // На кроці налаштувань та сама площина просто ловить наведення й клік.
+        const dy = (p.level + 1) * FLOOR_H - y
+        const hot = hover === p.id
+        return (
+          <mesh
+            key={p.id}
+            position={[p.x, dy + 0.06, p.z]}
+            rotation={[-Math.PI / 2, 0, 0]}
+            onPointerOver={(e) => {
+              e.stopPropagation()
+              setHover(p.id)
+            }}
+            onPointerOut={(e) => {
+              e.stopPropagation()
+              setHover((cur) => (cur === p.id ? null : cur))
+            }}
+            onPointerDown={(e) => (drawing ? grab(p, 'move', e) : (e.stopPropagation(), setSelected(p.id)))}
+          >
+            <planeGeometry args={[p.width, p.depth]} />
+            <meshBasicMaterial
+              color={KIND_COLOR[p.kind]}
+              transparent
+              opacity={drawing ? (p.id === selected ? 0.75 : 0.5) : p.id === selected ? 0.5 : hot ? 0.3 : 0.001}
+              depthWrite={false}
+              depthTest={drawing}
+            />
+          </mesh>
+        )
+      })}
 
       {handles.map((h) => (
         <mesh key={h.mode} position={[h.x, 0.22, h.z]} onPointerDown={(e) => grab(sel!, h.mode, e)}>

@@ -889,7 +889,9 @@ export default function HouseShell() {
   const windows = useWindows()
   const roof = useRoof()
   const stepId = STEPS[currentStep].id
-  const show = stepId === 'windows' || stepId === 'roof' // коробка видима на «Вікна» і «Дах»
+  // Коробка видима на «Вікна», «Форма даху» і «Дах» — на кроці форми зони
+  // малюються просто поверх неї.
+  const show = stepId === 'windows' || stepId === 'roofZones' || stepId === 'roof'
   const roofStep = stepId === 'roof' // дах видно ЛИШЕ на своєму кроці
   const windowsMode = useConfigurator((s) => s.windowsMode)
   const editWindows = stepId === 'windows' && windowsMode === 'custom'

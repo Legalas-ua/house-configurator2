@@ -165,6 +165,8 @@ export function generateHousePlan(config: HouseConfig): HousePlan {
       maxC = Math.max(maxC, c)
     })
   })
+  // Клітинка сітки — 1 м, тож центр може припасти на X.5. Це кратно 0.5,
+  // отже всі грані лишаються на сітці ручного редактора.
   const cx = (minC + maxC + 1) / 2
   const cz = (minR + maxR + 1) / 2
 

@@ -1,4 +1,5 @@
 import type { FloorPlan, HouseConfig, HousePlan, PlanRect, RoomType, RoomZone } from '../config/types'
+import { GRID } from './editPlan'
 
 // ============================================================
 // Параметричне Г-подібне планування (1 поверх) за референсом.
@@ -20,27 +21,27 @@ import type { FloorPlan, HouseConfig, HousePlan, PlanRect, RoomType, RoomZone } 
 const LSHAPE_SLOW_GROW = 1.1 // коридор 2-го поверху росте помітно повільніше
 
 const CORRIDOR_W = 1.5
-const ROOM_W = 3.8 // ширина кімнат (праворуч від коридору)
+const ROOM_W = 4.0 // ширина кімнат (праворуч від коридору)
 const NIGHT_W = CORRIDOR_W + ROOM_W // 5.3
 
 const MASTER_LEN = 5.0 // майстер із ванною, без гардероба (≈19 м²)
 const MASTER_WC_LEN = 6.0 // майстер, коли є кутова колона санвузол+гардероб
-const MASTER_SINGLE_LEN = 4.9 // одна спальня без коридору, на всю ширину (≈26 м²)
-const ENSUITE_LEN = 3.4 // ванна майстра у куті (без гардероба)
-const COL_W = 2.6 // ширина кутової колони санвузол+гардероб (заходить у спальню)
-const SAN_BOX = 2.3 // санвузол у куті (≈5 м²)
-const CLO_BOX = 2.3 // гардероб у куті (≈5 м²)
-const CLOSET_STRIP = 1.3 // гардероб смугою (варіант 1 спальні)
-const BEDROOM_LEN = 3.6 // звичайна спальня (≈14 м²)
-const OFFICE_LEN = 2.6 // кабінет (≈10 м²)
+const MASTER_SINGLE_LEN = 5.0 // одна спальня без коридору, на всю ширину (≈26 м²)
+const ENSUITE_LEN = 3.5 // ванна майстра у куті (без гардероба)
+const COL_W = 2.5 // ширина кутової колони санвузол+гардероб (заходить у спальню)
+const SAN_BOX = 2.5 // санвузол у куті (≈5 м²)
+const CLO_BOX = 2.5 // гардероб у куті (≈5 м²)
+const CLOSET_STRIP = 1.5 // гардероб смугою (варіант 1 спальні)
+const BEDROOM_LEN = 3.5 // звичайна спальня (≈14 м²)
+const OFFICE_LEN = 2.5 // кабінет (≈10 м²)
 const STAIR_W = ROOM_W // сходи: у лінію з кабінетом/спальнею (без гапу справа)
 const STAIR_LEN = 2.5 // сходи: сторона вздовж крила — 2.5 м
 
 const DAY_DEPTH = 7.0
-const HCORR_LEN = 1.4 // горизонтальний коридор угорі денного крила
-const SERVICE_W = 2.4 // кластер санвузол+гардеробна (ліворуч)
-const BATH_LEN = 2.6 // санвузол (згори кластера)
-const HALL_W = 1.8 // прихожа — вертикальна смуга праворуч від кластера
+const HCORR_LEN = 1.5 // горизонтальний коридор угорі денного крила
+const SERVICE_W = 2.5 // кластер санвузол+гардеробна (ліворуч)
+const BATH_LEN = 2.5 // санвузол (згори кластера)
+const HALL_W = 2.0 // прихожа — вертикальна смуга праворуч від кластера
 const KITCHEN_W = 6.0
 const PANTRY_W = 1.5 // комора біля кухні (ширина)
 const PANTRY_LEN = 3.5 // комора біля кухні (довжина, спереду)
@@ -206,8 +207,10 @@ export function generateLShapePlan(config: HouseConfig): HousePlan {
   ]
 
   // ---- Центрування за контуром ----
-  const cx = dayW / 2
-  const cz = (dz + DAY_DEPTH) / 2
+  // Зсув центрування — теж КРАТНИЙ сітці: розміри кратні 0.5, тож зсув на
+  // некратну величину зсунув би всі грані на 0.25 і сітка перестала б збігатись.
+  const cx = Math.round((dayW / 2) / GRID) * GRID
+  const cz = Math.round(((dz + DAY_DEPTH) / 2) / GRID) * GRID
   const shift = <T extends { x: number; z: number }>(o: T): T => ({ ...o, x: o.x - cx, z: o.z - cz })
 
   const floors: FloorPlan[] = [{ floor: 1, rooms: rooms.map(shift), slab: slab.map(shift) }]

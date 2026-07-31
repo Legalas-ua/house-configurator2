@@ -8,11 +8,11 @@ import { ALL_SHAPES, ROOF_TYPES, WINDOW_TYPES } from './availability'
 // show3D визначає, чи видно 3D-вьюпорт на цьому кроці.
 // ============================================================
 
-export type StepId = 'budget' | 'constructionType' | 'shape' | 'rooms' | 'windows' | 'roof'
+export type StepId = 'budget' | 'constructionType' | 'shape' | 'rooms' | 'windows' | 'roofZones' | 'roof'
 
 export interface StepDef {
   id: StepId
-  kind: 'slider' | 'cards' | 'rooms' | 'windows' | 'roof' // майбутнє: 'toggle', 'form'…
+  kind: 'slider' | 'cards' | 'rooms' | 'windows' | 'roofZones' | 'roof' // майбутнє: 'toggle', 'form'…
   configKey?: ConfigKey // композитні кроки (rooms) працюють з кількома ключами
   show3D: boolean
   slider?: { min: number; max: number; step: number }
@@ -52,6 +52,15 @@ export const STEPS: StepDef[] = [
     show3D: true,
     getOptions: () => WINDOW_TYPES,
     isComplete: (c) => c.windows !== null,
+  },
+  {
+    // Спершу МАЛЮЄМО зони даху (плоскі площини на покритті), і лише на
+    // наступному кроці дах виростає в об'ємі та налаштовується. Об'ємний дах
+    // перекривав би ручки зон, і малювати було б нічим.
+    id: 'roofZones',
+    kind: 'roofZones',
+    show3D: true,
+    isComplete: () => true,
   },
   {
     id: 'roof',
