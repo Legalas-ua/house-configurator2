@@ -83,6 +83,7 @@ const planReset = (index: number) => ({
   selectedRoom: null,
   selectedWindow: null,
   selectedWall: null,
+  selectedDoor: null,
   ...(index < ROOMS_STEP ? { planMode: 'template' as const, customPlan: null } : {}),
   ...(index < WINDOWS_STEP ? { windowsMode: 'template' as const, customWindows: null } : {}),
 })
@@ -99,6 +100,7 @@ interface ConfiguratorState {
   customWindows: WindowSpec[] | null
   selectedWindow: string | null
   selectedWall: string | null // стіна, обрана для додавання вікна
+  selectedDoor: number | null // індекс дверей усередині обраного вікна
   selectedRoom: string | null // id кімнати, яку зараз редагують (ручний режим)
   dragging: boolean // тягнуть зону на плані → камеру треба знерухомити
   showGrid: boolean // сітка прив'язки під планом (лише в ручному режимі)
@@ -116,6 +118,7 @@ interface ConfiguratorState {
   setCustomWindows: (specs: WindowSpec[]) => void
   setSelectedWindow: (id: string | null) => void
   setSelectedWall: (key: string | null) => void
+  setSelectedDoor: (i: number | null) => void
   setSelectedRoom: (id: string | null) => void
   setDragging: (on: boolean) => void
   setShowGrid: (on: boolean) => void
@@ -137,6 +140,7 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
   customWindows: null,
   selectedWindow: null,
   selectedWall: null,
+  selectedDoor: null,
   selectedRoom: null,
   dragging: false,
   showGrid: true,
@@ -192,6 +196,8 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
   setSelectedWindow: (id) => set({ selectedWindow: id }),
 
   setSelectedWall: (key) => set({ selectedWall: key }),
+
+  setSelectedDoor: (i) => set({ selectedDoor: i }),
 
   setSelectedRoom: (id) => set({ selectedRoom: id }),
 

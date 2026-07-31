@@ -24,10 +24,10 @@ const ROOM_W = 3.8 // ширина кімнат (праворуч від кор�
 const NIGHT_W = CORRIDOR_W + ROOM_W // 5.3
 
 const MASTER_LEN = 5.0 // майстер із ванною, без гардероба (≈19 м²)
-const MASTER_WC_LEN = 5.6 // майстер, коли є кутова колона санвузол+гардероб
+const MASTER_WC_LEN = 6.0 // майстер, коли є кутова колона санвузол+гардероб
 const MASTER_SINGLE_LEN = 4.9 // одна спальня без коридору, на всю ширину (≈26 м²)
 const ENSUITE_LEN = 3.4 // ванна майстра у куті (без гардероба)
-const COL_W = 2.2 // ширина кутової колони санвузол+гардероб (заходить у спальню)
+const COL_W = 2.6 // ширина кутової колони санвузол+гардероб (заходить у спальню)
 const SAN_BOX = 2.3 // санвузол у куті (≈5 м²)
 const CLO_BOX = 2.3 // гардероб у куті (≈5 м²)
 const CLOSET_STRIP = 1.3 // гардероб смугою (варіант 1 спальні)
@@ -73,14 +73,14 @@ function buildNightWing(
     // ріст сусідів не «зачіпає».
     rooms.push(rect(`${pfx}closet-box`, 'closet', 0, SAN_BOX, COL_W, CLO_BOX))
     const colBottom = SAN_BOX + CLO_BOX
-    rooms.push({ ...rect(`${pfx}master-a`, 'master', COL_W, 0, NIGHT_W - COL_W, MASTER_WC_LEN), group: `${pfx}master` })
-    rooms.push({ ...rect(`${pfx}master-b`, 'master', CORRIDOR_W, colBottom, COL_W - CORRIDOR_W, MASTER_WC_LEN - colBottom), group: `${pfx}master` })
+    rooms.push({ ...rect(`${pfx}master-a`, 'bedroom', COL_W, 0, NIGHT_W - COL_W, MASTER_WC_LEN), group: `${pfx}master` })
+    rooms.push({ ...rect(`${pfx}master-b`, 'bedroom', CORRIDOR_W, colBottom, COL_W - CORRIDOR_W, MASTER_WC_LEN - colBottom), group: `${pfx}master` })
     corridorTop = colBottom
     z = MASTER_WC_LEN
   } else if (hasEnsuite) {
     // Лише ванна у куті, майстер праворуч, коридор повз ванну
     rooms.push(rect(`${pfx}ensuite-bath`, 'bathroom', 0, 0, CORRIDOR_W, ENSUITE_LEN))
-    rooms.push(rect(`${pfx}master-a`, 'master', CORRIDOR_W, 0, ROOM_W, MASTER_LEN))
+    rooms.push(rect(`${pfx}master-a`, 'bedroom', CORRIDOR_W, 0, ROOM_W, MASTER_LEN))
     corridorTop = ENSUITE_LEN
     z = MASTER_LEN
   } else {
@@ -89,7 +89,7 @@ function buildNightWing(
     // anchorZ:'min' — гардероб-смуга (прямокутний, у кінці майстра, без санвузла)
     // з'являється від ВЕРХНЬОЇ грані (не суміжної з майстром). Швидкість — звичайна.
     if (hasCloset) rooms.push({ ...rect(`${pfx}closet-strip`, 'closet', 0, 0, NIGHT_W, cLen), anchorZ: 'min' as const })
-    rooms.push(rect(`${pfx}master-a`, 'master', 0, cLen, NIGHT_W, MASTER_SINGLE_LEN - cLen))
+    rooms.push(rect(`${pfx}master-a`, 'bedroom', 0, cLen, NIGHT_W, MASTER_SINGLE_LEN - cLen))
     corridorTop = MASTER_SINGLE_LEN
     z = MASTER_SINGLE_LEN
   }

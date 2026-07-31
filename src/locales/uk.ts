@@ -116,9 +116,10 @@ export const uk = {
         top: 'Верх вікна',
         mullions: 'Імпости',
         autoValue: 'авто',
-        door: 'Двері у вікні',
+        doors: 'Двері у вікні',
+        doorN: (n: number) => `Двері ${n}`,
         doorWidth: 'Ширина дверей',
-        doorSlotHint: 'Стрілки під вікном на фасаді пересувають двері між імпостами',
+        doorSlotHint: 'Стрілки під вікном на фасаді пересувають обрані двері між імпостами',
       },
       issues: {
         title: 'Приміщення без вікон',
@@ -162,7 +163,6 @@ export const uk = {
       terrace: 'Тераса',
       storage: 'Шафи',
       closet: 'Гардероб',
-      master: 'Майстер-спальня',
     },
   },
   viewport: {

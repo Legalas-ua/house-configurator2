@@ -23,12 +23,27 @@ export interface WindowSpec {
   sill: number // низ отвору від підлоги
   top: number // верх отвору
   mullions: number // -1 = автоматично за шириною
-  door: boolean
-  doorWidth: number // ширина дверної стулки
-  doorSlot: number // у якій секції (між імпостами) стоять двері, 0 = ліва
+  doors: DoorSpec[] // порожньо = звичайне вікно
+}
+
+// Двері всередині вікна: займають одну секцію між імпостами.
+export interface DoorSpec {
+  width: number
+  slot: number // індекс секції, 0 = ліва
 }
 
 export const DOOR_LEAF = 0.95 // типова ширина дверної стулки
+export const MIN_DOOR_W = 0.8 // вужчих дверей не буває
+
+// Скільки дверей узагалі влізе у вікно такої ширини.
+export const maxDoors = (width: number) => Math.max(0, Math.floor(width / MIN_DOOR_W))
+
+// Секції, ще не зайняті дверима.
+export function freeSlots(spec: WindowSpec, exceptIndex = -1): number[] {
+  const taken = new Set(spec.doors.filter((_, i) => i !== exceptIndex).map((d) => d.slot))
+  const n = panelCount(spec.mullions, spec.width)
+  return Array.from({ length: n }, (_, i) => i).filter((i) => !taken.has(i))
+}
 
 // Скільки секцій має вікно при заданій кількості імпостів.
 export const panelCount = (mullions: number, width: number) =>
@@ -46,7 +61,6 @@ export const MIN_WIN_W = 0.6
 export const MULLION_STEP = 1.4
 
 export const WIN_WIDTH: Partial<Record<RoomType, number>> = {
-  master: 1.8,
   bedroom: 1.6,
   livingKitchen: 2.6,
   living: 1.9,
@@ -66,7 +80,7 @@ const NO_WINDOW_NEEDED: RoomType[] = ['pantry', 'terrace', 'storage', 'closet', 
 // Двері (панорама в підлогу): кухня-вітальня та прихожа завжди; спальні/майстер
 // 1-го поверху — вихід у двір.
 export const isDoorRoom = (type: RoomType, floorIdx: number) =>
-  type === 'livingKitchen' || type === 'hall' || (floorIdx === 0 && (type === 'bedroom' || type === 'master'))
+  type === 'livingKitchen' || type === 'hall' || (floorIdx === 0 && type === 'bedroom')
 
 // Підвіконня (верх завжди WIN_TOP). Санвузол/сходи — фіксовані.
 export function sillFor(floorIdx: number, type: RoomType, win: WindowType, asDoor: boolean): number {
@@ -193,9 +207,7 @@ export function generateWindows(plan: HousePlan, config: HouseConfig): WindowSpe
           sill: asDoor ? 0 : sillFor(floorIdx, room.type, win, false),
           top: WIN_TOP,
           mullions: -1,
-          door: asDoor,
-          doorWidth: DOOR_LEAF,
-          doorSlot: 0,
+          doors: asDoor ? [{ width: DOOR_LEAF, slot: 0 }] : [],
         })
       }
     })
@@ -364,9 +376,7 @@ export function addWindow(
     sill: sillFor(floor, room.type, win, false),
     top: WIN_TOP,
     mullions: -1,
-    door: false,
-    doorWidth: DOOR_LEAF,
-    doorSlot: 0,
+    doors: [],
   }
   return { specs: [...specs, spec], id }
 }

@@ -6,8 +6,11 @@ import {
   countOnWall,
   panelCount,
   removeWindow,
+  freeSlots,
+  maxDoors,
   updateWindow,
   DOOR_LEAF,
+  MIN_DOOR_W,
   MAX_PER_WALL,
   MIN_WIN_W,
   WIN_TOP,
@@ -62,6 +65,8 @@ function WindowEditorPanel() {
   const selectedWindow = useConfigurator((s) => s.selectedWindow)
   const setSelectedWindow = useConfigurator((s) => s.setSelectedWindow)
   const selectedWall = useConfigurator((s) => s.selectedWall)
+  const selectedDoor = useConfigurator((s) => s.selectedDoor)
+  const setSelectedDoor = useConfigurator((s) => s.setSelectedDoor)
   const setSelectedWall = useConfigurator((s) => s.setSelectedWall)
   const texts = t.steps.windows.editor
 
@@ -77,7 +82,7 @@ function WindowEditorPanel() {
   const wallFull = onWall >= MAX_PER_WALL
 
   const panels = spec ? panelCount(spec.mullions, spec.width) : 1
-  const maxDoor = spec ? Math.min(spec.width - 0.1, spec.width / Math.max(panels - 1, 1)) : DOOR_LEAF
+  const maxDoor = spec ? Math.max(MIN_DOOR_W, spec.width - MIN_DOOR_W * (spec.doors.length - 1)) : DOOR_LEAF
 
   return (
     <>
@@ -164,19 +169,51 @@ function WindowEditorPanel() {
               onChange={(v) => patch({ mullions: Math.max(-1, Math.min(v, 6)) })}
             />
 
-            <label className="floor-hide">
-              <input type="checkbox" checked={spec.door} onChange={(e) => patch({ door: e.target.checked })} />
-              {texts.door}
-            </label>
+            {/* Двері — лічильник, як імпости. Скільки влізе, стільки й можна:
+                двоє дверей потребують хоча б 2 × 800 мм ширини вікна. */}
+            <Stepper
+              label={texts.doors}
+              value={spec.doors.length}
+              stepSize={1}
+              onChange={(n) => {
+                const want = Math.max(0, Math.min(n, Math.min(maxDoors(spec.width), panels)))
+                if (want === spec.doors.length) return
+                const next =
+                  want > spec.doors.length
+                    ? [...spec.doors, { width: DOOR_LEAF, slot: freeSlots(spec)[0] ?? 0 }]
+                    : spec.doors.slice(0, want)
+                patch({ doors: next })
+                setSelectedDoor(next.length ? Math.min(selectedDoor ?? 0, next.length - 1) : null)
+              }}
+            />
 
-            {spec.door && (
+            {spec.doors.length > 1 && (
+              <div className="chips">
+                {spec.doors.map((_, i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    className={`chip${(selectedDoor ?? 0) === i ? ' chip--on' : ''}`}
+                    onClick={() => setSelectedDoor(i)}
+                  >
+                    {texts.doorN(i + 1)}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {spec.doors.length > 0 && (
               <>
                 <Stepper
                   label={texts.doorWidth}
-                  value={spec.doorWidth}
+                  value={spec.doors[Math.min(selectedDoor ?? 0, spec.doors.length - 1)].width}
                   suffix=" м"
                   stepSize={SIZE_STEP}
-                  onChange={(v) => patch({ doorWidth: Math.max(0.7, Math.min(v, maxDoor)) })}
+                  onChange={(v) => {
+                    const i = Math.min(selectedDoor ?? 0, spec.doors.length - 1)
+                    const w = Math.max(MIN_DOOR_W, Math.min(v, maxDoor))
+                    patch({ doors: spec.doors.map((d, k) => (k === i ? { ...d, width: w } : d)) })
+                  }}
                 />
                 <p className="rooms__hint">{texts.doorSlotHint}</p>
               </>

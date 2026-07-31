@@ -10,7 +10,7 @@ import { GROUND_HALF } from '../config/plan'
 // ============================================================
 
 export const GRID = 0.5 // крок прив'язки, м
-export const MIN_SIDE = 1.5 // найменша сторона кімнати, м
+export const MIN_SIDE = 1.0 // найменша сторона кімнати, м
 
 export const snap = (v: number) => Math.round(v / GRID) * GRID
 

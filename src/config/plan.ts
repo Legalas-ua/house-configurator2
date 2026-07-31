@@ -18,7 +18,6 @@ export const ROOM_COLORS: Record<RoomType, string> = {
   hall: '#a9855f', // коричневий
   corridor: '#ded0a6', // беж
   bedroom: '#8fc8f0', // світло-блакитна спальня
-  master: '#2f6fb8', // темно-синій майстер (контраст зі спальнею)
   bathroom: '#37c0a8', // бірюзовий санвузол
   office: '#8e6fd0', // синьо-фіолетовий кабінет
   wardrobe: '#e58aad', // тепло-рожева гардеробна (денна)
