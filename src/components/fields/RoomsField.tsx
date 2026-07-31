@@ -5,6 +5,7 @@ import { availableBedrooms, supportedExtras } from '../../config/layouts'
 import { floor2Limits } from '../../lib/lshape'
 import { addRoom, removeRoom } from '../../lib/editPlan'
 import { t } from '../../locales'
+import FloorTabs from './FloorTabs'
 
 // Типи кімнат, які можна додати вручну. Сходів тут немає: вони наскрізні й
 // тягнуть за собою проріз у перекритті. Прихожа — лише на 1-му поверсі
@@ -137,38 +138,6 @@ export default function RoomsField() {
         </div>
       </div>
     </div>
-  )
-}
-
-// Перемикач поверхів + галочка «сховати 2-й». Спільний для обох режимів.
-function FloorTabs() {
-  const floors = useConfigurator((s) => s.config.floors)
-  const viewFloor = useConfigurator((s) => s.viewFloor)
-  const setViewFloor = useConfigurator((s) => s.setViewFloor)
-  const hideFloor2 = useConfigurator((s) => s.hideFloor2)
-  const setHideFloor2 = useConfigurator((s) => s.setHideFloor2)
-  if (floors !== 2) return null
-  return (
-    <>
-      <div className="floor-tabs">
-        {[1, 2].map((n) => (
-          <button
-            key={n}
-            type="button"
-            className={`floor-tab${viewFloor === n ? ' floor-tab--active' : ''}`}
-            onClick={() => setViewFloor(n)}
-          >
-            {t.plan.floorTab(n)}
-          </button>
-        ))}
-      </div>
-      {viewFloor === 1 && (
-        <label className="floor-hide">
-          <input type="checkbox" checked={hideFloor2} onChange={(e) => setHideFloor2(e.target.checked)} />
-          {t.plan.hideFloor2}
-        </label>
-      )}
-    </>
   )
 }
 

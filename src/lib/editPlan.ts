@@ -1,4 +1,5 @@
 import type { HousePlan, PlanRect, RoomType, RoomZone } from '../config/types'
+import { GROUND_HALF } from '../config/plan'
 
 // ============================================================
 // Ручне редагування планування: чисті операції над HousePlan.
@@ -31,10 +32,14 @@ function recompute(floors: HousePlan['floors']): HousePlan {
 // Прив'язуємо ГРАНЬ, а не центр: розміри кратні GRID, тож коли на сітці ліва
 // грань — на ній і права, і сусідні кімнати сходяться впритул без щілин.
 export function normalize(rect: PlanRect): PlanRect {
-  const width = Math.max(MIN_SIDE, snap(rect.width))
-  const depth = Math.max(MIN_SIDE, snap(rect.depth))
-  const x0 = snap(rect.x - rect.width / 2)
-  const z0 = snap(rect.z - rect.depth / 2)
+  // Розмір не більший за ділянку, інакше кімнату нікуди буде помістити.
+  const span = GROUND_HALF * 2
+  const width = Math.max(MIN_SIDE, Math.min(snap(rect.width), span))
+  const depth = Math.max(MIN_SIDE, Math.min(snap(rect.depth), span))
+  // Кімната не виходить за межі ділянки — тягнути її в нескінченність не можна.
+  const clamp = (v: number, size: number) => Math.max(-GROUND_HALF, Math.min(v, GROUND_HALF - size))
+  const x0 = clamp(snap(rect.x - rect.width / 2), width)
+  const z0 = clamp(snap(rect.z - rect.depth / 2), depth)
   return { x: x0 + width / 2, z: z0 + depth / 2, width, depth }
 }
 

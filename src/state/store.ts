@@ -82,6 +82,7 @@ function sanitize(config: HouseConfig): HouseConfig {
 const planReset = (index: number) => ({
   selectedRoom: null,
   selectedWindow: null,
+  selectedWall: null,
   ...(index < ROOMS_STEP ? { planMode: 'template' as const, customPlan: null } : {}),
   ...(index < WINDOWS_STEP ? { windowsMode: 'template' as const, customWindows: null } : {}),
 })
@@ -97,6 +98,7 @@ interface ConfiguratorState {
   windowsMode: PlanMode
   customWindows: WindowSpec[] | null
   selectedWindow: string | null
+  selectedWall: string | null // стіна, обрана для додавання вікна
   selectedRoom: string | null // id кімнати, яку зараз редагують (ручний режим)
   dragging: boolean // тягнуть зону на плані → камеру треба знерухомити
   showGrid: boolean // сітка прив'язки під планом (лише в ручному режимі)
@@ -113,6 +115,7 @@ interface ConfiguratorState {
   setWindowsMode: (mode: PlanMode) => void
   setCustomWindows: (specs: WindowSpec[]) => void
   setSelectedWindow: (id: string | null) => void
+  setSelectedWall: (key: string | null) => void
   setSelectedRoom: (id: string | null) => void
   setDragging: (on: boolean) => void
   setShowGrid: (on: boolean) => void
@@ -133,6 +136,7 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
   windowsMode: 'template',
   customWindows: null,
   selectedWindow: null,
+  selectedWall: null,
   selectedRoom: null,
   dragging: false,
   showGrid: true,
@@ -186,6 +190,8 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
   setCustomWindows: (specs) => set({ windowsMode: 'custom', customWindows: specs }),
 
   setSelectedWindow: (id) => set({ selectedWindow: id }),
+
+  setSelectedWall: (key) => set({ selectedWall: key }),
 
   setSelectedRoom: (id) => set({ selectedRoom: id }),
 

@@ -6,7 +6,7 @@ import type { HousePlan, PlanRect, RoomZone } from '../config/types'
 // в ній винні — щоб і на плані, і в панелі показувати одне й те саме.
 // ============================================================
 
-export type IssueKind = 'overlap' | 'gap' | 'stairsArea'
+export type IssueKind = 'overlap' | 'gap' | 'stairsArea' | 'unsupported'
 
 export interface PlanIssue {
   kind: IssueKind
@@ -43,10 +43,56 @@ const rectOf = (b: Box): PlanRect => ({
 
 const id = (r: RoomZone, i: number) => r.id ?? `#${i}`
 
+// Унікальні відсортовані координати — лінії різу нерівномірної сітки.
+function axis(values: number[]): number[] {
+  const out: number[] = []
+  for (const v of [...values].sort((a, b) => a - b)) {
+    if (out.length === 0 || v - out[out.length - 1] > EPS) out.push(v)
+  }
+  return out
+}
+
+// Частина кімнати, що ПОВИСЛА в повітрі — не спирається на поверх нижче.
+// Ріжемо кімнату координатами нижніх прямокутників і дивимось, які комірки
+// лишились непокритими; повертаємо їхній габарит (його й підсвітимо).
+function unsupportedPart(room: PlanRect, below: PlanRect[]): PlanRect | null {
+  const r = box(room)
+  const under = below.map(box).filter((b) => b.x1 > r.x0 + EPS && b.x0 < r.x1 - EPS && b.z1 > r.z0 + EPS && b.z0 < r.z1 - EPS)
+  const xs = axis([r.x0, r.x1, ...under.flatMap((b) => [b.x0, b.x1])].filter((v) => v >= r.x0 - EPS && v <= r.x1 + EPS))
+  const zs = axis([r.z0, r.z1, ...under.flatMap((b) => [b.z0, b.z1])].filter((v) => v >= r.z0 - EPS && v <= r.z1 + EPS))
+
+  let minX = Infinity
+  let maxX = -Infinity
+  let minZ = Infinity
+  let maxZ = -Infinity
+  for (let i = 0; i < xs.length - 1; i++) {
+    const cx = (xs[i] + xs[i + 1]) / 2
+    for (let j = 0; j < zs.length - 1; j++) {
+      const cz = (zs[j] + zs[j + 1]) / 2
+      if (under.some((b) => cx > b.x0 && cx < b.x1 && cz > b.z0 && cz < b.z1)) continue
+      minX = Math.min(minX, xs[i])
+      maxX = Math.max(maxX, xs[i + 1])
+      minZ = Math.min(minZ, zs[j])
+      maxZ = Math.max(maxZ, zs[j + 1])
+    }
+  }
+  if (minX === Infinity || maxX - minX < 0.05 || maxZ - minZ < 0.05) return null
+  return rectOf({ x0: minX, x1: maxX, z0: minZ, z1: maxZ })
+}
+
 export function validatePlan(plan: HousePlan): PlanIssue[] {
   const issues: PlanIssue[] = []
 
   plan.floors.forEach((fl, floor) => {
+    // --- Верхній поверх не має звисати за межі нижнього ---
+    if (floor > 0) {
+      const below = plan.floors[floor - 1].rooms
+      fl.rooms.forEach((r, i) => {
+        const part = unsupportedPart(r, below)
+        if (part) issues.push({ kind: 'unsupported', floor, rooms: [id(r, i)], rect: part })
+      })
+    }
+
     // --- Сходи: замала площа ---
     fl.rooms.forEach((r, i) => {
       if (r.type !== 'stairs') return

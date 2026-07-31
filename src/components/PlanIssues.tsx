@@ -31,7 +31,9 @@ export default function PlanIssues() {
               ? texts.overlap(name(it.floor, it.rooms[0]), name(it.floor, it.rooms[1]))
               : it.kind === 'gap'
                 ? texts.gap(name(it.floor, it.rooms[0]), name(it.floor, it.rooms[1]), it.value ?? 0)
-                : texts.stairsArea(it.value ?? 0)}
+                : it.kind === 'unsupported'
+                  ? texts.unsupported(name(it.floor, it.rooms[0]))
+                  : texts.stairsArea(it.value ?? 0)}
           </li>
         ))}
       </Card>

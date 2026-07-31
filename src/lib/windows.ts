@@ -24,6 +24,19 @@ export interface WindowSpec {
   top: number // верх отвору
   mullions: number // -1 = автоматично за шириною
   door: boolean
+  doorWidth: number // ширина дверної стулки
+  doorSlot: number // у якій секції (між імпостами) стоять двері, 0 = ліва
+}
+
+export const DOOR_LEAF = 0.95 // типова ширина дверної стулки
+
+// Скільки секцій має вікно при заданій кількості імпостів.
+export const panelCount = (mullions: number, width: number) =>
+  (mullions >= 0 ? mullions : autoMullions(width)) + 1
+
+// Стільки імпостів ставимо, коли задано «авто».
+export function autoMullions(width: number): number {
+  return width > 1.4 ? Math.max(1, Math.round(width / MULLION_STEP) - 1) : 0
 }
 
 // ---- Розміри та правила готового варіанту ----
@@ -162,23 +175,27 @@ export function generateWindows(plan: HousePlan, config: HouseConfig): WindowSpe
         const terraceExit = facesTerrace(fl.rooms, room, sd.side)
         const asDoor = terraceExit || sd === doorSide
         const kitchenDoor = asDoor && room.type === 'livingKitchen'
+        const range = wallRange(sd)
+        const span = range.to - range.from
         const width = terraceExit
-          ? Math.max(sd.len - 0.3, MIN_WIN_W)
+          ? Math.max(span, MIN_WIN_W)
           : kitchenDoor
-            ? Math.max(sd.len - 1.0, 0.9)
-            : Math.min(specW, sd.len - WIN_MARGIN)
+            ? Math.max(span - 0.6, 0.9)
+            : Math.min(specW, span, sd.len - WIN_MARGIN)
         if (width < 0.4) continue
         out.push({
           id: `${floorIdx}-${room.id}-${sd.side}`,
           floor: floorIdx,
           roomId: room.id,
           side: sd.side,
-          u: (sd.len - width) / 2, // по центру стіни
+          u: range.from + (span - width) / 2, // по центру дозволеного проміжку
           width,
           sill: asDoor ? 0 : sillFor(floorIdx, room.type, win, false),
           top: WIN_TOP,
           mullions: -1,
           door: asDoor,
+          doorWidth: DOOR_LEAF,
+          doorSlot: 0,
         })
       }
     })
@@ -206,8 +223,9 @@ export function resolveWindows(plan: HousePlan, specs: WindowSpec[], floorH: num
     const room = fl?.rooms.find((r) => r.id === spec.roomId)
     if (!room) continue // кімнату прибрали — вікно зникає разом з нею
     const w = wallOf(room, spec.side)
-    const width = Math.min(spec.width, w.len)
-    const u = Math.max(0, Math.min(spec.u, w.len - width))
+    const { from, to } = wallRange(w)
+    const width = Math.min(spec.width, to - from)
+    const u = Math.max(from, Math.min(spec.u, to - width))
     const a = w.uStart + u
     const b = a + width
     const center = (a + b) / 2
@@ -256,6 +274,18 @@ export function validateWindows(plan: HousePlan, specs: WindowSpec[]): WindowIss
 export const WIN_GRID = 0.1 // крок прив'язки вікна вздовж стіни
 const snapW = (v: number) => Math.round(v / WIN_GRID) * WIN_GRID
 
+// Вікно рухається по ВНУТРІШНЬОМУ контуру стіни, та ще й з відступом 100 мм:
+// сторона кімнати задана по осях стін, тож без цього вікно заїжджало б у
+// товщу перпендикулярної стіни на розі.
+const WALL_T = 0.18
+export const WIN_EDGE = WALL_T / 2 + 0.1
+
+// Проміжок, у якому може жити вікно на цій стіні.
+export function wallRange(wall: WallSeg): { from: number; to: number } {
+  const from = Math.min(WIN_EDGE, wall.len / 2)
+  return { from, to: Math.max(from, wall.len - from) }
+}
+
 export function updateWindow(specs: WindowSpec[], id: string, patch: Partial<WindowSpec>): WindowSpec[] {
   return specs.map((s) => (s.id === id ? { ...s, ...patch } : s))
 }
@@ -264,46 +294,79 @@ export function removeWindow(specs: WindowSpec[], id: string): WindowSpec[] {
   return specs.filter((s) => s.id !== id)
 }
 
-// Посунути/змінити вікно в межах його стіни. Вікно не може вийти за стіну й
-// не може стати вужчим за MIN_WIN_W.
+// Посунути/змінити вікно в межах його стіни. Вікно не виходить за дозволений
+// проміжок і не стає вужчим за MIN_WIN_W.
 export function fitToWall(spec: WindowSpec, wall: WallSeg, u: number, width: number): WindowSpec {
-  const w = Math.max(MIN_WIN_W, Math.min(snapW(width), wall.len))
-  return { ...spec, width: w, u: Math.max(0, Math.min(snapW(u), wall.len - w)) }
+  const { from, to } = wallRange(wall)
+  const span = to - from
+  const w = Math.max(Math.min(MIN_WIN_W, span), Math.min(snapW(width), span))
+  return { ...spec, width: w, u: Math.max(from, Math.min(snapW(u), to - w)) }
 }
 
 // Нове вікно на найдовшій вільній зовнішній стіні кімнати.
+// Скільки вікон уже стоїть на цій стіні.
+export const MAX_PER_WALL = 3
+export const countOnWall = (specs: WindowSpec[], floor: number, roomId: string, side: Side) =>
+  specs.filter((s) => s.floor === floor && s.roomId === roomId && s.side === side).length
+
+// Нове вікно: на вказаній стіні (side) або на найдовшій вільній зовнішній.
 export function addWindow(
   plan: HousePlan,
   specs: WindowSpec[],
   floor: number,
   roomId: string,
   win: WindowType,
+  side?: Side,
 ): { specs: WindowSpec[]; id: string } | null {
   const fl = plan.floors[floor]
   const room = fl?.rooms.find((r) => r.id === roomId)
-  if (!room) return null
+  // Тераса — надворі, вікон на ній не буває.
+  if (!room || room.type === 'terrace') return null
   const walls = openSides(fl, room)
     .map((s) => wallOf(room, s))
+    .filter((w) => countOnWall(specs, floor, roomId, w.side) < MAX_PER_WALL)
     .sort((a, b) => b.len - a.len)
   if (walls.length === 0) return null
 
   // Спершу пробуємо стіну, де ще немає вікон, — щоб не громадити їх поруч.
   const busy = new Set(specs.filter((s) => s.floor === floor && s.roomId === roomId).map((s) => s.side))
-  const wall = walls.find((w) => !busy.has(w.side)) ?? walls[0]
+  const wall = side ? (walls.find((w) => w.side === side) ?? null) : (walls.find((w) => !busy.has(w.side)) ?? walls[0])
+  if (!wall) return null
 
-  const width = Math.max(MIN_WIN_W, Math.min(1.6, wall.len - WIN_MARGIN))
+  // Ставимо в НАЙБІЛЬШУ вільну щілину на стіні — інакше кожне наступне вікно
+  // лягало б рівно на попереднє.
+  const { from, to } = wallRange(wall)
+  const taken = specs
+    .filter((s) => s.floor === floor && s.roomId === roomId && s.side === wall.side)
+    .map((s) => [s.u, s.u + s.width] as [number, number])
+    .sort((a, b) => a[0] - b[0])
+  // Стартуємо з ПОРОЖНЬОГО проміжку, інакше «найбільшим» назавжди лишиться
+  // вся стіна і кожне нове вікно лягало б на попереднє.
+  let gap: [number, number] = [from, from]
+  let cur = from
+  for (const [a, b] of taken) {
+    if (a - cur > gap[1] - gap[0]) gap = [cur, a]
+    cur = Math.max(cur, b)
+  }
+  if (to - cur > gap[1] - gap[0]) gap = [cur, to]
+
+  const free = gap[1] - gap[0]
+  if (free < MIN_WIN_W) return null
+  const width = Math.min(1.6, free - Math.min(0.4, free - MIN_WIN_W))
   const id = `win-${roomId}-${wall.side}-${Date.now().toString(36)}`
   const spec: WindowSpec = {
     id,
     floor,
     roomId,
     side: wall.side,
-    u: Math.max(0, (wall.len - width) / 2),
+    u: gap[0] + (free - width) / 2,
     width,
     sill: sillFor(floor, room.type, win, false),
     top: WIN_TOP,
     mullions: -1,
     door: false,
+    doorWidth: DOOR_LEAF,
+    doorSlot: 0,
   }
   return { specs: [...specs, spec], id }
 }

@@ -5,6 +5,10 @@ import type { RoomType } from './types'
 // вниз, щоб виглядати відносно газону так само, як і раніше.
 export const FOUNDATION_H = 0.1
 
+// Півсторона ділянки. Земля — квадрат 2×GROUND_HALF, рівно під сіткою
+// прив'язки; далі цих меж зони плану не рухаються.
+export const GROUND_HALF = 16
+
 // Кольори зон на плані (пастельні, добре розрізняються).
 // Самі планування — у config/layouts.ts.
 export const ROOM_COLORS: Record<RoomType, string> = {
