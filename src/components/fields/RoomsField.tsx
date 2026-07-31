@@ -19,6 +19,8 @@ export default function RoomsField() {
   const viewFloor = useConfigurator((s) => s.viewFloor)
   const planMode = useConfigurator((s) => s.planMode)
   const setPlanMode = useConfigurator((s) => s.setPlanMode)
+  const showGrid = useConfigurator((s) => s.showGrid)
+  const setShowGrid = useConfigurator((s) => s.setShowGrid)
   const texts = t.steps.rooms
 
   if (!config.shape) return null
@@ -39,6 +41,12 @@ export default function RoomsField() {
         ))}
       </div>
       <p className="rooms__hint">{planMode === 'custom' ? texts.mode.customHint : texts.mode.templateHint}</p>
+      {planMode === 'custom' && (
+        <label className="floor-hide">
+          <input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} />
+          {t.plan.showGrid}
+        </label>
+      )}
     </div>
   )
 
@@ -66,7 +74,6 @@ export default function RoomsField() {
     ? { min: 1, max: f2lim!.maxBedrooms } // не більше, ніж вміщує основа 1-го поверху
     : { min: Math.min(...bedroomOptions), max: Math.max(...bedroomOptions) }
 
-  const bathroomsValue = editingF2 ? 1 : config.bathrooms
   const currentExtras = editingF2 ? config.extras2 : config.extras
   const extrasKey = editingF2 ? 'extras2' : 'extras'
   const allowedExtras1 = supportedExtras(config.shape, config.floors, config.bedrooms)
@@ -97,18 +104,13 @@ export default function RoomsField() {
       <FloorTabs />
       {modeSwitch}
 
+      {/* Санвузли не показуємо: у готових плануваннях вони закладені в план і
+          не редагуються, а в ручному режимі їх додають кнопкою. */}
       <Counter
         label={texts.bedrooms}
         value={bedroomsValue}
         limits={bedroomLimits}
         onChange={(v) => setValue(bedroomsKey, v)}
-      />
-      {/* Санвузли закладені в планування — лічильник показує їх кількість */}
-      <Counter
-        label={texts.bathrooms}
-        value={bathroomsValue}
-        limits={{ min: bathroomsValue, max: bathroomsValue }}
-        onChange={() => {}}
       />
 
       <div className="rooms__group">

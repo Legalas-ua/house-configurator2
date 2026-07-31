@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useFrame, type ThreeEvent } from '@react-three/fiber'
+import { Html } from '@react-three/drei'
 import { easing } from 'maath'
-import type { Mesh, MeshStandardMaterial } from 'three'
+import { BufferGeometry, Float32BufferAttribute, type Mesh, type MeshStandardMaterial } from 'three'
+import { unionOutline } from '../lib/outline'
 import { useConfigurator, useHousePlan } from '../state/store'
 import { STEPS } from '../config/steps'
 import { FOUNDATION_H, ROOM_COLORS } from '../config/plan'
 import type { FloorPlan, PlanRect, RoomType, RoomZone } from '../config/types'
-import { MIN_SIDE, snap, updateRoom } from '../lib/editPlan'
+import { GRID, MIN_SIDE, snap, updateRoom } from '../lib/editPlan'
 import { t } from '../locales'
 
 const GAP = 0.08 // зазор між РІЗНИМИ кімнатами
@@ -129,6 +131,66 @@ function dragRect(drag: Drag, x: number, z: number): PlanRect {
   return { ...r, z: (z0 + nz1) / 2, depth: nz1 - z0 }
 }
 
+// Сітка прив'язки під планом. Крок = GRID, тож усе, що видно, збігається з
+// тим, куди кімнати реально «клацають».
+function SnapGrid() {
+  const grid = useMemo(() => {
+    const half = 16
+    const pts: number[] = []
+    for (let v = -half; v <= half + EPS; v += GRID) {
+      pts.push(-half, 0, v, half, 0, v, v, 0, -half, v, 0, half)
+    }
+    const geo = new BufferGeometry()
+    geo.setAttribute('position', new Float32BufferAttribute(pts, 3))
+    return geo
+  }, [])
+  return (
+    <lineSegments geometry={grid} position={[0, 0.02, 0]}>
+      <lineBasicMaterial color="#5c6b52" transparent opacity={0.18} depthWrite={false} />
+    </lineSegments>
+  )
+}
+
+// Контур поверху НИЖЧЕ — щоб на 2-му було видно, куди можна ставити кімнати.
+function FootprintHint({ rooms }: { rooms: RoomZone[] }) {
+  const geo = useMemo(() => {
+    const pts: number[] = []
+    for (const { pts: ring } of unionOutline(rooms)) {
+      for (let i = 0; i < ring.length; i++) {
+        const [x0, z0] = ring[i]
+        const [x1, z1] = ring[(i + 1) % ring.length]
+        pts.push(x0, 0, z0, x1, 0, z1)
+      }
+    }
+    const g = new BufferGeometry()
+    g.setAttribute('position', new Float32BufferAttribute(pts, 3))
+    return g
+  }, [rooms])
+  return (
+    <lineSegments geometry={geo} position={[0, 0.05, 0]}>
+      <lineBasicMaterial color="#2f6fb8" transparent opacity={0.75} depthWrite={false} />
+    </lineSegments>
+  )
+}
+
+// Підписи довжин на гранях обраної кімнати. Показуємо лише дві (протилежні
+// рівні), щоб не захаращувати план.
+function SizeLabels({ rect }: { rect: PlanRect }) {
+  const off = 0.55
+  return (
+    <>
+      {[
+        { key: 'w', value: rect.width, x: rect.x, z: rect.z - rect.depth / 2 - off },
+        { key: 'd', value: rect.depth, x: rect.x + rect.width / 2 + off, z: rect.z },
+      ].map((l) => (
+        <Html key={l.key} position={[l.x, 0.4, l.z]} center zIndexRange={[10, 0]} style={{ pointerEvents: 'none' }}>
+          <span className="plan-size">{t.plan.meters(l.value)}</span>
+        </Html>
+      ))}
+    </>
+  )
+}
+
 // Ручки на серединах граней обраної кімнати. Тягнеш ручку — рухається та грань.
 function Handles({
   rect,
@@ -242,6 +304,7 @@ function SlabMesh({
 function ZoneMesh({
   item,
   hovered,
+  chosen,
   active,
   onExited,
   onOver,
@@ -251,6 +314,7 @@ function ZoneMesh({
 }: {
   item: Item
   hovered: boolean
+  chosen: boolean // обрана для редагування — тримаємо підсвітку постійно
   active: boolean
   onExited: () => void
   onOver: (e: ThreeEvent<PointerEvent>) => void
@@ -290,7 +354,7 @@ function ZoneMesh({
         : growing && item.growEase != null
           ? item.growEase
           : ROOM_EASE
-    const y = hovered ? 0.26 : 0.18
+    const y = hovered || chosen ? 0.26 : 0.18
     if (item.instant) {
       // Ручне перетягування — БЕЗ згладжування: кімната має йти рівно за
       // курсором. Позицією й масштабом і далі володіє ЛИШЕ useFrame
@@ -319,7 +383,7 @@ function ZoneMesh({
       // МИТТЄВО (без easing-хвоста): інакше при перемиканні поверхів білий
       // спалах ще ~0.2 с «доганяє» нуль, поки зона стає прозорим привидом.
       if (active) {
-        easing.damp(mat.current, 'emissiveIntensity', hovered ? 0.28 : 0, 0.2, dt)
+        easing.damp(mat.current, 'emissiveIntensity', chosen ? 0.5 : hovered ? 0.28 : 0, 0.2, dt)
       } else {
         mat.current.emissiveIntensity = 0
       }
@@ -359,6 +423,7 @@ function ZoneMesh({
 function PlanFloor({
   floor,
   floorIdx,
+  below,
   showZones,
   showSlab,
   yOffset,
@@ -367,6 +432,7 @@ function PlanFloor({
 }: {
   floor: FloorPlan
   floorIdx: number
+  below?: FloorPlan // поверх під цим — його контур підказує межі
   showZones: boolean
   showSlab: boolean
   yOffset: number
@@ -379,9 +445,11 @@ function PlanFloor({
   const selectedRoom = useConfigurator((s) => s.selectedRoom)
   const setSelectedRoom = useConfigurator((s) => s.setSelectedRoom)
   const setDragging = useConfigurator((s) => s.setDragging)
+  const showGrid = useConfigurator((s) => s.showGrid)
   const [hoverKey, setHoverKey] = useState<string | null>(null)
   const [items, setItems] = useState<Item[]>([])
   const [drag, setDrag] = useState<Drag | null>(null)
+  const downAt = useRef<{ x: number; y: number } | null>(null)
 
   const selected = editable ? floor.rooms.find((r) => r.id === selectedRoom) : undefined
 
@@ -397,6 +465,16 @@ function PlanFloor({
     window.addEventListener('pointerup', up)
     return () => window.removeEventListener('pointerup', up)
   }, [drag])
+
+  // Esc знімає вибір зони
+  useEffect(() => {
+    if (!editable || !active) return
+    const key = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setSelectedRoom(null)
+    }
+    window.addEventListener('keydown', key)
+    return () => window.removeEventListener('keydown', key)
+  }, [editable, active, setSelectedRoom])
 
   const grab = (id: string, mode: DragMode, e: ThreeEvent<PointerEvent>) => {
     const room = floor.rooms.find((r) => r.id === id)
@@ -487,6 +565,32 @@ function PlanFloor({
 
   return (
     <group position={[0, yOffset, 0]}>
+      {/* Сітка прив'язки + контур нижнього поверху — лише коли редагуємо цей поверх */}
+      {editable && active && showGrid && <SnapGrid />}
+      {editable && active && below && <FootprintHint rooms={below.rooms} />}
+
+      {/* Клік по пустому місцю знімає вибір. Поріг у 4 px — щоб обертання
+          камери (теж починається з натискання) вибір не скидало. */}
+      {editable && active && (
+        <mesh
+          rotation={[-Math.PI / 2, 0, 0]}
+          position={[0, 0.01, 0]}
+          onPointerDown={(e) => {
+            downAt.current = { x: e.nativeEvent.clientX, y: e.nativeEvent.clientY }
+          }}
+          onPointerUp={(e) => {
+            const d = downAt.current
+            downAt.current = null
+            if (d && Math.hypot(e.nativeEvent.clientX - d.x, e.nativeEvent.clientY - d.y) < 4) {
+              setSelectedRoom(null)
+            }
+          }}
+        >
+          <planeGeometry args={[80, 80]} />
+          <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+        </mesh>
+      )}
+
       {/* Фундамент (плита) — на кроці «форма» тощо. На «кімнати» контур задають
           зони, на «вікна» — 3D-оболонка (HouseShell), тож там плиту ховаємо. */}
       {floor.slab.map((r, i) => (
@@ -505,6 +609,7 @@ function PlanFloor({
             key={item.key}
             item={dragging ? { ...item, instant: true } : item}
             active={active}
+            chosen={editable && item.key === selectedRoom}
             hovered={hoverKey === item.hoverId && !item.exiting}
             onExited={() => removeKey(item.key)}
             onDown={editable && active && !item.exiting ? (e) => grab(item.key, 'move', e) : undefined}
@@ -526,12 +631,15 @@ function PlanFloor({
         )
       })}
 
-      {/* Ручки обраної кімнати + ловець руху курсора під час перетягування */}
+      {/* Ручки та розміри обраної кімнати + ловець руху курсора при перетягуванні */}
       {editable && active && selected && (
-        <Handles
-          rect={{ x: selected.x, z: selected.z, width: selected.width, depth: selected.depth }}
-          onGrab={(mode, e) => grab(selected.id!, mode, e)}
-        />
+        <>
+          <Handles
+            rect={{ x: selected.x, z: selected.z, width: selected.width, depth: selected.depth }}
+            onGrab={(mode, e) => grab(selected.id!, mode, e)}
+          />
+          <SizeLabels rect={{ x: selected.x, z: selected.z, width: selected.width, depth: selected.depth }} />
+        </>
       )}
       {drag && <DragPlane onMove={moveDrag} onDrop={endDrag} />}
     </group>
@@ -567,6 +675,7 @@ export default function PlanView() {
             key={floorNum}
             floor={fl}
             floorIdx={idx}
+            below={idx > 0 ? plan.floors[idx - 1] : undefined}
             editable={editable}
             showZones={showZones}
             showSlab={showSlab}

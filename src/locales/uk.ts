@@ -102,6 +102,8 @@ export const uk = {
     total: 'Загальна площа',
     floorTab: (n: number) => `${n}-й поверх`,
     hideFloor2: 'Сховати 2-й поверх',
+    showGrid: 'Показувати сітку',
+    meters: (v: number) => `${v.toFixed(1).replace('.0', '')} м`,
     roomNames: {
       livingKitchen: 'Кухня-вітальня',
       living: 'Вітальня',

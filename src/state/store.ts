@@ -15,7 +15,13 @@ import {
   supportedExtras,
 } from '../config/layouts'
 import { generateHousePlan } from '../lib/floorplan'
+import { normalizePlan } from '../lib/editPlan'
 import { floor2Limits } from '../lib/lshape'
+
+// Крок, з якого починається планування. Повернення НА ПОПЕРЕДНІЙ крок скидає
+// ручне планування: там міняють форму будинку, і заморожений план не давав би
+// це зробити — форма змінюється, а на екрані лишається старий власний план.
+const ROOMS_STEP = STEPS.findIndex((s) => s.id === 'rooms')
 
 // ============================================================
 // Єдине джерело правди про стан конфігуратора (zustand).
@@ -67,6 +73,12 @@ function sanitize(config: HouseConfig): HouseConfig {
   return next
 }
 
+// Повернулись раніше за крок планування → ручний план більше не діє.
+const planReset = (index: number) =>
+  index < ROOMS_STEP
+    ? ({ planMode: 'template', customPlan: null, selectedRoom: null } as const)
+    : ({ selectedRoom: null } as const)
+
 interface ConfiguratorState {
   started: boolean // false = стартовий екран
   config: HouseConfig
@@ -76,6 +88,7 @@ interface ConfiguratorState {
   customPlan: HousePlan | null
   selectedRoom: string | null // id кімнати, яку зараз редагують (ручний режим)
   dragging: boolean // тягнуть зону на плані → камеру треба знерухомити
+  showGrid: boolean // сітка прив'язки під планом (лише в ручному режимі)
   currentStep: number // індекс у STEPS
   maxStepReached: number // до якого кроку дійшов користувач (для 3D і навігації)
   topView: boolean // камера летить у вид зверху; обертання мишею вимикає
@@ -88,6 +101,7 @@ interface ConfiguratorState {
   setCustomPlan: (plan: HousePlan) => void
   setSelectedRoom: (id: string | null) => void
   setDragging: (on: boolean) => void
+  setShowGrid: (on: boolean) => void
   setTopView: (on: boolean) => void
   setViewFloor: (floor: number) => void
   setHideFloor2: (on: boolean) => void
@@ -104,6 +118,7 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
   customPlan: null,
   selectedRoom: null,
   dragging: false,
+  showGrid: true,
   currentStep: 0,
   maxStepReached: 0,
   topView: false,
@@ -130,7 +145,7 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
       if (mode === 'template') return { planMode: 'template', customPlan: null, selectedRoom: null }
       return {
         planMode: 'custom',
-        customPlan: s.customPlan ?? generateHousePlan(s.config),
+        customPlan: s.customPlan ?? normalizePlan(generateHousePlan(s.config)),
         selectedRoom: null,
       }
     }),
@@ -140,6 +155,8 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
   setSelectedRoom: (id) => set({ selectedRoom: id }),
 
   setDragging: (on) => set({ dragging: on }),
+
+  setShowGrid: (on) => set({ showGrid: on }),
 
   setTopView: (on) => set({ topView: on }),
   setViewFloor: (floor) => set({ viewFloor: floor }),
@@ -155,7 +172,9 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
   // З першого кроку «Назад» повертає на стартовий екран
   prevStep: () =>
     set((s) =>
-      s.currentStep === 0 ? { started: false } : { currentStep: s.currentStep - 1 },
+      s.currentStep === 0
+        ? { started: false }
+        : { currentStep: s.currentStep - 1, ...planReset(s.currentStep - 1) },
     ),
 
   // Перейти можна лише на пройдений крок або наступний після завершених
@@ -165,7 +184,7 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
         index >= 0 &&
         index <= s.maxStepReached &&
         STEPS.slice(0, index).every((st) => st.isComplete(s.config))
-      return allowed ? { currentStep: index } : s
+      return allowed ? { currentStep: index, ...planReset(index) } : s
     }),
 }))
 

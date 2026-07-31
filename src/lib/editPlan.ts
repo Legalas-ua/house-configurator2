@@ -38,18 +38,43 @@ export function normalize(rect: PlanRect): PlanRect {
   return { x: x0 + width / 2, z: z0 + depth / 2, width, depth }
 }
 
+// Готове планування приходить з довільними координатами, а редагуємо ми по
+// сітці — тож при переході в ручний режим одразу кладемо все на сітку,
+// інакше перша ж правка «смикне» кімнату на пів кроку.
+export function normalizePlan(plan: HousePlan): HousePlan {
+  return recompute(plan.floors.map((fl) => ({ ...fl, rooms: fl.rooms.map((r) => ({ ...r, ...normalize(r) })) })))
+}
+
+// Сходи — наскрізні: їхня зона мусить збігатися на всіх поверхах, тож правка
+// на одному одразу переносить решту.
+const isStairs = (plan: HousePlan, floorIdx: number, id: string) =>
+  plan.floors[floorIdx]?.rooms.find((r) => r.id === id)?.type === 'stairs'
+
 export function updateRoom(plan: HousePlan, floorIdx: number, id: string, rect: PlanRect): HousePlan {
   const r = normalize(rect)
+  const sync = isStairs(plan, floorIdx, id)
   return recompute(
-    plan.floors.map((fl, i) =>
-      i !== floorIdx ? fl : { ...fl, rooms: fl.rooms.map((room) => (room.id === id ? { ...room, ...r } : room)) },
-    ),
+    plan.floors.map((fl, i) => ({
+      ...fl,
+      rooms: fl.rooms.map((room) => {
+        if (i === floorIdx && room.id === id) return { ...room, ...r }
+        if (sync && i !== floorIdx && room.type === 'stairs') return { ...room, ...r }
+        return room
+      }),
+    })),
   )
 }
 
 export function removeRoom(plan: HousePlan, floorIdx: number, id: string): HousePlan {
+  const sync = isStairs(plan, floorIdx, id)
   return recompute(
-    plan.floors.map((fl, i) => (i !== floorIdx ? fl : { ...fl, rooms: fl.rooms.filter((room) => room.id !== id) })),
+    plan.floors.map((fl, i) => ({
+      ...fl,
+      rooms: fl.rooms.filter((room) => {
+        if (i === floorIdx) return room.id !== id
+        return !(sync && room.type === 'stairs')
+      }),
+    })),
   )
 }
 

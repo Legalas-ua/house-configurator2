@@ -385,6 +385,7 @@ export default function HouseShell() {
   const plan = useHousePlan()
   const stepId = STEPS[currentStep].id
   const show = stepId === 'windows' || stepId === 'roof' // коробка видима на «Вікна» і «Дах»
+  const roofStep = stepId === 'roof'
   const ref = useRef<Group>(null)
 
   const openings = useMemo(() => {
@@ -606,7 +607,9 @@ export default function HouseShell() {
   const parapets = useMemo(() => {
     const boxes: Box[] = []
     const N = plan.floors.length
-    if (N === 0 || config.roof !== 'flat') return boxes
+    // roofStep — дах видно ЛИШЕ на своєму кроці. Інакше, повернувшись назад на
+    // «Вікна», користувач і далі бачив би вже обраний дах.
+    if (N === 0 || !roofStep || config.roof !== 'flat') return boxes
     plan.floors.forEach((fl, idx) => {
       const roofY = (idx + 1) * FLOOR_H
       const t = wallT(idx + 1) // парапет — ярус над стіною свого поверху
@@ -650,14 +653,14 @@ export default function HouseShell() {
       }
     })
     return boxes
-  }, [plan, config.roof])
+  }, [plan, config.roof, roofStep])
 
   // Скатний дах (скандинавський, без звісів): двосхилі призми точно по контуру
   // стін — над верхнім поверхом і над кожним нижнім рівнем, не накритим зверху.
   const gables = useMemo(() => {
     const out: { geo: ExtrudeGeometry; x: number; y: number; z: number; rotY: number }[] = []
     const N = plan.floors.length
-    if (N === 0 || config.roof !== 'pitched') return out
+    if (N === 0 || !roofStep || config.roof !== 'pitched') return out
     plan.floors.forEach((fl, idx) => {
       const roofY = (idx + 1) * FLOOR_H
       let rects: Rect[]
@@ -704,7 +707,7 @@ export default function HouseShell() {
       }
     })
     return out
-  }, [plan, config.roof])
+  }, [plan, config.roof, roofStep])
 
   useFrame((_, dt) => {
     const g = ref.current
