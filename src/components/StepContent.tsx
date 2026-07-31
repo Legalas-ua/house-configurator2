@@ -1,5 +1,6 @@
-import { useConfigurator } from '../state/store'
+import { useConfigurator, useHousePlan } from '../state/store'
 import { STEPS } from '../config/steps'
+import { validatePlan } from '../lib/validatePlan'
 import { t } from '../locales'
 import BudgetSlider from './fields/BudgetSlider'
 import OptionCards from './fields/OptionCards'
@@ -14,8 +15,13 @@ export default function StepContent() {
   const nextStep = useConfigurator((s) => s.nextStep)
   const prevStep = useConfigurator((s) => s.prevStep)
 
+  const planMode = useConfigurator((s) => s.planMode)
+  const plan = useHousePlan()
+
   const step = STEPS[currentStep]
   const texts = t.steps[step.id]
+  // Помилки ручного планування не пускають далі — виправляти доведеться тут.
+  const blocked = step.id === 'rooms' && planMode === 'custom' && validatePlan(plan).length > 0
 
   return (
     <section className="step">
@@ -38,7 +44,7 @@ export default function StepContent() {
           type="button"
           className="btn btn--primary"
           onClick={nextStep}
-          disabled={currentStep === STEPS.length - 1 || !step.isComplete(config)}
+          disabled={currentStep === STEPS.length - 1 || !step.isComplete(config) || blocked}
         >
           {t.nav.next}
         </button>

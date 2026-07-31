@@ -8,10 +8,13 @@ import { useConfigurator, useHousePlan } from '../state/store'
 import { STEPS } from '../config/steps'
 import { FOUNDATION_H, ROOM_COLORS } from '../config/plan'
 import type { FloorPlan, PlanRect, RoomType, RoomZone } from '../config/types'
-import { GRID, MIN_SIDE, snap, updateRoom } from '../lib/editPlan'
+import { GRID, MIN_SIDE, junctionsOf, snap, toggleJoin, updateRoom, type Junction } from '../lib/editPlan'
+import { badRooms, validatePlan, type PlanIssue } from '../lib/validatePlan'
 import { t } from '../locales'
 
 const GAP = 0.08 // зазор між РІЗНИМИ кімнатами
+const HANDLE_COLOR = '#d9622b' // теракота — ручки мають чітко читатись на зонах
+const ISSUE_COLOR = '#e03131' // місце помилки планування
 const EPS = 0.01
 // ---- Правила анімації (діють для ВСІХ кімнат — теперішніх і майбутніх) ----
 // Рух і зміна розміру завжди ПЛАВНІ (нічого не «перескакує»): позицією та
@@ -191,6 +194,60 @@ function SizeLabels({ rect }: { rect: PlanRect }) {
   )
 }
 
+// Проблемне місце: червона заливка + червоний контур. Малюємо саме МІСЦЕ
+// (перетин або щілину), а не всю кімнату — видно, де саме помилка.
+function IssueMark({ rect }: { rect: PlanRect }) {
+  const ring = useMemo(() => {
+    const x0 = rect.x - rect.width / 2
+    const x1 = rect.x + rect.width / 2
+    const z0 = rect.z - rect.depth / 2
+    const z1 = rect.z + rect.depth / 2
+    const pts = [x0, 0, z0, x1, 0, z0, x1, 0, z0, x1, 0, z1, x1, 0, z1, x0, 0, z1, x0, 0, z1, x0, 0, z0]
+    const g = new BufferGeometry()
+    g.setAttribute('position', new Float32BufferAttribute(pts, 3))
+    return g
+  }, [rect])
+  return (
+    <>
+      <mesh position={[rect.x, 0.3, rect.z]}>
+        <boxGeometry args={[Math.max(rect.width, 0.12), 0.16, Math.max(rect.depth, 0.12)]} />
+        <meshStandardMaterial color={ISSUE_COLOR} transparent opacity={0.55} depthWrite={false} />
+      </mesh>
+      <lineSegments geometry={ring} position={[0, 0.39, 0]}>
+        <lineBasicMaterial color={ISSUE_COLOR} depthWrite={false} />
+      </lineSegments>
+    </>
+  )
+}
+
+// Кнопки на стиках обраної кімнати: об'єднати сусідні прямокутники в одне
+// приміщення складної форми (без стіни між ними) або роз'єднати назад.
+function JoinButtons({
+  junctions,
+  onToggle,
+}: {
+  junctions: Junction[]
+  onToggle: (otherId: string) => void
+}) {
+  return (
+    <>
+      {junctions.map((j) => (
+        <Html key={j.otherId} position={[j.x, 0.42, j.z]} center zIndexRange={[20, 0]}>
+          <button
+            type="button"
+            className={`plan-join${j.joined ? ' plan-join--on' : ''}`}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={() => onToggle(j.otherId)}
+            title={j.joined ? t.steps.rooms.editor.split : t.steps.rooms.editor.join}
+          >
+            {j.joined ? '×' : '+'}
+          </button>
+        </Html>
+      ))}
+    </>
+  )
+}
+
 // Ручки на серединах граней обраної кімнати. Тягнеш ручку — рухається та грань.
 function Handles({
   rect,
@@ -215,7 +272,7 @@ function Handles({
           onPointerDown={(e) => onGrab(sp.mode, e)}
         >
           <boxGeometry args={[s, 0.12, s]} />
-          <meshStandardMaterial color="#ffffff" emissive="#2f6fb8" emissiveIntensity={0.5} />
+          <meshStandardMaterial color={HANDLE_COLOR} emissive={HANDLE_COLOR} emissiveIntensity={0.45} roughness={0.4} />
         </mesh>
       ))}
     </>
@@ -424,6 +481,7 @@ function PlanFloor({
   floor,
   floorIdx,
   below,
+  issues,
   showZones,
   showSlab,
   yOffset,
@@ -433,6 +491,7 @@ function PlanFloor({
   floor: FloorPlan
   floorIdx: number
   below?: FloorPlan // поверх під цим — його контур підказує межі
+  issues: PlanIssue[] // помилки ЦЬОГО поверху
   showZones: boolean
   showSlab: boolean
   yOffset: number
@@ -452,6 +511,11 @@ function PlanFloor({
   const downAt = useRef<{ x: number; y: number } | null>(null)
 
   const selected = editable ? floor.rooms.find((r) => r.id === selectedRoom) : undefined
+  const bad = useMemo(() => badRooms(issues, floorIdx), [issues, floorIdx])
+  const junctions = useMemo(
+    () => (selected?.id ? junctionsOf(floor.rooms, selected.id) : []),
+    [floor.rooms, selected?.id],
+  )
 
   const endDrag = () => {
     setDrag(null)
@@ -532,7 +596,8 @@ function PlanFloor({
         key: id,
         hoverId,
         type: room.type,
-        color: ROOM_COLORS[room.type],
+        // Кімната, замішана в помилці, стає червоною — щоб було видно й здалеку.
+        color: bad.has(id) ? ISSUE_COLOR : ROOM_COLORS[room.type],
         area: Math.round(area),
         w: Math.max(room.width - l - r, 0.15),
         d: Math.max(room.depth - f - bk, 0.15),
@@ -544,7 +609,7 @@ function PlanFloor({
         exiting: false,
       }
     })
-  }, [floor, showZones])
+  }, [floor, showZones, bad])
 
   const signature = useMemo(
     () => target.map((i) => `${i.key}:${i.w.toFixed(2)},${i.d.toFixed(2)},${i.cx.toFixed(2)},${i.cz.toFixed(2)},${i.color}`).join('|'),
@@ -639,8 +704,15 @@ function PlanFloor({
             onGrab={(mode, e) => grab(selected.id!, mode, e)}
           />
           <SizeLabels rect={{ x: selected.x, z: selected.z, width: selected.width, depth: selected.depth }} />
+          <JoinButtons
+            junctions={junctions}
+            onToggle={(otherId) => setCustomPlan(toggleJoin(plan, floorIdx, selected.id!, otherId))}
+          />
         </>
       )}
+
+      {/* Місця помилок планування */}
+      {editable && active && issues.map((it, i) => <IssueMark key={`issue-${i}`} rect={it.rect} />)}
       {drag && <DragPlane onMove={moveDrag} onDrop={endDrag} />}
     </group>
   )
@@ -657,6 +729,7 @@ export default function PlanView() {
   const showZones = stepId === 'rooms'
   // Тягати зони можна лише там, де їх видно, і лише у ручному режимі.
   const editable = showZones && planMode === 'custom'
+  const issues = useMemo(() => (editable ? validatePlan(plan) : []), [editable, plan])
   // Плиту показуємо на «формі» тощо, але не на «кімнати» (зони) і не на «вікна»/«дах»
   // (там основу дає 3D-оболонка HouseShell).
   const showSlab = !showZones && stepId !== 'windows' && stepId !== 'roof'
@@ -676,6 +749,7 @@ export default function PlanView() {
             floor={fl}
             floorIdx={idx}
             below={idx > 0 ? plan.floors[idx - 1] : undefined}
+            issues={issues.filter((it) => it.floor === idx)}
             editable={editable}
             showZones={showZones}
             showSlab={showSlab}

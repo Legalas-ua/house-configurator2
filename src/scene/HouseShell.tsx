@@ -40,6 +40,7 @@ const PLATE_COLOR = '#d9d3c6'
 const FOUND_COLOR = '#bdb6a7' // цоколь темніший за плиту — читається як окремий об'єм
 const FOUND_OUT = WALL_T / 2 + 0.04 // виступ цоколя за зовнішню грань стіни
 const RISE_EASE = 0.5
+const ROOF_EASE = 0.42 // дах виростає трохи жвавіше за коробку
 const PARAPET_H = 0.45 // висота парапету плоського даху
 const ROOF_SLOPE = 0.35 // висота гребеня = проліт × 0.35 (≈35°, скандинавський)
 const ROOF_LIFT = 0.09 // на скільки схили підняті над верхом стіни
@@ -385,7 +386,9 @@ export default function HouseShell() {
   const plan = useHousePlan()
   const stepId = STEPS[currentStep].id
   const show = stepId === 'windows' || stepId === 'roof' // коробка видима на «Вікна» і «Дах»
-  const roofStep = stepId === 'roof'
+  const roofStep = stepId === 'roof' // дах видно ЛИШЕ на своєму кроці
+  const roofRef = useRef<Group>(null)
+  const roofBaseY = FLOOR_H // найнижчий рівень даху — звідси він і виростає
   const ref = useRef<Group>(null)
 
   const openings = useMemo(() => {
@@ -607,9 +610,9 @@ export default function HouseShell() {
   const parapets = useMemo(() => {
     const boxes: Box[] = []
     const N = plan.floors.length
-    // roofStep — дах видно ЛИШЕ на своєму кроці. Інакше, повернувшись назад на
-    // «Вікна», користувач і далі бачив би вже обраний дах.
-    if (N === 0 || !roofStep || config.roof !== 'flat') return boxes
+    // Геометрію будуємо незалежно від кроку — видимістю керує анімована група
+    // (інакше при поверненні назад дах зникав би миттєво, без анімації).
+    if (N === 0 || config.roof !== 'flat') return boxes
     plan.floors.forEach((fl, idx) => {
       const roofY = (idx + 1) * FLOOR_H
       const t = wallT(idx + 1) // парапет — ярус над стіною свого поверху
@@ -653,14 +656,14 @@ export default function HouseShell() {
       }
     })
     return boxes
-  }, [plan, config.roof, roofStep])
+  }, [plan, config.roof])
 
   // Скатний дах (скандинавський, без звісів): двосхилі призми точно по контуру
   // стін — над верхнім поверхом і над кожним нижнім рівнем, не накритим зверху.
   const gables = useMemo(() => {
     const out: { geo: ExtrudeGeometry; x: number; y: number; z: number; rotY: number }[] = []
     const N = plan.floors.length
-    if (N === 0 || !roofStep || config.roof !== 'pitched') return out
+    if (N === 0 || config.roof !== 'pitched') return out
     plan.floors.forEach((fl, idx) => {
       const roofY = (idx + 1) * FLOOR_H
       let rects: Rect[]
@@ -707,13 +710,20 @@ export default function HouseShell() {
       }
     })
     return out
-  }, [plan, config.roof, roofStep])
+  }, [plan, config.roof])
 
   useFrame((_, dt) => {
     const g = ref.current
     if (!g) return
     easing.damp(g.scale, 'y', show ? 1 : 0.0001, RISE_EASE, dt)
     g.visible = show || g.scale.y > 0.02 // лишаємось видимими, поки коробка зникає
+    // Дах виростає окремо, ВІД лінії даху вгору (тому власна група з origin на
+    // roofBaseY). Так він піднімається на місце, а не проростає крізь будинок.
+    const r = roofRef.current
+    if (r) {
+      easing.damp(r.scale, 'y', roofStep ? 1 : 0.0001, ROOF_EASE, dt)
+      r.visible = roofStep || r.scale.y > 0.02
+    }
   })
 
   return (
@@ -760,18 +770,24 @@ export default function HouseShell() {
         </mesh>
       ))}
 
-      {parapets.map((b, i) => (
-        <mesh key={`parapet-${i}`} position={[b.x, b.y, b.z]} castShadow receiveShadow>
-          <boxGeometry args={[b.dx, b.dy, b.dz]} />
-          <meshStandardMaterial color={WALL_COLOR} roughness={0.9} />
-        </mesh>
-      ))}
+      {/* Дах у власній групі з origin на лінії даху: масштаб по Y підіймає
+          його ЗВІДТИ вгору, а не розтягує від землі крізь будинок. */}
+      <group ref={roofRef} position={[0, roofBaseY, 0]} visible={false} scale={[1, 0.0001, 1]}>
+        <group position={[0, -roofBaseY, 0]}>
+          {parapets.map((b, i) => (
+            <mesh key={`parapet-${i}`} position={[b.x, b.y, b.z]} castShadow receiveShadow>
+              <boxGeometry args={[b.dx, b.dy, b.dz]} />
+              <meshStandardMaterial color={WALL_COLOR} roughness={0.9} />
+            </mesh>
+          ))}
 
-      {gables.map((g, i) => (
-        <mesh key={`gable-${i}`} geometry={g.geo} position={[g.x, g.y, g.z]} rotation-y={g.rotY} castShadow receiveShadow>
-          <meshStandardMaterial color={ROOF_COLOR} roughness={0.75} />
-        </mesh>
-      ))}
+          {gables.map((g, i) => (
+            <mesh key={`gable-${i}`} geometry={g.geo} position={[g.x, g.y, g.z]} rotation-y={g.rotY} castShadow receiveShadow>
+              <meshStandardMaterial color={ROOF_COLOR} roughness={0.75} />
+            </mesh>
+          ))}
+        </group>
+      </group>
 
       {openings.map((o) => (
         <Win key={o.key} rotY={o.rotY} x={o.fx} z={o.fz} baseY={o.baseY} width={o.width} sill={o.sill} isDoor={o.isDoor} />

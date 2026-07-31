@@ -56,6 +56,18 @@ export const uk = {
         selected: 'Обрана кімната',
         none: 'Оберіть кімнату на плані',
         size: (w: number, d: number) => `${w.toFixed(1)} × ${d.toFixed(1)} м`,
+        join: 'З’єднати',
+        split: 'Роз’єднати',
+        joinHint: 'Кнопка на стику двох кімнат об’єднує їх в одне приміщення складної форми — стіни між ними не буде',
+      },
+      issues: {
+        title: 'Помилки планування',
+        blocked: 'Виправте помилки, щоб рухатись далі',
+        overlap: (a: string, b: string) => `${a} і ${b} накладаються одна на одну`,
+        gap: (a: string, b: string, gap: number) =>
+          `Між «${a}» і «${b}» щілина ${gap.toFixed(1).replace('.0', '')} м — так не будують: або зсуньте впритул, або розведіть далі`,
+        stairsArea: (area: number) =>
+          `Сходи замалі: ${area.toFixed(1).replace('.0', '')} м² замість щонайменше 8 м²`,
       },
       kitchen: {
         title: 'Кухня',

@@ -544,6 +544,47 @@ body {
   user-select: none;
 }
 
+/* Кнопка на стику двох зон: об'єднати їх в одне приміщення / роз'єднати */
+.plan-join {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: #d9622b;
+  color: #fff;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+}
+
+.plan-join--on {
+  background: #2f6fb8;
+}
+
+/* Помилки планування */
+.issues {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.issues__item {
+  padding: 8px 10px;
+  border-left: 3px solid #e03131;
+  border-radius: 4px;
+  background: rgba(224, 49, 49, 0.08);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink);
+}
+
 /* Ручний режим планування: підказка та рядок обраної кімнати */
 .rooms__hint {
   margin: 8px 0 0;

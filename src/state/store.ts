@@ -16,6 +16,7 @@ import {
 } from '../config/layouts'
 import { generateHousePlan } from '../lib/floorplan'
 import { normalizePlan } from '../lib/editPlan'
+import { validatePlan } from '../lib/validatePlan'
 import { floor2Limits } from '../lib/lshape'
 
 // Крок, з якого починається планування. Повернення НА ПОПЕРЕДНІЙ крок скидає
@@ -165,6 +166,9 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
   nextStep: () =>
     set((s) => {
       if (!STEPS[s.currentStep].isComplete(s.config)) return s
+      // Друга лінія оборони поруч із неактивною кнопкою: помилки ручного
+      // планування не дають піти далі жодним шляхом.
+      if (s.currentStep === ROOMS_STEP && s.customPlan && validatePlan(s.customPlan).length > 0) return s
       const next = Math.min(s.currentStep + 1, STEPS.length - 1)
       return { currentStep: next, maxStepReached: Math.max(s.maxStepReached, next) }
     }),

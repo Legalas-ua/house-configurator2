@@ -78,6 +78,89 @@ export function removeRoom(plan: HousePlan, floorIdx: number, id: string): House
   )
 }
 
+// ---- Складні кімнати: об'єднання сусідніх прямокутників ----
+// Кімната складної форми — це кілька прямокутників зі СПІЛЬНИМ group. Такі
+// частини не розділяються перегородкою (HouseShell) і підсвічуються разом
+// (PlanView) — тобто це одне приміщення.
+
+const EDGE_EPS = 0.01
+
+export interface Junction {
+  otherId: string
+  x: number // середина спільного ребра — там і буде кнопка
+  z: number
+  joined: boolean
+}
+
+// Спільне ребро двох прямокутників: дотик по одній осі + перекриття по другій.
+function sharedEdge(a: RoomZone, b: RoomZone): { x: number; z: number } | null {
+  const ax0 = a.x - a.width / 2
+  const ax1 = a.x + a.width / 2
+  const az0 = a.z - a.depth / 2
+  const az1 = a.z + a.depth / 2
+  const bx0 = b.x - b.width / 2
+  const bx1 = b.x + b.width / 2
+  const bz0 = b.z - b.depth / 2
+  const bz1 = b.z + b.depth / 2
+
+  const zOver = Math.min(az1, bz1) - Math.max(az0, bz0)
+  if (zOver > EDGE_EPS) {
+    if (Math.abs(ax1 - bx0) < EDGE_EPS) return { x: ax1, z: (Math.max(az0, bz0) + Math.min(az1, bz1)) / 2 }
+    if (Math.abs(bx1 - ax0) < EDGE_EPS) return { x: ax0, z: (Math.max(az0, bz0) + Math.min(az1, bz1)) / 2 }
+  }
+  const xOver = Math.min(ax1, bx1) - Math.max(ax0, bx0)
+  if (xOver > EDGE_EPS) {
+    if (Math.abs(az1 - bz0) < EDGE_EPS) return { x: (Math.max(ax0, bx0) + Math.min(ax1, bx1)) / 2, z: az1 }
+    if (Math.abs(bz1 - az0) < EDGE_EPS) return { x: (Math.max(ax0, bx0) + Math.min(ax1, bx1)) / 2, z: az0 }
+  }
+  return null
+}
+
+// Усі стики обраної кімнати з сусідами — по одному на спільне ребро.
+export function junctionsOf(rooms: RoomZone[], id: string): Junction[] {
+  const self = rooms.find((r) => r.id === id)
+  if (!self) return []
+  const out: Junction[] = []
+  for (const other of rooms) {
+    if (other === self || !other.id) continue
+    const mid = sharedEdge(self, other)
+    if (!mid) continue
+    out.push({ otherId: other.id, x: mid.x, z: mid.z, joined: !!self.group && self.group === other.group })
+  }
+  return out
+}
+
+// Об'єднати/роз'єднати дві сусідні кімнати.
+export function toggleJoin(plan: HousePlan, floorIdx: number, idA: string, idB: string): HousePlan {
+  const fl = plan.floors[floorIdx]
+  const a = fl?.rooms.find((r) => r.id === idA)
+  const b = fl?.rooms.find((r) => r.id === idB)
+  if (!a || !b) return plan
+  const joined = !!a.group && a.group === b.group
+  const group = a.group ?? `join-${idA}`
+  const oldB = b.group
+
+  return recompute(
+    plan.floors.map((f, i) => {
+      if (i !== floorIdx) return f
+      return {
+        ...f,
+        rooms: f.rooms.map((r) => {
+          if (joined) {
+            // Роз'єднуємо: знімаємо групу з B (решта групи лишається цілою).
+            if (r.id !== idB) return r
+            const { group: _drop, ...rest } = r
+            return rest
+          }
+          // Об'єднуємо: B і вся його попередня група переходять у групу A.
+          if (r.id === idA || r.id === idB || (oldB && r.group === oldB)) return { ...r, group }
+          return r
+        }),
+      }
+    }),
+  )
+}
+
 // Нова кімната стає праворуч від наявних, впритул — щоб одразу була частиною
 // будинку, а не висіла окремим островом.
 export function addRoom(
