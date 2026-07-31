@@ -291,13 +291,20 @@ function Win({
   // секцію (slot) і мають власну ширину; решта секцій ділять залишок порівну.
   // Так двері «переїжджають» між імпостами, не ламаючи сітку.
   const { mullX, doorSpans } = useMemo(() => {
-    const panels = panelCount(mullions, width)
+    // У ВУЗЬКОМУ вікні двері займають увесь отвір: лишати поруч смужку скла в
+    // кілька сантиметрів немає сенсу — це вже не вікно, а щілина.
+    const fullWidth = doors.length === 1 && width <= NARROW_WIN
+    let panels = panelCount(mullions, width)
+    if (fullWidth) panels = 1
+    // Якщо двері вужчі за вікно, секцій має бути БІЛЬШЕ, ніж дверей, — інакше
+    // біля краю дверей не буде імпоста (вікно 1.3 м з дверима саме так і
+    // виглядало: двері впритул до рами, без вертикальної стійки).
+    else if (doors.length > 0) panels = Math.max(panels, doors.length + 1)
+
     const used = new Map<number, number>()
     for (const d of doors) {
       const slot = Math.max(0, Math.min(d.slot, panels - 1))
-      // У вузькому вікні двері займають ВЕСЬ отвір: лишати поруч смужку скла
-      // в кілька сантиметрів немає сенсу — це вже не вікно, а щілина.
-      if (!used.has(slot)) used.set(slot, width <= NARROW_WIN ? width : Math.min(d.width, width))
+      if (!used.has(slot)) used.set(slot, fullWidth ? width : Math.min(d.width, width))
     }
     const doorTotal = [...used.values()].reduce((s, v) => s + v, 0)
     const others = panels - used.size
@@ -481,6 +488,8 @@ const flipped = (side: Side) => side === 'xmax' || side === 'zmin'
 // перехоплює всі кліки на собі.
 const WALL_PICK_OUT = 0.14
 const WIN_PICK_OUT = 0.26
+const LIMIT_COLOR = '#ffffff' // межі руху вікна
+const GUIDE_COLOR = '#2f6fb8' // напрямні від сусідніх вікон
 
 // Зовнішня нормаль сторони, помножена на відстань.
 const outward = (side: Side, d: number): [number, number] => [
@@ -576,11 +585,17 @@ function WindowEditor({ openings, plan }: { openings: Opening[]; plan: HousePlan
     return { horizontal: w.horizontal, line: w.line, a: w.uStart + from, b: w.uStart + to, y: sel.baseY }
   }, [sel, plan])
 
-  // Напрямні: вікна сусіднього поверху на тій самій площині стіни.
+  // Напрямні: вікна на ТІЙ САМІЙ площині стіни, але з інших поверхів. Показуємо
+  // не всі — інакше стіна вкривається частоколом ліній, — а лише ДВА найближчі
+  // до вікна, яке зараз тягнемо.
   const guides = useMemo(() => {
     if (!drag || !sel) return []
+    const mid = (o: Opening) => (o.a + o.b) / 2
+    const c = mid(sel)
     return openings
-      .filter((o) => o.floor !== sel.floor && o.horizontal === sel.horizontal && Math.abs(o.line - sel.line) < 0.4)
+      .filter((o) => o.id !== sel.id && o.horizontal === sel.horizontal && Math.abs(o.line - sel.line) < 0.4)
+      .sort((a, b) => Math.abs(mid(a) - c) - Math.abs(mid(b) - c))
+      .slice(0, 2)
       .flatMap((o) => [o.a, o.b])
   }, [drag, sel, openings])
 
@@ -706,11 +721,11 @@ function WindowEditor({ openings, plan }: { openings: Opening[]; plan: HousePlan
         )
       })}
 
-      {/* Пунктирні межі, у яких можна рухати обране вікно */}
+      {/* Межі, у яких можна рухати обране вікно — БІЛІ, на висоту свого поверху */}
       {limits && (
         <>
-          <GuideLine horizontal={limits.horizontal} line={limits.line} at={limits.a} baseY={limits.y} />
-          <GuideLine horizontal={limits.horizontal} line={limits.line} at={limits.b} baseY={limits.y} />
+          <GuideLine horizontal={limits.horizontal} line={limits.line} at={limits.a} from={limits.y} to={limits.y + WALL_H} color={LIMIT_COLOR} />
+          <GuideLine horizontal={limits.horizontal} line={limits.line} at={limits.b} from={limits.y} to={limits.y + WALL_H} color={LIMIT_COLOR} />
         </>
       )}
 
@@ -768,7 +783,15 @@ function WindowEditor({ openings, plan }: { openings: Opening[]; plan: HousePlan
       {/* Напрямні від вікон сусіднього поверху — поки тягнеш */}
       {sel &&
         guides.map((g, i) => (
-          <GuideLine key={`guide-${i}`} horizontal={sel.horizontal} line={sel.line} at={g} baseY={0} />
+          <GuideLine
+            key={`guide-${i}`}
+            horizontal={sel.horizontal}
+            line={sel.line}
+            at={g}
+            from={0}
+            to={plan.floors.length * FLOOR_H}
+            color={GUIDE_COLOR}
+          />
         ))}
 
       {/* Ловець руху курсора. Площина стоїть на ВИСОТІ ВІКНА: якщо ловити на
@@ -796,28 +819,31 @@ function GuideLine({
   horizontal,
   line,
   at,
-  baseY,
+  from,
+  to,
+  color,
 }: {
   horizontal: boolean
   line: number
   at: number
-  baseY: number
+  from: number
+  to: number
+  color: string
 }) {
   const geo = useMemo(() => {
     const pts: number[] = []
-    const top = baseY + WALL_H
-    for (let y = baseY; y < top; y += 0.4) {
-      const y2 = Math.min(y + 0.22, top)
+    for (let y = from; y < to; y += 0.4) {
+      const y2 = Math.min(y + 0.22, to)
       if (horizontal) pts.push(at, y, line, at, y2, line)
       else pts.push(line, y, at, line, y2, at)
     }
     const g = new BufferGeometry()
     g.setAttribute('position', new Float32BufferAttribute(pts, 3))
     return g
-  }, [horizontal, line, at, baseY])
+  }, [horizontal, line, at, from, to])
   return (
     <lineSegments geometry={geo}>
-      <lineBasicMaterial color={HANDLE_COLOR} transparent opacity={0.9} depthTest={false} />
+      <lineBasicMaterial color={color} transparent opacity={0.95} depthTest={false} />
     </lineSegments>
   )
 }

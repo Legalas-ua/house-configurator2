@@ -138,6 +138,9 @@ function WindowEditorPanel() {
               </button>
             </div>
 
+            {/* Розміри окремо від поділу й дверей — властивості різні, у купі
+                вони читались як один довгий список однакових тумблерів. */}
+            <span className="rooms__subtitle">{texts.groupSize}</span>
             <Stepper
               label={texts.width}
               value={spec.width}
@@ -159,6 +162,8 @@ function WindowEditorPanel() {
               stepSize={SIZE_STEP}
               onChange={(v) => patch({ top: Math.max(spec.sill + 0.4, Math.min(v, WIN_TOP + 0.2)) })}
             />
+
+            <span className="rooms__subtitle">{texts.groupSplit}</span>
             <Stepper
               label={texts.mullions}
               value={spec.mullions}
@@ -166,6 +171,8 @@ function WindowEditorPanel() {
               stepSize={1}
               onChange={(v) => patch({ mullions: Math.max(-1, Math.min(v, 6)) })}
             />
+
+            <span className="rooms__subtitle">{texts.groupDoors}</span>
 
             {/* Двері — лічильник, як імпости. Скільки влізе, стільки й можна:
                 двоє дверей потребують хоча б 2 × 800 мм ширини вікна. */}
@@ -199,6 +206,8 @@ function WindowEditorPanel() {
                 ))}
               </div>
             )}
+
+            {maxDoors(spec.width) === 0 && <p className="rooms__hint">{texts.tooNarrow}</p>}
 
             {spec.doors.length > 0 && (
               <>
