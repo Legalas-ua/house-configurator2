@@ -1,7 +1,7 @@
 import { useConfigurator, useHousePlan, useRoof } from '../../state/store'
-import type { PlanMode } from '../../config/types'
 import { addRoofPart, removeRoofPart, roofLevels, type RoofKind } from '../../lib/roof'
 import { t } from '../../locales'
+import { RoofModePicker } from './RoofField'
 
 const KINDS: RoofKind[] = ['flat', 'gable', 'mono']
 
@@ -10,6 +10,7 @@ const KINDS: RoofKind[] = ['flat', 'gable', 'mono']
 export default function RoofZonesField() {
   const mode = useConfigurator((s) => s.roofMode)
   const setMode = useConfigurator((s) => s.setRoofMode)
+  const planMode = useConfigurator((s) => s.planMode)
   const plan = useHousePlan()
   const parts = useRoof()
   const setCustomRoof = useConfigurator((s) => s.setCustomRoof)
@@ -25,17 +26,7 @@ export default function RoofZonesField() {
 
   return (
     <>
-      <div className="rooms__group">
-        <span className="rooms__group-title">{texts.mode.title}</span>
-        <div className="chips">
-          {(['template', 'custom'] as PlanMode[]).map((m) => (
-            <button key={m} type="button" className={`chip${mode === m ? ' chip--on' : ''}`} onClick={() => setMode(m)}>
-              {texts.mode[m]}
-            </button>
-          ))}
-        </div>
-        <p className="rooms__hint">{mode === 'custom' ? texts.mode.customHint : texts.mode.templateHint}</p>
-      </div>
+      <RoofModePicker mode={mode} setMode={setMode} planMode={planMode} texts={texts.mode} />
 
       {mode === 'custom' && levels.length === 0 && <p className="rooms__hint">{texts.editor.noLevels}</p>}
 

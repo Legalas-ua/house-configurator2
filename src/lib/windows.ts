@@ -174,9 +174,16 @@ export function generateWindows(plan: HousePlan, config: HouseConfig): WindowSpe
       const specW = WIN_WIDTH[room.type]
       if (specW == null || !room.id) return
       const b = bounds(room)
-      const sides = openSides(fl, room)
+      let sides = openSides(fl, room)
         .filter((s) => !(overLowerRoof(s, b) && !facesTerrace(fl.rooms, room, s)))
         .map((s) => wallOf(room, s))
+      // Гардероб-смуга, розтягнута вздовж стіни: вікна лише на ДОВГІЙ грані.
+      // На торцях смуги вони теж виростали — і фасад рябів зайвими отворами
+      // там, де за ними стоять полиці.
+      if (room.type === 'wardrobe') {
+        const short = Math.min(room.width, room.depth)
+        if (Math.max(room.width, room.depth) - short > 0.5) sides = sides.filter((s) => s.len > short + 0.05)
+      }
       if (sides.length === 0) return
       sides.sort((a, c) => c.len - a.len)
 

@@ -86,7 +86,11 @@ const planReset = (index: number) => ({
   selectedWall: null,
   selectedDoor: null,
   selectedRoofPart: null,
-  ...(index < ROOMS_STEP ? { planMode: 'template' as const, customPlan: null } : {}),
+  // Разом із плануванням відкочуємо й дах: там міняють форму будинку, а зони
+  // даху намальовані під стару.
+  ...(index < ROOMS_STEP
+    ? { planMode: 'template' as const, customPlan: null, roofMode: 'template' as const, customRoof: null }
+    : {}),
   ...(index < WINDOWS_STEP ? { windowsMode: 'template' as const, customWindows: null } : {}),
 })
 
@@ -182,14 +186,30 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
 
   // Ручний режим НЕ починається з порожнечі: заморожуємо поточний обчислений
   // план як стартову точку. Повернення до шаблонів скидає ручні правки.
+  // Планування тягне за собою дах: готові варіанти даху розраховані на обриси
+  // ШАБЛОНУ, і на довільному плані дають нісенітницю. Тому своє планування —
+  // це завжди і свій дах, намальований з нуля (порожній `customRoof`, а не
+  // `null`: null означав би «порахуй готовий»).
   setPlanMode: (mode) =>
     set((s) => {
       if (mode === s.planMode) return s
-      if (mode === 'template') return { planMode: 'template', customPlan: null, selectedRoom: null }
+      if (mode === 'template') {
+        return {
+          planMode: 'template',
+          customPlan: null,
+          selectedRoom: null,
+          roofMode: 'template' as const,
+          customRoof: null,
+          selectedRoofPart: null,
+        }
+      }
       return {
         planMode: 'custom',
         customPlan: s.customPlan ?? normalizePlan(generateHousePlan(s.config)),
         selectedRoom: null,
+        roofMode: 'custom' as const,
+        customRoof: [],
+        selectedRoofPart: null,
       }
     }),
 
@@ -221,17 +241,14 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
   // підсвіченою, хоч кліки по стінах уже не ловляться.
   setAddingWindow: (on) => set({ addingWindow: on, selectedWall: on ? null : null }),
 
-  // Ручний дах стартує з готового набору — людина правит, а не малює з нуля.
+  // Малювати свій дах — означає малювати з ЧИСТОГО аркуша. Раніше сюди
+  // підставлявся готовий набір зон, і людина замість малювання спершу
+  // розбирала чуже: зони лежали одна на одній і заважали ставити свої.
   setRoofMode: (mode) =>
     set((s) => {
       if (mode === s.roofMode) return s
       if (mode === 'template') return { roofMode: 'template', customRoof: null, selectedRoofPart: null }
-      const plan = s.customPlan ?? generateHousePlan(s.config)
-      return {
-        roofMode: 'custom',
-        customRoof: s.customRoof ?? generateRoof(plan, s.config.roof === 'pitched' ? 'gable' : 'flat'),
-        selectedRoofPart: null,
-      }
+      return { roofMode: 'custom', customRoof: [], selectedRoofPart: null }
     }),
 
   setCustomRoof: (parts) => set({ roofMode: 'custom', customRoof: parts }),

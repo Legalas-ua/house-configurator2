@@ -20,7 +20,6 @@ import { ringContains, unionOutline, type Point, type Ring } from '../lib/outlin
 import {
   bounds,
   fitToWall,
-  isExterior,
   neighborOf,
   resolveWindows,
   openSides,
@@ -34,6 +33,7 @@ import {
   type ResolvedWindow,
   type Side,
 } from '../lib/windows'
+import { parapetEdges } from '../lib/roof'
 import { FOUNDATION_H } from '../config/plan'
 import { t } from '../locales'
 import type { FloorPlan, HousePlan, PlanRect } from '../config/types'
@@ -999,6 +999,7 @@ export default function HouseShell() {
   const roofStep = stepId === 'roof' // дах видно ЛИШЕ на своєму кроці
   const selectedRoofPart = useConfigurator((s) => s.selectedRoofPart)
   const windowsMode = useConfigurator((s) => s.windowsMode)
+  const selectedWindow = useConfigurator((s) => s.selectedWindow)
   const editWindows = stepId === 'windows' && windowsMode === 'custom'
   const ref = useRef<Group>(null)
 
@@ -1007,6 +1008,7 @@ export default function HouseShell() {
     () => resolveWindows(plan, windows, FLOOR_H).map((w) => ({ ...w, key: w.id })),
     [plan, windows],
   )
+  const clashHl = openings.find((o) => o.id === selectedWindow)
 
   // Стіни: простінки + перемички НАД отворами (простінок під підвіконням — окремо,
   // анімований Spandrel). Верх перемички = FLOOR_H, низ отвору = WIN_TOP.
@@ -1131,24 +1133,51 @@ export default function HouseShell() {
     const out: { baseY: number; horizontal: boolean; cx: number; cz: number; len: number }[] = []
     plan.floors.forEach((fl, floorIdx) => {
       const baseY = floorIdx * FLOOR_H
-      // Паркан ставимо по ВІДКРИТИХ сторонах кожної тераси — тобто там, де за
-      // нею немає сусідньої кімнати. Раніше умова була прив'язана до плити з
-      // одного прямокутника, тож на ручному плані (плита = самі кімнати) і на
-      // терасі 2-го поверху паркан не з'являвся зовсім.
-      for (const terrace of fl.rooms.filter((r) => r.type === 'terrace')) {
-        const t = bounds(terrace)
-        const edges: { side: Side; horizontal: boolean; c: number; a: number; b: number }[] = [
-          { side: 'zmin', horizontal: true, c: t.z0, a: t.x0, b: t.x1 },
-          { side: 'zmax', horizontal: true, c: t.z1, a: t.x0, b: t.x1 },
-          { side: 'xmin', horizontal: false, c: t.x0, a: t.z0, b: t.z1 },
-          { side: 'xmax', horizontal: false, c: t.x1, a: t.z0, b: t.z1 },
-        ]
-        edges.forEach((e) => {
-          if (!isExterior(fl.rooms, terrace, e.side)) return // до будинку — без паркану
-          const mid = (e.a + e.b) / 2
+      const terraces = fl.rooms.filter((r) => r.type === 'terrace')
+      if (terraces.length === 0) return
+      // Паркан іде по СПІЛЬНОМУ зовнішньому контуру всіх терас поверху.
+      // Раніше кожен прямокутник обраховувався окремо, тож між двома
+      // з'єднаними зонами тераси виростала зайва внутрішня стінка: сусідню
+      // терасу перевірка `isExterior` навмисно не бачить. Об'єднання контурів
+      // прибирає внутрішні грані саме тому, що їх у контурі просто немає.
+      const solid = fl.rooms.filter((r) => r.type !== 'terrace').map(bounds)
+      for (const { pts } of unionOutline(terraces)) {
+        for (let i = 0; i < pts.length; i++) {
+          const [x0, z0] = pts[i]
+          const [x1, z1] = pts[(i + 1) % pts.length]
+          const horizontal = Math.abs(z1 - z0) < 1e-4
+          const line = horizontal ? z0 : x0
+          const from = Math.min(horizontal ? x0 : z0, horizontal ? x1 : z1)
+          const to = Math.max(horizontal ? x0 : z0, horizontal ? x1 : z1)
+          // Ділянки, де до тераси притулилась стіна будинку, — без паркану.
+          // Ріжемо саме ДІЛЯНКУ, а не грань цілком: кімната може закривати
+          // лише частину довгої грані, і решта все одно потребує паркану.
+          const cuts = solid
+            .filter((c) =>
+              horizontal
+                ? Math.abs(c.z0 - line) < 0.05 || Math.abs(c.z1 - line) < 0.05
+                : Math.abs(c.x0 - line) < 0.05 || Math.abs(c.x1 - line) < 0.05,
+            )
+            .map((c) =>
+              horizontal
+                ? ([Math.max(c.x0, from), Math.min(c.x1, to)] as [number, number])
+                : ([Math.max(c.z0, from), Math.min(c.z1, to)] as [number, number]),
+            )
+            .filter(([a, b]) => b - a > 0.05)
+            .sort((a, b) => a[0] - b[0])
           // len БЕЗ подовження → панелі не перетинаються (без мерехтіння скла).
-          out.push({ baseY, horizontal: e.horizontal, cx: e.horizontal ? mid : e.c, cz: e.horizontal ? e.c : mid, len: e.b - e.a })
-        })
+          const push = (a: number, b: number) => {
+            if (b - a < 0.05) return
+            const mid = (a + b) / 2
+            out.push({ baseY, horizontal, cx: horizontal ? mid : line, cz: horizontal ? line : mid, len: b - a })
+          }
+          let cur = from
+          for (const [c0, c1] of cuts) {
+            push(cur, c0)
+            cur = Math.max(cur, c1)
+          }
+          push(cur, to)
+        }
       }
     })
     return out
@@ -1168,49 +1197,36 @@ export default function HouseShell() {
       const t = part.parapetT
       const pt = t + 0.004
       const boxes: Box[] = []
-      const b = bounds(part)
       // Ребра, накриті поверхом ВИЩЕ, парапету не потребують: там уже стоїть
       // зовнішня стіна верхнього поверху, і парапет лише колізив би з нею.
-      const upper = plan.floors[part.level + 1]?.slab.map(bounds) ?? []
-      const edges: { horizontal: boolean; line: number; min: number; max: number; nx: number; nz: number }[] = [
-        { horizontal: true, line: b.z0, min: b.x0, max: b.x1, nx: 0, nz: -1 },
-        { horizontal: true, line: b.z1, min: b.x0, max: b.x1, nx: 0, nz: 1 },
-        { horizontal: false, line: b.x0, min: b.z0, max: b.z1, nx: -1, nz: 0 },
-        { horizontal: false, line: b.x1, min: b.z0, max: b.z1, nx: 1, nz: 0 },
-      ]
-      for (const e of edges) {
-        // Відрізаємо накриті ділянки ребра, а не пропускаємо ребро цілком.
-        const cuts = upper
-          .filter((u) =>
-            e.horizontal
-              ? e.line > u.z0 - 0.05 && e.line < u.z1 + 0.05
-              : e.line > u.x0 - 0.05 && e.line < u.x1 + 0.05,
-          )
-          .map((u) =>
-            e.horizontal
-              ? ([Math.max(u.x0, e.min), Math.min(u.x1, e.max)] as [number, number])
-              : ([Math.max(u.z0, e.min), Math.min(u.z1, e.max)] as [number, number]),
-          )
-          .filter(([p0, p1]) => p1 - p0 > 0.1)
-          .sort((p0, p1) => p0[0] - p1[0])
-        const spans: [number, number][] = []
-        let cur = e.min
-        for (const [c0, c1] of cuts) {
-          if (c0 > cur + 0.05) spans.push([cur, c0])
-          cur = Math.max(cur, c1)
-        }
-        if (e.max > cur + 0.05) spans.push([cur, e.max])
-
+      // Різання ділянок живе в lib/roof.ts — ТИМ САМИМ кодом користується
+      // перевірка колізій, тож геометрія і перевірка не можуть розійтись.
+      for (const e of parapetEdges(part, plan.floors[part.level + 1]?.slab ?? [])) {
+        const { spans } = e
         // Зовнішня грань парапету — рівно грань СТІНИ, а товщина росте
         // ВСЕРЕДИНУ. Інакше парапет випирає за фасад.
         const line = e.line + (e.nx + e.nz) * (WALL_T / 2 - t / 2)
+        // Стовпчик на стику двох граней трохи товщий за смугу (щоб їхні грані
+        // не збігались і не мерехтіли) — але й він росте ВСЕРЕДИНУ, по обох
+        // осях. Раніше він стояв центром на осі стіни, тож на кожному розі
+        // будинку парапет випирав за фасад на пів своєї товщини.
+        const lineP = e.line + (e.nx + e.nz) * (WALL_T / 2 - pt / 2)
+        // Торець на РОЗІ зони теж підтягуємо до грані перпендикулярної стіни.
+        // Кінець, що утворився ВИРІЗОМ (там, де зверху стоїть поверх), — це не
+        // ріг будинку, а звичайний обрив: його лишаємо як є.
+        const cap = (u: number) =>
+          Math.abs(u - e.min) < 1e-4
+            ? u - WALL_T / 2 + pt / 2
+            : Math.abs(u - e.max) < 1e-4
+              ? u + WALL_T / 2 - pt / 2
+              : u
         for (const [u0, u1] of spans) {
           pushBox(boxes, e.horizontal, line, u0, u1, -TIER_LAP, part.parapetH, roofY, t)
-          for (const u of [u0, u1]) {
+          for (const u of [cap(u0), cap(u1)]) {
             boxes.push({
-              x: e.horizontal ? u : line,
+              x: e.horizontal ? u : lineP,
               y: roofY + (part.parapetH - TIER_LAP) / 2,
-              z: e.horizontal ? line : u,
+              z: e.horizontal ? lineP : u,
               dx: pt,
               dy: part.parapetH + TIER_LAP,
               dz: pt,
@@ -1375,6 +1391,23 @@ export default function HouseShell() {
 
       {/* Ручне редагування вікон: вибір, перетягування вздовж стіни, ручки ширини */}
       {editWindows && <WindowEditor openings={openings} plan={plan} />}
+
+      {/* На кроці «Дах» вікна редагують не мишею, а списком колізій — тож те,
+          що зараз правлять, підсвічуємо тут: інакше з панелі не видно, про
+          який саме отвір ідеться. Накладка подій не ловить. */}
+      {roofStep && clashHl && (
+        <mesh
+          position={[
+            clashHl.fx + outward(clashHl.side, WIN_PICK_OUT)[0],
+            clashHl.baseY + (clashHl.sill + clashHl.top) / 2,
+            clashHl.fz + outward(clashHl.side, WIN_PICK_OUT)[1],
+          ]}
+          rotation-y={clashHl.rotY}
+        >
+          <boxGeometry args={[clashHl.width + 0.12, Math.max(clashHl.top - clashHl.sill, 0.1) + 0.12, 0.06]} />
+          <meshBasicMaterial color={HANDLE_COLOR} transparent opacity={0.4} depthWrite={false} />
+        </mesh>
+      )}
 
       {fences.map((f, i) => (
         <group key={`fence-${i}`}>

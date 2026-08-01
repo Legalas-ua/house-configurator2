@@ -236,6 +236,54 @@ export function validateRoof(plan: HousePlan, parts: RoofPart[]): RoofIssue[] {
   return issues
 }
 
+// ---- Парапет: які ділянки СПРАВДІ існують ----
+// Там, де зверху стоїть поверх, парапету немає — його місце займає зовнішня
+// стіна верхнього поверху. Геометрія в HouseShell і перевірка колізій мусять
+// різати ці ділянки ОДНАКОВО, інакше вікно «б'ється» з парапетом, якого нема.
+
+export interface ParapetEdge {
+  horizontal: boolean
+  line: number // координата площини грані (вісь стіни)
+  min: number // повна межа грані — по ній видно, де ріг, а де обрив від вирізу
+  max: number
+  nx: number // зовнішня нормаль
+  nz: number
+  spans: [number, number][] // ділянки, де парапет є
+}
+
+export function parapetEdges(part: RoofPart, above: PlanRect[]): ParapetEdge[] {
+  const b = box(part)
+  const upper = above.map(box)
+  const raw = [
+    { horizontal: true, line: b.z0, min: b.x0, max: b.x1, nx: 0, nz: -1 },
+    { horizontal: true, line: b.z1, min: b.x0, max: b.x1, nx: 0, nz: 1 },
+    { horizontal: false, line: b.x0, min: b.z0, max: b.z1, nx: -1, nz: 0 },
+    { horizontal: false, line: b.x1, min: b.z0, max: b.z1, nx: 1, nz: 0 },
+  ]
+  return raw.map((e) => {
+    // Відрізаємо накриті ділянки ребра, а не пропускаємо ребро цілком.
+    const cuts = upper
+      .filter((u) =>
+        e.horizontal ? e.line > u.z0 - 0.05 && e.line < u.z1 + 0.05 : e.line > u.x0 - 0.05 && e.line < u.x1 + 0.05,
+      )
+      .map((u) =>
+        e.horizontal
+          ? ([Math.max(u.x0, e.min), Math.min(u.x1, e.max)] as [number, number])
+          : ([Math.max(u.z0, e.min), Math.min(u.z1, e.max)] as [number, number]),
+      )
+      .filter(([p0, p1]) => p1 - p0 > 0.1)
+      .sort((p0, p1) => p0[0] - p1[0])
+    const spans: [number, number][] = []
+    let cur = e.min
+    for (const [c0, c1] of cuts) {
+      if (c0 > cur + 0.05) spans.push([cur, c0])
+      cur = Math.max(cur, c1)
+    }
+    if (e.max > cur + 0.05) spans.push([cur, e.max])
+    return { ...e, spans }
+  })
+}
+
 // ---- Колізії даху з вікнами ----
 // Скат чи парапет може перекрити вікно. Рахуємо на рівні ВИСОТ: беремо низ
 // даху над віконним отвором і дивимось, чи він нижчий за верх вікна.
@@ -246,10 +294,21 @@ export interface RoofWindowClash {
 }
 
 // Висота НИЗУ даху над точкою (x,z) у межах зони, від рівня покриття.
-function roofBottomAt(part: RoofPart, x: number, z: number): number | null {
+function roofBottomAt(part: RoofPart, x: number, z: number, above: PlanRect[]): number | null {
   const b = box(part)
   if (x < b.x0 - EPS || x > b.x1 + EPS || z < b.z0 - EPS || z > b.z1 + EPS) return null
-  if (part.kind === 'flat') return part.parapetH // парапет стоїть суцільною стінкою
+  if (part.kind === 'flat') {
+    // Парапет — це смуга по периметру, а не суцільна кришка над усією зоною:
+    // усередині плоского даху заважати вікну просто нічому. І там, де стінки
+    // парапету немає (виріз під поверхом вище), її не повинно бути й тут.
+    for (const e of parapetEdges(part, above)) {
+      const perp = e.horizontal ? z : x
+      const along = e.horizontal ? x : z
+      if (Math.abs(perp - e.line) > part.parapetT + EPS) continue
+      if (e.spans.some(([a, c]) => along > a - EPS && along < c + EPS)) return part.parapetH
+    }
+    return 0
+  }
   const w = b.x1 - b.x0
   const d = b.z1 - b.z0
   const alongZ = part.rotation % 180 === 0 ? d >= w : d < w
@@ -269,6 +328,7 @@ function roofBottomAt(part: RoofPart, x: number, z: number): number | null {
 // L+1, тож ріже він саме ТАМТЕШНІ вікна: якщо схил (чи парапет) над місцем
 // вікна піднявся вище за його підвіконня — вікно виходить у дах.
 export function roofWindowClashes(
+  plan: HousePlan,
   parts: RoofPart[],
   windows: { id: string; floor: number; sill: number; fx: number; fz: number }[],
 ): RoofWindowClash[] {
@@ -276,7 +336,7 @@ export function roofWindowClashes(
   for (const w of windows) {
     for (const part of parts) {
       if (part.level !== w.floor - 1) continue
-      const h = roofBottomAt(part, w.fx, w.fz)
+      const h = roofBottomAt(part, w.fx, w.fz, plan.floors[part.level + 1]?.slab ?? [])
       if (h == null) continue
       if (h > w.sill + 0.05) out.push({ windowId: w.id, partId: part.id })
     }

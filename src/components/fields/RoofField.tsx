@@ -23,24 +23,53 @@ const KINDS: RoofKind[] = ['flat', 'gable', 'mono']
 export default function RoofField({ step }: { step: StepDef }) {
   const mode = useConfigurator((s) => s.roofMode)
   const setMode = useConfigurator((s) => s.setRoofMode)
+  const planMode = useConfigurator((s) => s.planMode)
   const texts = t.steps.roof
 
   return (
     <>
-      <div className="rooms__group">
-        <span className="rooms__group-title">{texts.mode.title}</span>
-        <div className="chips">
-          {(['template', 'custom'] as PlanMode[]).map((m) => (
-            <button key={m} type="button" className={`chip${mode === m ? ' chip--on' : ''}`} onClick={() => setMode(m)}>
-              {texts.mode[m]}
-            </button>
-          ))}
-        </div>
-        <p className="rooms__hint">{mode === 'custom' ? texts.mode.customHint : texts.mode.templateHint}</p>
-      </div>
-
+      <RoofModePicker mode={mode} setMode={setMode} planMode={planMode} texts={texts.mode} />
       {mode === 'template' ? <OptionCards step={step} /> : <RoofEditorPanel />}
     </>
+  )
+}
+
+// Вибір «готовий / свій» дах. При СВОЄМУ плануванні вибору немає: готові
+// варіанти прив'язані до обрисів шаблону, тож лишається тільки малювати.
+export function RoofModePicker({
+  mode,
+  setMode,
+  planMode,
+  texts,
+}: {
+  mode: PlanMode
+  setMode: (m: PlanMode) => void
+  planMode: PlanMode
+  texts: typeof t.steps.roof.mode
+}) {
+  return (
+    <div className="rooms__group">
+      <span className="rooms__group-title">{texts.title}</span>
+      {planMode === 'custom' ? (
+        <p className="rooms__hint">{texts.customPlanHint}</p>
+      ) : (
+        <>
+          <div className="chips">
+            {(['template', 'custom'] as PlanMode[]).map((m) => (
+              <button
+                key={m}
+                type="button"
+                className={`chip${mode === m ? ' chip--on' : ''}`}
+                onClick={() => setMode(m)}
+              >
+                {texts[m]}
+              </button>
+            ))}
+          </div>
+          <p className="rooms__hint">{mode === 'custom' ? texts.customHint : texts.templateHint}</p>
+        </>
+      )}
+    </div>
   )
 }
 
@@ -203,22 +232,17 @@ function RoofClashes() {
 
   const resolved = resolveWindows(plan, windows, 3.2)
   const clashes = roofWindowClashes(
+    plan,
     parts,
     resolved.map((w) => ({ id: w.id, floor: w.floor, sill: w.sill, fx: w.fx, fz: w.fz })),
   )
   const ids = [...new Set(clashes.map((c) => c.windowId))]
-  const spec = ids.includes(picked ?? '') ? windows.find((w) => w.id === picked) : undefined
+  // Меню правки прив'язане до ОБРАНОГО вікна, а не до списку колізій. Раніше
+  // воно зникало тієї ж миті, коли колізія зникала, — людина не встигала
+  // побачити результат і закінчити правку. Тепер закриває його лише «Зберегти».
+  const spec = windows.find((w) => w.id === picked)
 
-  if (ids.length === 0) {
-    return picked ? (
-      <div className="rooms__group">
-        <p className="rooms__hint">{texts.resolved}</p>
-        <button type="button" className="chip" onClick={() => setPicked(null)}>
-          {texts.save}
-        </button>
-      </div>
-    ) : null
-  }
+  if (ids.length === 0 && !spec) return null
 
   const room = (id: string) => {
     const w = windows.find((x) => x.id === id)
@@ -228,20 +252,22 @@ function RoofClashes() {
   const patch = (p: Parameters<typeof updateWindow>[2]) => spec && setCustomWindows(updateWindow(windows, spec.id, p))
 
   return (
-    <div className="rooms__group rooms__group--warn">
-      <span className="rooms__group-title">{texts.title}</span>
-      <div className="chips">
-        {ids.map((id) => (
-          <button
-            key={id}
-            type="button"
-            className={`chip${picked === id ? ' chip--on' : ''}`}
-            onClick={() => setPicked(id)}
-          >
-            {room(id)}
-          </button>
-        ))}
-      </div>
+    <div className={`rooms__group${ids.length > 0 ? ' rooms__group--warn' : ''}`}>
+      <span className="rooms__group-title">{ids.length > 0 ? texts.title : texts.resolved}</span>
+      {ids.length > 0 && (
+        <div className="chips">
+          {ids.map((id) => (
+            <button
+              key={id}
+              type="button"
+              className={`chip${picked === id ? ' chip--on' : ''}`}
+              onClick={() => setPicked(id)}
+            >
+              {room(id)}
+            </button>
+          ))}
+        </div>
+      )}
 
       {!spec ? (
         <p className="rooms__hint">{texts.pick}</p>
@@ -260,6 +286,7 @@ function RoofClashes() {
               {texts.remove}
             </button>
           </div>
+          {!ids.includes(spec.id) && <p className="rooms__hint">{texts.resolved}</p>}
           <Range
             label={texts.sill}
             value={spec.sill}
@@ -278,6 +305,10 @@ function RoofClashes() {
             range={{ min: MIN_WIN_W, max: 6, step: 0.1 }}
             onChange={(v) => patch({ width: v })}
           />
+          {/* Тільки ця кнопка закриває правку — не зникнення колізії. */}
+          <button type="button" className="chip" onClick={() => setPicked(null)}>
+            {texts.save}
+          </button>
         </>
       )}
     </div>
