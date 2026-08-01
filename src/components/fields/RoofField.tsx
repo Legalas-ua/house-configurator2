@@ -29,7 +29,10 @@ export default function RoofField({ step }: { step: StepDef }) {
   return (
     <>
       <RoofModePicker mode={mode} setMode={setMode} planMode={planMode} texts={texts.mode} />
-      {mode === 'template' ? <OptionCards step={step} /> : <RoofEditorPanel />}
+      {/* Картка задає БАЗОВИЙ дах, а редактор частин працює в обох режимах:
+          у готовому — правиш наперед заданий контур, у своєму — намальований. */}
+      {mode === 'template' && <OptionCards step={step} />}
+      <RoofEditorPanel />
     </>
   )
 }
@@ -234,7 +237,15 @@ function RoofClashes() {
   const clashes = roofWindowClashes(
     plan,
     parts,
-    resolved.map((w) => ({ id: w.id, floor: w.floor, sill: w.sill, fx: w.fx, fz: w.fz })),
+    resolved.map((w) => ({
+      id: w.id,
+      floor: w.floor,
+      sill: w.sill,
+      horizontal: w.horizontal,
+      line: w.line,
+      a: w.a,
+      b: w.b,
+    })),
   )
   const ids = [...new Set(clashes.map((c) => c.windowId))]
   // Меню правки прив'язане до ОБРАНОГО вікна, а не до списку колізій. Раніше

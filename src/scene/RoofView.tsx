@@ -87,8 +87,11 @@ export default function RoofView() {
   const stepId = STEPS[currentStep].id
   // draw — крок «Форма даху»: пласкі зони з ручками, дах ще не виріс.
   // pick — крок «Дах»: зони вже об'ємні, тут лише вибираємо частину.
-  const drawing = stepId === 'roofZones'
-  const active = (drawing || stepId === 'roof') && roofMode === 'custom' && levels.length > 0
+  // Малювання — тільки у своєму режимі. А ВИБІР частини доступний в обох:
+  // у готовому даху контур заданий наперед, але кожен його сегмент так само
+  // можна виділити й налаштувати.
+  const drawing = stepId === 'roofZones' && roofMode === 'custom'
+  const active = (drawing || stepId === 'roof') && levels.length > 0
 
   // Контур покриття рівня — орієнтир, куди можна ставити зони.
   const outlineGeo = useMemo(() => {

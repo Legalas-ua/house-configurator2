@@ -92,6 +92,30 @@ export interface HousePlan {
   totalArea: number // м², сума всіх приміщень
 }
 
+// ===== Оздоблення фасаду (крок 7) =====
+// Фасад задається ОКРЕМО для кожного поверху і не залежить від того, звідки
+// взявся план (шаблон чи своє планування) — це властивість стіни, а не плану.
+// Усі параметри всіх типів лежать в одному об'єкті: перемикання типу тоді не
+// втрачає раніше налаштоване, а UI просто показує потрібну частину.
+
+export type FacadeKind = 'clinker' | 'plaster' | 'thermowood' | 'panels'
+export type PlankDir = 'horizontal' | 'vertical'
+export type PanelShape = 'square' | 'rect'
+
+export interface FacadeSpec {
+  kind: FacadeKind
+  color: string // hex, довільний
+  // Термодерево навісне
+  plankWidth: number // ширина планки, м
+  plankThickness: number // товщина планки, м (глибина тіні у шві)
+  plankGap: number // зазор між планками, м
+  plankDir: PlankDir
+  // Навісні панелі
+  panelShape: PanelShape // квадратні = висота дорівнює ширині
+  panelWidth: number
+  panelHeight: number
+}
+
 // Звідки береться план:
 // 'template' — виводиться з конфігурації (generateHousePlan), як і раніше;
 // 'custom'   — лежить у сторі й редагується користувачем, конфігурація його не чіпає.

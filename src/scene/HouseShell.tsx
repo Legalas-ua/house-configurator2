@@ -6,12 +6,14 @@ import {
   BufferGeometry,
   ExtrudeGeometry,
   Float32BufferAttribute,
+  MeshStandardMaterial,
   Path,
   Raycaster,
   Shape,
   Vector2,
   type Camera,
   type Group,
+  type Material,
   type Mesh,
 } from 'three'
 import { useConfigurator, useHousePlan, useRoof, useWindows } from '../state/store'
@@ -29,11 +31,13 @@ import {
   wallRange,
   freeSlots,
   panelCount,
+  WALL_T,
   type Rect,
   type ResolvedWindow,
   type Side,
 } from '../lib/windows'
-import { parapetEdges } from '../lib/roof'
+import { parapetEdges, slopeBox, ROOF_LIFT } from '../lib/roof'
+import { useFacadeMaterial } from './facadeMaterial'
 import { FOUNDATION_H } from '../config/plan'
 import { t } from '../locales'
 import type { FloorPlan, HousePlan, PlanRect } from '../config/types'
@@ -55,7 +59,7 @@ const FLOOR_H = CEIL_H + PLATE_T // крок поверху (стеля + пер
 // Рівно 100 мм — як і перегородки. Раніше було 180, і вікно на стіні жило на
 // сітці, зсунутій на 10 мм: усі межі й напрямні падали «між клітинками».
 // Тримати ЄДИНЕ значення з lib/windows.ts обов'язково.
-const WALL_T = 0.1
+// WALL_T приходить з lib/windows.ts — там же живе сітка руху вікна.
 // ---- Яруси: як прибрані шви на стиках ----
 // Шов на стику двох коробок буває з двох причин, і лікуються вони протилежно:
 //   1) коробки стикаються впритул -> похибка float лишає щілину в піксель;
@@ -76,7 +80,6 @@ const FOUND_COLOR = '#bdb6a7' // цоколь темніший за плиту �
 const FOUND_OUT = WALL_T / 2 + 0.04 // виступ цоколя за зовнішню грань стіни
 const RISE_EASE = 0.5
 const ROOF_EASE = 0.42 // дах виростає трохи жвавіше за коробку
-const ROOF_LIFT = 0.09 // на скільки схили підняті над верхом стіни
 const ROOF_T = 0.22 // товщина похилої плити односхилого даху
 const ROOF_COLOR = WALL_COLOR // ТИМЧАСОВО в колір стін — покриття ще не обране
 
@@ -423,7 +426,23 @@ function Win({
 
 // Простінок ПІД підвіконням: анімується разом із вікном при зміні типу (щоб низ
 // отвору не колізив зі стіною). Порожній при sill=0 (двері/панорама в підлогу).
-function Spandrel({ horizontal, line, a, b, baseY, sill }: { horizontal: boolean; line: number; a: number; b: number; baseY: number; sill: number }) {
+function Spandrel({
+  horizontal,
+  line,
+  a,
+  b,
+  baseY,
+  sill,
+  material,
+}: {
+  horizontal: boolean
+  line: number
+  a: number
+  b: number
+  baseY: number
+  sill: number
+  material: Material
+}) {
   const ref = useRef<Mesh>(null)
   const s = useRef(sill)
   const uc = (a + b) / 2
@@ -440,9 +459,14 @@ function Spandrel({ horizontal, line, a, b, baseY, sill }: { horizontal: boolean
   // з'явився б уступ (яруси тоншають догори).
   const t = wallT(Math.round(baseY / FLOOR_H))
   return (
-    <mesh ref={ref} position={horizontal ? [uc, baseY, line] : [line, baseY, uc]} castShadow receiveShadow>
+    <mesh
+      ref={ref}
+      position={horizontal ? [uc, baseY, line] : [line, baseY, uc]}
+      material={material}
+      castShadow
+      receiveShadow
+    >
       <boxGeometry args={horizontal ? [ulen, 1, t] : [t, 1, ulen]} />
-      <meshStandardMaterial color={WALL_COLOR} roughness={0.9} />
     </mesh>
   )
 }
@@ -995,11 +1019,26 @@ export default function HouseShell() {
   const stepId = STEPS[currentStep].id
   // Коробка видима на «Вікна», «Форма даху» і «Дах» — на кроці форми зони
   // малюються просто поверх неї.
-  const show = stepId === 'windows' || stepId === 'roofZones' || stepId === 'roof'
-  const roofStep = stepId === 'roof' // дах видно ЛИШЕ на своєму кроці
+  const show = stepId === 'windows' || stepId === 'roofZones' || stepId === 'roof' || stepId === 'facade'
+  // Дах уже виріс на своєму кроці — і лишається стояти на фасаді: оздоблення
+  // дивляться на цілому будинку, а не на коробці без даху.
+  const roofOpen = stepId === 'roof' || stepId === 'facade'
   const selectedRoofPart = useConfigurator((s) => s.selectedRoofPart)
   const windowsMode = useConfigurator((s) => s.windowsMode)
   const selectedWindow = useConfigurator((s) => s.selectedWindow)
+  // Оздоблення фасаду — по одному матеріалу на поверх. Хук не можна викликати
+  // в циклі, а поверхів рівно два (більше конфігуратор не будує).
+  const specs = useConfigurator((s) => s.facades)
+  const facade0 = useFacadeMaterial(specs[0])
+  const facade1 = useFacadeMaterial(specs[1])
+  const facades = [facade0, facade1]
+  // Підсвітка обраної частини даху й саме покриття — окремі матеріали:
+  // фасадний спільний на весь поверх, emissive на ньому вмикати не можна.
+  const hlMat = useMemo(
+    () => new MeshStandardMaterial({ color: WALL_COLOR, roughness: 0.9, emissive: HANDLE_COLOR, emissiveIntensity: 0.35 }),
+    [],
+  )
+  const roofMat = useMemo(() => new MeshStandardMaterial({ color: ROOF_COLOR, roughness: 0.75 }), [])
   const editWindows = stepId === 'windows' && windowsMode === 'custom'
   const ref = useRef<Group>(null)
 
@@ -1013,8 +1052,11 @@ export default function HouseShell() {
   // Стіни: простінки + перемички НАД отворами (простінок під підвіконням — окремо,
   // анімований Spandrel). Верх перемички = FLOOR_H, низ отвору = WIN_TOP.
   const walls = useMemo(() => {
-    const boxes: Box[] = []
+    // Розкладено ПО ПОВЕРХАХ: у кожного своє оздоблення фасаду, і матеріал
+    // призначається на групу, а не на кожну коробку.
+    const perFloor: Box[][] = plan.floors.map(() => [])
     plan.floors.forEach((fl, idx) => {
+      const boxes = perFloor[idx]
       const baseY = idx * FLOOR_H
       const t = wallT(idx)
       const ops = openings.filter((o) => o.baseY === baseY)
@@ -1049,7 +1091,7 @@ export default function HouseShell() {
             dz: pt,
           })
     })
-    return boxes
+    return perFloor
   }, [plan, openings])
 
   // Внутрішні перегородки з коричневими дверима (між РІЗНИМИ кімнатами).
@@ -1189,8 +1231,9 @@ export default function HouseShell() {
   // йшла по контуру цілого рівня — тепер по намальованих зонах, тож на
   // різних частинах будинку може бути різний дах.
   const parapets = useMemo(() => {
-    const tiers = new Map<number, { partId: string; boxes: Box[] }[]>()
-    if (plan.floors.length === 0) return [] as { roofY: number; groups: { partId: string; boxes: Box[] }[] }[]
+    const tiers = new Map<number, { partId: string; level: number; boxes: Box[] }[]>()
+    if (plan.floors.length === 0)
+      return [] as { roofY: number; groups: { partId: string; level: number; boxes: Box[] }[] }[]
     for (const part of roof) {
       if (part.kind !== 'flat') continue
       const roofY = (part.level + 1) * FLOOR_H
@@ -1236,7 +1279,7 @@ export default function HouseShell() {
       }
       if (boxes.length === 0) continue
       const list = tiers.get(roofY) ?? []
-      list.push({ partId: part.id, boxes })
+      list.push({ partId: part.id, level: part.level, boxes })
       tiers.set(roofY, list)
     }
     return [...tiers].map(([roofY, groups]) => ({ roofY, groups }))
@@ -1244,22 +1287,35 @@ export default function HouseShell() {
 
   // Скатні та односхилі зони: призма над прямокутником зони.
   const gables = useMemo(() => {
-    const out: { roofY: number; partId: string; geo: ExtrudeGeometry; x: number; y: number; z: number; rotY: number; wallLike: boolean }[] = []
+    const out: {
+      roofY: number
+      partId: string
+      level: number
+      geo: ExtrudeGeometry
+      x: number
+      y: number
+      z: number
+      rotY: number
+      wallLike: boolean
+    }[] = []
     if (plan.floors.length === 0) return out
     for (const part of roof) {
       if (part.kind === 'flat') continue
       const roofY = (part.level + 1) * FLOOR_H
-      const r = bounds(part)
-      const over = 2 * part.overhang
-      const w = r.x1 - r.x0 + WALL_T + 0.004 + over
-      const d = r.z1 - r.z0 + WALL_T + 0.004 + over
+      // Габарит скату зі звісами ПО КОЖНІЙ СТОРОНІ. Сторона, притиснута до
+      // стіни поверху вище, звісу не має — інакше, збільшуючи звіс, скат
+      // заповзав би всередину кімнати другого поверху. Через це габарит
+      // несиметричний, і центр більше не збігається з центром зони.
+      const g = slopeBox(part, plan.floors[part.level + 1]?.slab ?? [])
+      const w = g.x1 - g.x0
+      const d = g.z1 - g.z0
       // 0° — гребінь уздовж довшої сторони, 90° — упоперек.
       const ridgeAlongZ = part.rotation % 180 === 0 ? d >= w : d < w
       const span = ridgeAlongZ ? w : d
       const skirt = ROOF_LIFT + TIER_LAP
       const [pw, pd] = ridgeAlongZ ? [w, d] : [d, w]
-      const x = (r.x0 + r.x1) / 2
-      const z = (r.z0 + r.z1) / 2
+      const x = (g.x0 + g.x1) / 2
+      const z = (g.z0 + g.z1) / 2
       const y = roofY + ROOF_LIFT
       const mono = part.kind === 'mono'
       const rotY = (ridgeAlongZ ? 0 : Math.PI / 2) + (mono && part.rotation >= 180 ? Math.PI : 0)
@@ -1267,10 +1323,21 @@ export default function HouseShell() {
       if (mono) {
         // Односхилий: висота на ПОВНИЙ проліт (схил один, а не два).
         const mh = span * tan
-        out.push({ roofY, partId: part.id, geo: monoGeometry(pw, pd, mh, skirt, true), x, y, z, rotY, wallLike: true })
-        out.push({ roofY, partId: part.id, geo: monoGeometry(pw, pd, mh, skirt, false), x, y, z, rotY, wallLike: false })
+        const b = { roofY, partId: part.id, level: part.level, x, y, z, rotY }
+        out.push({ ...b, geo: monoGeometry(pw, pd, mh, skirt, true), wallLike: true })
+        out.push({ ...b, geo: monoGeometry(pw, pd, mh, skirt, false), wallLike: false })
       } else {
-        out.push({ roofY, partId: part.id, geo: gableGeometry(pw, pd, (span / 2) * tan, skirt), x, y, z, rotY, wallLike: false })
+        out.push({
+          roofY,
+          partId: part.id,
+          level: part.level,
+          geo: gableGeometry(pw, pd, (span / 2) * tan, skirt),
+          x,
+          y,
+          z,
+          rotY,
+          wallLike: false,
+        })
       }
     }
     return out
@@ -1299,15 +1366,32 @@ export default function HouseShell() {
         </mesh>
       )}
 
-      {walls.map((b, i) => (
-        <mesh key={`wall-${i}`} position={[b.x, b.y, b.z]} castShadow receiveShadow>
-          <boxGeometry args={[b.dx, b.dy, b.dz]} />
-          <meshStandardMaterial color={WALL_COLOR} roughness={0.9} />
-        </mesh>
-      ))}
+      {/* Зовнішні стіни носять оздоблення СВОГО поверху */}
+      {walls.map((boxes, idx) =>
+        boxes.map((b, i) => (
+          <mesh
+            key={`wall-${idx}-${i}`}
+            position={[b.x, b.y, b.z]}
+            material={facades[idx]}
+            castShadow
+            receiveShadow
+          >
+            <boxGeometry args={[b.dx, b.dy, b.dz]} />
+          </mesh>
+        )),
+      )}
 
       {openings.map((o) => (
-        <Spandrel key={`sp-${o.key}`} horizontal={o.horizontal} line={o.line} a={o.a} b={o.b} baseY={o.baseY} sill={o.sill} />
+        <Spandrel
+          key={`sp-${o.key}`}
+          horizontal={o.horizontal}
+          line={o.line}
+          a={o.a}
+          b={o.b}
+          baseY={o.baseY}
+          sill={o.sill}
+          material={facades[Math.round(o.baseY / FLOOR_H)]}
+        />
       ))}
 
       {partitions.wallB.map((b, i) => (
@@ -1338,19 +1422,21 @@ export default function HouseShell() {
           від землі крізь будинок. Обидва типи існують завжди — видимістю керує
           `open`, тому перемикання плоский/скатний теж анімується: один тип
           сідає, другий піднімається. */}
+      {/* Парапет — продовження СТІНИ, тож і оздоблення на ньому фасадне, свого
+          поверху. Обрана частина даху світиться ЦІЛКОМ: підсвітку не можна
+          зробити на спільному матеріалі, тому вона окремим матеріалом. */}
       {parapets.map((tier) => (
-        <RoofTier key={`flat-${tier.roofY}`} baseY={tier.roofY} open={roofStep}>
+        <RoofTier key={`flat-${tier.roofY}`} baseY={tier.roofY} open={roofOpen}>
           {tier.groups.map((g) =>
             g.boxes.map((b, i) => (
-              <mesh key={`parapet-${g.partId}-${i}`} position={[b.x, b.y, b.z]} castShadow receiveShadow>
+              <mesh
+                key={`parapet-${g.partId}-${i}`}
+                position={[b.x, b.y, b.z]}
+                material={g.partId === selectedRoofPart ? hlMat : facades[g.level]}
+                castShadow
+                receiveShadow
+              >
                 <boxGeometry args={[b.dx, b.dy, b.dz]} />
-                {/* Обрана частина даху світиться ЦІЛКОМ, а не лише площиною */}
-                <meshStandardMaterial
-                  color={WALL_COLOR}
-                  roughness={0.9}
-                  emissive={HANDLE_COLOR}
-                  emissiveIntensity={g.partId === selectedRoofPart ? 0.35 : 0}
-                />
               </mesh>
             )),
           )}
@@ -1358,18 +1444,21 @@ export default function HouseShell() {
       ))}
 
       {gableTiers.map((tier) => (
-        <RoofTier key={`pitched-${tier.roofY}`} baseY={tier.roofY} open={roofStep}>
+        <RoofTier key={`pitched-${tier.roofY}`} baseY={tier.roofY} open={roofOpen}>
           {tier.items.map((g, i) => (
-            <mesh key={`gable-${i}`} geometry={g.geo} position={[g.x, g.y, g.z]} rotation-y={g.rotY} castShadow receiveShadow>
-              {/* wallLike — це клин під похилою плитою: продовження СТІНИ, тож
-                  і колір стінний, а не покрівельний. */}
-              <meshStandardMaterial
-                color={g.wallLike ? WALL_COLOR : ROOF_COLOR}
-                roughness={0.75}
-                emissive={HANDLE_COLOR}
-                emissiveIntensity={g.partId === selectedRoofPart ? 0.35 : 0}
-              />
-            </mesh>
+            <mesh
+              key={`gable-${i}`}
+              geometry={g.geo}
+              position={[g.x, g.y, g.z]}
+              rotation-y={g.rotY}
+              // wallLike — це клин під похилою плитою: продовження СТІНИ, тож
+              // на ньому фасад, а не покрівля.
+              material={
+                g.partId === selectedRoofPart ? hlMat : g.wallLike ? facades[g.level] : roofMat
+              }
+              castShadow
+              receiveShadow
+            />
           ))}
         </RoofTier>
       ))}
@@ -1395,7 +1484,7 @@ export default function HouseShell() {
       {/* На кроці «Дах» вікна редагують не мишею, а списком колізій — тож те,
           що зараз правлять, підсвічуємо тут: інакше з панелі не видно, про
           який саме отвір ідеться. Накладка подій не ловить. */}
-      {roofStep && clashHl && (
+      {stepId === 'roof' && clashHl && (
         <mesh
           position={[
             clashHl.fx + outward(clashHl.side, WIN_PICK_OUT)[0],

@@ -10,6 +10,7 @@ import RoomsField from './fields/RoomsField'
 import WindowsField from './fields/WindowsField'
 import RoofField from './fields/RoofField'
 import RoofZonesField from './fields/RoofZonesField'
+import FacadeField from './fields/FacadeField'
 import FloorsPicker from './fields/FloorsPicker'
 
 // Рендерить поточний крок за його описом (StepDef) — без знання про конкретику.
@@ -53,6 +54,7 @@ export default function StepContent() {
         {step.kind === 'windows' && <WindowsField step={step} />}
         {step.kind === 'roofZones' && <RoofZonesField />}
         {step.kind === 'roof' && <RoofField step={step} />}
+        {step.kind === 'facade' && <FacadeField />}
         {step.id === 'shape' && <FloorsPicker />}
       </div>
 

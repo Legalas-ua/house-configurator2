@@ -1,6 +1,7 @@
 import type { HousePlan, PlanRect } from '../config/types'
 import { GRID, MIN_SIDE, snap } from './editPlan'
 import { ringContains, unionOutline } from './outline'
+import { WALL_T } from './windows'
 
 // ============================================================
 // Дах як ДАНІ — за тим самим принципом, що план і вікна.
@@ -284,6 +285,51 @@ export function parapetEdges(part: RoofPart, above: PlanRect[]): ParapetEdge[] {
   })
 }
 
+// ---- Габарит скату: звіси по кожній стороні окремо ----
+
+// На скільки скат виходить за грань зони ще ДО звісу — рівно на пів стіни
+// (плюс мікрозапас, щоб грані не збігались). Мусить збігатися з HouseShell.
+export const EAVE_BASE = WALL_T / 2 + 0.002
+// На скільки схили підняті над верхом стіни. Теж спільне з HouseShell: без
+// цього перевірка колізій рахувала б дах на 90 мм нижче, ніж він насправді.
+export const ROOF_LIFT = 0.09
+
+export type SideKey = 'xmin' | 'xmax' | 'zmin' | 'zmax'
+
+// Звіс ПО КОЖНІЙ СТОРОНІ. Сторона, притиснута до стіни поверху ВИЩЕ, звісу не
+// має взагалі: інакше, збільшуючи звіс, користувач заганяв би скат усередину
+// приміщення другого поверху. Ознака та сама, що й для парапету, — грань
+// накрита плитою поверху вище.
+export function sideOverhang(part: RoofPart, above: PlanRect[]): Record<SideKey, number> {
+  const out: Record<SideKey, number> = {
+    xmin: part.overhang,
+    xmax: part.overhang,
+    zmin: part.overhang,
+    zmax: part.overhang,
+  }
+  for (const e of parapetEdges(part, above)) {
+    const key: SideKey = e.horizontal ? (e.nz < 0 ? 'zmin' : 'zmax') : e.nx < 0 ? 'xmin' : 'xmax'
+    const full = e.max - e.min
+    const open = e.spans.reduce((s, [a, b]) => s + (b - a), 0)
+    // Досить, щоб грань упиралась у стіну ХОЧ ЧАСТИНОЮ: пускати звіс лише на
+    // вільний шматок прямокутна геометрія все одно не вміє.
+    if (open < full - 0.05) out[key] = 0
+  }
+  return out
+}
+
+// Габарит СКАТУ у світі — рівно те, що будує HouseShell.
+export function slopeBox(part: RoofPart, above: PlanRect[]) {
+  const b = box(part)
+  const o = sideOverhang(part, above)
+  return {
+    x0: b.x0 - EAVE_BASE - o.xmin,
+    x1: b.x1 + EAVE_BASE + o.xmax,
+    z0: b.z0 - EAVE_BASE - o.zmin,
+    z1: b.z1 + EAVE_BASE + o.zmax,
+  }
+}
+
 // ---- Колізії даху з вікнами ----
 // Скат чи парапет може перекрити вікно. Рахуємо на рівні ВИСОТ: беремо низ
 // даху над віконним отвором і дивимось, чи він нижчий за верх вікна.
@@ -293,11 +339,33 @@ export interface RoofWindowClash {
   partId: string
 }
 
-// Висота НИЗУ даху над точкою (x,z) у межах зони, від рівня покриття.
+// Висота НИЗУ даху над точкою (x,z), від рівня покриття.
+//
+// Рахуємо в координатах РЕАЛЬНОЇ геометрії, а не зони: скат починається за
+// гранню зони (пів стіни + звіс) і піднятий на ROOF_LIFT. Поки тут стояли самі
+// межі зони, дах виходив на пів метра нижчим за справжній — і панель писала
+// «колізій немає», коли низ вікна ще сидів у схилі.
 function roofBottomAt(part: RoofPart, x: number, z: number, above: PlanRect[]): number | null {
   const b = box(part)
+  if (part.kind !== 'flat') {
+    const g = slopeBox(part, above)
+    if (x < g.x0 - EPS || x > g.x1 + EPS || z < g.z0 - EPS || z > g.z1 + EPS) return null
+    const gw = g.x1 - g.x0
+    const gd = g.z1 - g.z0
+    // Той самий вибір напрямку гребеня, що й у геометрії HouseShell.
+    const alongZ = part.rotation % 180 === 0 ? gd >= gw : gd < gw
+    const span = alongZ ? gw : gd
+    const u = alongZ ? x - g.x0 : z - g.z0
+    const tan = Math.tan((part.pitch * Math.PI) / 180)
+    if (part.kind === 'mono') {
+      const fromLow = part.rotation >= 180 ? span - u : u
+      return ROOF_LIFT + fromLow * tan
+    }
+    // Двосхилий: від найближчого краю до гребеня посередині.
+    return ROOF_LIFT + Math.min(u, span - u) * tan
+  }
   if (x < b.x0 - EPS || x > b.x1 + EPS || z < b.z0 - EPS || z > b.z1 + EPS) return null
-  if (part.kind === 'flat') {
+  {
     // Парапет — це смуга по периметру, а не суцільна кришка над усією зоною:
     // усередині плоского даху заважати вікну просто нічому. І там, де стінки
     // парапету немає (виріз під поверхом вище), її не повинно бути й тут.
@@ -309,36 +377,43 @@ function roofBottomAt(part: RoofPart, x: number, z: number, above: PlanRect[]): 
     }
     return 0
   }
-  const w = b.x1 - b.x0
-  const d = b.z1 - b.z0
-  const alongZ = part.rotation % 180 === 0 ? d >= w : d < w
-  const span = alongZ ? w : d
-  const tan = Math.tan((part.pitch * Math.PI) / 180)
-  // Відстань від НИЖЧОГО краю схилу вздовж напрямку падіння.
-  const u = alongZ ? x - b.x0 : z - b.z0
-  if (part.kind === 'mono') {
-    const fromLow = part.rotation >= 180 ? span - u : u
-    return fromLow * tan
-  }
-  // Двосхилий: від найближчого краю до гребеня посередині.
-  return Math.min(u, span - u) * tan
 }
+
+// Вікно — це відрізок [a..b] уздовж стіни, а не точка. Дах над ним нахилений,
+// тож беремо НАЙВИЩУ точку його низу по всій ширині отвору: раніше рахували
+// лише центр, і на похилому даху виходило «колізії немає», хоч один край
+// вікна ще стирчав у схилі. Двосхилий дах угнутий (гребінь посередині) —
+// тому не лише кінці, а й кілька точок між ними.
+export interface ClashWindow {
+  id: string
+  floor: number
+  sill: number
+  horizontal: boolean
+  line: number
+  a: number
+  b: number
+}
+
+const SAMPLES = [0, 0.25, 0.5, 0.75, 1]
 
 // Вікна, які перекриває дах. Дах над рівнем L лежить рівно на підлозі поверху
 // L+1, тож ріже він саме ТАМТЕШНІ вікна: якщо схил (чи парапет) над місцем
 // вікна піднявся вище за його підвіконня — вікно виходить у дах.
-export function roofWindowClashes(
-  plan: HousePlan,
-  parts: RoofPart[],
-  windows: { id: string; floor: number; sill: number; fx: number; fz: number }[],
-): RoofWindowClash[] {
+export function roofWindowClashes(plan: HousePlan, parts: RoofPart[], windows: ClashWindow[]): RoofWindowClash[] {
   const out: RoofWindowClash[] = []
   for (const w of windows) {
     for (const part of parts) {
       if (part.level !== w.floor - 1) continue
-      const h = roofBottomAt(part, w.fx, w.fz, plan.floors[part.level + 1]?.slab ?? [])
-      if (h == null) continue
-      if (h > w.sill + 0.05) out.push({ windowId: w.id, partId: part.id })
+      const above = plan.floors[part.level + 1]?.slab ?? []
+      let h = -Infinity
+      for (const s of SAMPLES) {
+        const u = w.a + (w.b - w.a) * s
+        const v = roofBottomAt(part, w.horizontal ? u : w.line, w.horizontal ? w.line : u, above)
+        if (v != null && v > h) h = v
+      }
+      // Колізія зникає лише коли вікно ВИЙШЛО з даху цілком, тож допуск —
+      // міліметр на похибку float, а не колишні 50 мм «майже вийшло».
+      if (h > w.sill + 1e-3) out.push({ windowId: w.id, partId: part.id })
     }
   }
   return out

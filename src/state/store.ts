@@ -3,10 +3,12 @@ import { create } from 'zustand'
 import type {
   ConfigKey,
   ConfigValue,
+  FacadeSpec,
   HouseConfig,
   HousePlan,
   PlanMode,
 } from '../config/types'
+import { DEFAULT_FACADE } from '../config/facade'
 import { DEFAULT_CONFIG, STEPS } from '../config/steps'
 import {
   floorsAvailable,
@@ -113,6 +115,11 @@ interface ConfiguratorState {
   customRoof: RoofPart[] | null
   selectedRoofPart: string | null // id обраної зони даху
   roofLevel: number // рівень даху, який зараз редагують
+  // Фасад: свій набір параметрів на КОЖЕН поверх (індекс = поверх). Тримаємо
+  // завжди два записи — навіть в одноповерховому будинку, щоб додавання
+  // другого поверху не скидало вже налаштоване.
+  facades: FacadeSpec[]
+  facadeFloor: number // поверх, оздоблення якого зараз правлять
   selectedRoom: string | null // id кімнати, яку зараз редагують (ручний режим)
   dragging: boolean // тягнуть зону на плані → камеру треба знерухомити
   showGrid: boolean // сітка прив'язки під планом (лише в ручному режимі)
@@ -136,6 +143,8 @@ interface ConfiguratorState {
   setCustomRoof: (parts: RoofPart[]) => void
   setSelectedRoofPart: (id: string | null) => void
   setRoofLevel: (level: number) => void
+  setFacade: (floor: number, patch: Partial<FacadeSpec>) => void
+  setFacadeFloor: (floor: number) => void
   setSelectedRoom: (id: string | null) => void
   setDragging: (on: boolean) => void
   setShowGrid: (on: boolean) => void
@@ -163,6 +172,8 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
   customRoof: null,
   selectedRoofPart: null,
   roofLevel: 0,
+  facades: [{ ...DEFAULT_FACADE }, { ...DEFAULT_FACADE }],
+  facadeFloor: 0,
   selectedRoom: null,
   dragging: false,
   showGrid: true,
@@ -180,8 +191,13 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
   setValue: (key, value) =>
     set((s) => {
       const config = sanitize({ ...s.config, [key]: value })
+      // У ГОТОВОМУ даху набір зон — похідна від конфігурації: змінився тип
+      // даху, форма чи кількість поверхів — набір рахується наново, а правки
+      // поверх старого відпускаємо. У ручному режимі намальоване не чіпаємо
+      // ніколи.
+      const roofReset = s.roofMode === 'template' ? { customRoof: null, selectedRoofPart: null } : {}
       // Якщо будинок став одноповерховим — показуємо 1-й поверх
-      return { config, viewFloor: Math.min(s.viewFloor, config.floors) }
+      return { config, viewFloor: Math.min(s.viewFloor, config.floors), ...roofReset }
     }),
 
   // Ручний режим НЕ починається з порожнечі: заморожуємо поточний обчислений
@@ -251,11 +267,20 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
       return { roofMode: 'custom', customRoof: [], selectedRoofPart: null }
     }),
 
-  setCustomRoof: (parts) => set({ roofMode: 'custom', customRoof: parts }),
+  // РЕЖИМ тут навмисно не чіпаємо. Готовий дах теж можна правити по частинах:
+  // картка задає базовий набір зон, а правки лягають поверх нього в
+  // `customRoof`. Якби це перемикало режим на 'custom', перша ж правка ховала
+  // б картки — і повернутись до базового варіанту стало б нічим.
+  setCustomRoof: (parts) => set({ customRoof: parts }),
 
   setSelectedRoofPart: (id) => set({ selectedRoofPart: id }),
 
   setRoofLevel: (level) => set({ roofLevel: level, selectedRoofPart: null }),
+
+  setFacade: (floor, patch) =>
+    set((s) => ({ facades: s.facades.map((f, i) => (i === floor ? { ...f, ...patch } : f)) })),
+
+  setFacadeFloor: (floor) => set({ facadeFloor: floor }),
 
   setSelectedRoom: (id) => set({ selectedRoom: id }),
 
