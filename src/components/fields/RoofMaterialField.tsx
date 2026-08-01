@@ -99,7 +99,7 @@ export default function RoofMaterialField() {
 
       {/* Торцева планка скатного даху й кожух парапету — той самий фарбований
           метал. Тип у них не обирають, лише колір. */}
-      <div className="rooms__group">
+      <div className="rooms__group rooms__group--trim">
         <span className="rooms__group-title">{anyFlat ? texts.cap : texts.fascia}</span>
         <div className="facade-color">
           <input

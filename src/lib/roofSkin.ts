@@ -48,7 +48,7 @@ const LAYOUT: Record<RoofMatKind, Layout> = {
 }
 
 // Торцева планка скатного даху (закриває товщину пирога) і кожух парапету.
-export const FASCIA_T = 0.035 // виступ планки за грань
+export const FASCIA_W = 0.04 // ширина планки вздовж грані
 export const CAP_OUT = 0.035 // звис кожуха за грань парапету
 export const CAP_H = 0.05 // висота кожуха
 
@@ -199,16 +199,20 @@ export interface RoofSkinGroup {
   trim?: boolean // група торцевих планок / кожуха: свій колір, не покриття
 }
 
-// Торцеві планки: обрамляють схил по периметру й закривають торець пирога.
-// Без них дах закінчується білою смугою — видно товщину покриття.
-function fasciaOf(sl: Slope, kind: RoofMatKind, out: SkinBox[]) {
-  const h = LAYOUT[kind].t + (LAYOUT[kind].rib?.h ?? 0) + FASCIA_T
+// Торцеві планки: обрамляють схил по периметру й закривають ТОВЩИНУ ПИРОГА —
+// і покриття, і похилу плиту під ним. Саме ця світла смуга по краю даху
+// впадала в око: планка мусить сягати не тільки покриття, а й плити.
+function fasciaOf(sl: Slope, kind: RoofMatKind, out: SkinBox[], plate: number) {
+  const cover = LAYOUT[kind].t + (LAYOUT[kind].rib?.h ?? 0)
+  const h = cover + plate + 0.02
   const cos = Math.cos(sl.tilt)
   const sin = Math.sin(sl.tilt)
   const rc = Math.cos(sl.rotY)
   const rs = Math.sin(sl.rotY)
+  // Планка звисає ВНИЗ від поверхні покриття: верх на рівні покриття, а далі
+  // вона закриває плиту. n — зсув центру по нормалі до схилу.
+  const n = cover - h / 2
   const put = (u: number, s: number, du: number, ds: number) => {
-    const n = h / 2 - FASCIA_T / 2
     const ly = s * sin + cos * n
     const lz = s * cos - sin * n
     out.push({
@@ -224,10 +228,10 @@ function fasciaOf(sl: Slope, kind: RoofMatKind, out: SkinBox[]) {
   }
   const hw = sl.width / 2
   const hl = sl.len / 2
-  const w = FASCIA_T
-  // По гребеню й карнизу…
-  put(0, -hl + w / 2, sl.width, w)
-  put(0, hl - w / 2, sl.width, w)
+  const w = FASCIA_W
+  // По карнизу й гребеню — на всю ширину з напуском, щоб роги зійшлись…
+  put(0, -hl + w / 2, sl.width + 2 * w, w)
+  put(0, hl - w / 2, sl.width + 2 * w, w)
   // …і по двох торцях схилу.
   put(-hw + w / 2, 0, w, sl.len)
   put(hw - w / 2, 0, w, sl.len)
@@ -283,7 +287,7 @@ export function roofSkin(
         continue
       }
       layElements(sl, spec.kind, g.boxes, MAX_ELEMENTS)
-      fasciaOf(sl, spec.kind, gt.boxes)
+      fasciaOf(sl, spec.kind, gt.boxes, ROOF_T)
       // Найвища точка — щоб поява йшла зверху вниз, а не знизу вгору.
       const topY = sl.cy + (sl.len / 2) * Math.abs(Math.sin(sl.tilt)) + 0.2
       g.top = Math.max(g.top, topY)
@@ -303,7 +307,11 @@ function capBoxes(part: RoofPart, above: PlanRect[], roofY: number, out: SkinBox
     const line = e.line + (e.nx + e.nz) * (WALL_T / 2 - t / 2)
     const y = roofY + part.parapetH
     const w = t + 2 * CAP_OUT
-    for (const [a, b] of e.spans) {
+    for (const [ra, rb] of e.spans) {
+      // На РОЗІ зони кожух має зійтися з перпендикулярним: подовжуємо його на
+      // пів своєї ширини, інакше в кожному куті парапету лишався виріз.
+      const a = Math.abs(ra - e.min) < 1e-4 ? ra - w / 2 : ra
+      const b = Math.abs(rb - e.max) < 1e-4 ? rb + w / 2 : rb
       const len = b - a
       if (len < 0.05) continue
       const mid = (a + b) / 2

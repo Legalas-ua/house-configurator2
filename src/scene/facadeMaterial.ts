@@ -57,81 +57,6 @@ const grey = (v: number) => {
   return `rgb(${c},${c},${c})`
 }
 
-// Волокно термодерева.
-//
-// Малюємо ПОПІКСЕЛЬНО за моделлю річних кілець: беремо викривлене поле
-// відстані до умовної серцевини колоди і робимо з нього смуги. Саме викривлення
-// (низькочастотний шум уздовж дошки) і дає деревині її «пливучий» рисунок —
-// рівні смуги, намальовані прямокутниками, завжди читаються як штрихкод.
-//
-// Координати всередині: l — уздовж планки, a — упоперек.
-function drawWood(ctx: CanvasRenderingContext2D, W: number, H: number, vertical: boolean) {
-  const L = vertical ? H : W
-  const A = vertical ? W : H
-  const img = ctx.createImageData(W, H)
-  const d = img.data
-
-  // Гладкий шум: інтерполяція між псевдовипадковими вузлами.
-  const lerp = (a: number, b: number, t: number) => a + (b - a) * t * t * (3 - 2 * t)
-  const smooth = (x: number, seed: number) => {
-    const i = Math.floor(x)
-    return lerp(noise(i * 1.7 + seed), noise((i + 1) * 1.7 + seed), x - i)
-  }
-  // Сучки: кілька центрів, біля яких кільця стискаються й темніють.
-  const knots = [0.17, 0.52, 0.86].map((p, i) => ({
-    l: p * L,
-    a: (0.2 + noise(i * 11.3) * 0.6) * A,
-    r: (0.05 + noise(i * 5.1) * 0.05) * L,
-  }))
-
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) {
-      const l = vertical ? y : x
-      const a = vertical ? x : y
-      const lp = l / L
-      const ap = a / A
-
-      // Поле «відстані до серцевини»: поперечна координата, зсунута
-      // повільною хвилею вздовж дошки. Дві частоти — щоб не було періодики.
-      let f = ap * 9 + smooth(lp * 3.5, 0) * 1.6 + smooth(lp * 11, 7) * 0.45
-
-      // Біля сучка кільця стискаються й вигинаються навколо нього.
-      let knot = 0
-      for (const k of knots) {
-        const dl = (l - k.l) / k.r
-        const da = (a - k.a) / (k.r * 0.55)
-        const dist = Math.hypot(dl, da)
-        if (dist < 3) {
-          f += (3 - dist) * 1.1
-          knot = Math.max(knot, Math.max(0, 1 - dist / 1.1))
-        }
-      }
-
-      // Кільце: різкий темний край, м'який світлий центр — так виглядає
-      // межа ранньої та пізньої деревини.
-      const ring = f - Math.floor(f)
-      let v = 0.9 + 0.1 * Math.cos(ring * Math.PI * 2)
-      v -= 0.16 * Math.pow(Math.max(0, 1 - Math.abs(ring - 0.5) * 3.2), 2)
-
-      // Дрібне волокно вздовж дошки — короткі штрихи, а не рівномірний шум.
-      v += (noise(Math.floor(l * 0.7) * 31 + Math.floor(a) * 7) - 0.5) * 0.05
-      // Тіло сучка — виразно темніше.
-      v -= knot * 0.42
-      // Легке потемніння до країв планки: дошка не пласка.
-      const edge = Math.min(ap, 1 - ap)
-      if (edge < 0.16) v -= (0.16 - edge) * 0.9
-
-      const c = Math.round(Math.max(0, Math.min(1, v)) * 255)
-      const o = (y * W + x) * 4
-      d[o] = c
-      d[o + 1] = c
-      d[o + 2] = c
-      d[o + 3] = 255
-    }
-  }
-  ctx.putImageData(img, 0, 0)
-}
-
 function drawFacade(s: FacadeSpec): HTMLCanvasElement {
   const [tu, tv] = facadeTile(s)
   const canvas = document.createElement('canvas')
@@ -155,8 +80,13 @@ function drawFacade(s: FacadeSpec): HTMLCanvasElement {
   const W = canvas.width
   const H = canvas.height
 
+  // Термодерево — ПОКИ ЩО суцільний колір. Процедурне волокно виглядало
+  // несправжнім; сюди стане нормальна PBR-текстура, коли замовник її дасть.
+  // Масштаб для неї вже готовий: facadeTile() задає метри на кахель, тож
+  // планка 140 мм отримає рівно свій шматок.
   if (s.kind === 'thermowood') {
-    drawWood(ctx, W, H, s.plankDir === 'vertical')
+    ctx.fillStyle = grey(1)
+    ctx.fillRect(0, 0, W, H)
     return canvas
   }
 

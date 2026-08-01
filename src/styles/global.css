@@ -772,6 +772,14 @@ body {
   box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
+/* Оздоблення краю даху — це окрема річ від покриття, тож і в панелі
+   відокремлене рискою, а не просто наступний блок у стовпчик. */
+.rooms__group--trim {
+  margin-top: 6px;
+  padding-top: 16px;
+  border-top: 1px dashed var(--border);
+}
+
 /* ===== Ціна внизу панелі ===== */
 .panel__price {
   padding: 18px 24px;

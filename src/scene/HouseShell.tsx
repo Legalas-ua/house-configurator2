@@ -40,7 +40,7 @@ import { parapetEdges, slopeBox, ROOF_LIFT } from '../lib/roof'
 import { roofSkin } from '../lib/roofSkin'
 import { wallFaces } from '../lib/wallFaces'
 import { claddingBoxes, type CladBox, type CladResult, type Clip } from '../lib/cladding'
-import { gablePanels } from '../lib/gableFaces'
+import { gablePanels, parapetPanels } from '../lib/gableFaces'
 import { useFacadeMaterial } from './facadeMaterial'
 import Cladding, { Backing, type CladGroup } from './Cladding'
 import RoofSkin, { SkinTier } from './RoofSkin'
@@ -1083,6 +1083,9 @@ export default function HouseShell() {
     [],
   )
   const roofMat = useMemo(() => new MeshStandardMaterial({ color: ROOF_COLOR, roughness: 0.75 }), [])
+  // Торець даху — фарбований метал того ж кольору, що й торцеві планки.
+  const trimMat = useMemo(() => new MeshStandardMaterial({ roughness: 0.38, metalness: 0.65 }), [])
+  trimMat.color.set(roofTrim)
   // Антрацит — лише ПІДКЛАДКА під оздобленням і фронтони, на які воно лягає.
   // Саму коробку стін фарбувати в темне не можна: потемніли б і кімнати.
   const baseMat = useMemo(() => new MeshStandardMaterial({ color: BASE_COLOR, roughness: 0.95 }), [])
@@ -1121,9 +1124,13 @@ export default function HouseShell() {
     // само, а розкладка зшивається сама — сітка прив'язана до світового нуля.
     const panels = [
       ...faces.map((f) => ({ face: f, baseY: f.floor * FLOOR_H, height: FLOOR_H, clip: undefined as Clip | undefined })),
-      ...roof.flatMap((p) =>
-        gablePanels(p, plan.floors[p.level + 1]?.slab ?? [], (p.level + 1) * FLOOR_H, p.level),
-      ),
+      ...roof.flatMap((p) => {
+        const above = plan.floors[p.level + 1]?.slab ?? []
+        const y = (p.level + 1) * FLOOR_H
+        // Фронтони скатного і стінки парапету плоского — усе це так само
+        // зовнішні стіни, тільки вище покриття.
+        return [...gablePanels(p, above, y, p.level), ...parapetPanels(p, above, y, p.level)]
+      }),
     ]
 
     for (const { face: f, baseY, height, clip } of panels) {
@@ -1421,6 +1428,7 @@ export default function HouseShell() {
       z: number
       rotY: number
       wallLike: boolean
+      edge?: boolean // видно як ТОРЕЦЬ даху, а не як стіна чи покрівля
     }[] = []
     if (plan.floors.length === 0) return out
     for (const part of roof) {
@@ -1454,9 +1462,10 @@ export default function HouseShell() {
         const gh = (span / 2) * tan
         const b = { roofY, partId: part.id, level: part.level, x, y, z, rotY }
         if (part.overhang > 0) {
-          // Зі звісом дах нависає над стінами — фронтон лишається під ним, і
-          // тягнути на нього оздоблення стіни нема куди. Суцільна призма.
-          out.push({ ...b, geo: gableGeometry(pw, pd, gh, skirt), wallLike: false })
+          // Зі звісом дах нависає над стінами: усе, що видно збоку, — це вже
+          // ТОРЕЦЬ даху, а не стіна. Тож призма отримує колір торцевої планки,
+          // а не покрівлі: інакше збоку світить біла площина.
+          out.push({ ...b, geo: gableGeometry(pw, pd, gh, skirt), wallLike: false, edge: true })
         } else {
           // БЕЗ звісу схили закінчуються рівно на стіні, тож фронтон — це
           // продовження самої стіни: віддаємо його як wallLike, і фасадне
@@ -1611,7 +1620,9 @@ export default function HouseShell() {
                     ? showClad
                       ? baseMat
                       : wallPlain
-                    : roofMat
+                    : g.edge && showSkin
+                      ? trimMat
+                      : roofMat
               }
               castShadow
               receiveShadow

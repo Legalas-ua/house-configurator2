@@ -1,7 +1,12 @@
 import type { PlanRect } from '../config/types'
 import type { Clip } from './cladding'
-import { slopeBox, ROOF_LIFT, type RoofPart } from './roof'
+import { parapetEdges, slopeBox, ROOF_LIFT, type RoofPart } from './roof'
+import { WALL_T } from './windows'
 import type { WallFace } from './wallFaces'
+
+// Так само, як у стін: горизонтальна грань «володіє» рогом і загортається за
+// нього, вертикальна поступається. Збігається з CORNER у lib/wallFaces.ts.
+const CORNER = 0.02
 
 // ============================================================
 // Фронтони — те, що лишається СТІНОЮ над дахом: трикутник під двосхилим і
@@ -20,7 +25,42 @@ export interface GablePanel {
   face: WallFace
   baseY: number
   height: number
-  clip: Clip
+  clip?: Clip
+}
+
+// Стінка ПАРАПЕТУ — це теж зовнішня стіна, тільки над покриттям: оздоблення
+// має продовжуватись на неї. Зовнішня грань парапету навмисно зроблена
+// врівень зі стіною, тож площина та сама, що й у стіни під ним, — розкладка
+// зшивається сама (сітка прив'язана до світового нуля).
+export function parapetPanels(part: RoofPart, above: PlanRect[], roofY: number, floor: number): GablePanel[] {
+  if (part.kind !== 'flat') return []
+  const out: GablePanel[] = []
+  for (const e of parapetEdges(part, above)) {
+    const horizontal = e.horizontal
+    // Загортання за ріг — те саме правило, що й у стін, інакше на кожному
+    // куті парапету лишалась непокрита смуга в пів товщини стіни.
+    const grow = horizontal ? WALL_T / 2 + CORNER : WALL_T / 2
+    for (const [a, b] of e.spans) {
+      const fa = Math.abs(a - e.min) < 1e-4 ? a - grow : a
+      const fb = Math.abs(b - e.max) < 1e-4 ? b + grow : b
+      if (fb - fa < 0.1) continue
+      out.push({
+        face: {
+          id: `${floor}|parapet|${part.id}|${horizontal ? 'h' : 'v'}|${e.line.toFixed(2)}|${fa.toFixed(2)}`,
+          floor,
+          horizontal,
+          line: e.line,
+          nx: e.nx,
+          nz: e.nz,
+          a: fa,
+          b: fb,
+        },
+        baseY: roofY,
+        height: part.parapetH,
+      })
+    }
+  }
+  return out
 }
 
 export function gablePanels(part: RoofPart, above: PlanRect[], roofY: number, floor: number): GablePanel[] {
@@ -45,9 +85,12 @@ export function gablePanels(part: RoofPart, above: PlanRect[], roofY: number, fl
   const r1 = ridgeAlongZ ? g.z1 : g.x1
   const highAtMax = !(mono && part.rotation >= 180)
 
-  // Проміжок уздовж падіння, де стіна ще існує на висоті v (від низу панелі).
+  // Проміжок уздовж падіння, де стіна ще існує на висоті v.
+  // v приходить у СВІТОВИХ координатах (так їх веде claddingBoxes), тому
+  // спершу віднімаємо низ панелі. Без цього `need` виходив у сотні метрів,
+  // проміжок ставав порожнім — і на фронтоні не з'являлось нічого.
   const clip: Clip = (_v0, v1) => {
-    const need = (v1 - ROOF_LIFT) / Math.max(tan, 1e-6)
+    const need = (v1 - roofY - ROOF_LIFT) / Math.max(tan, 1e-6)
     if (need <= 0) return [f0, f1]
     if (mono) return highAtMax ? [f0 + need, f1] : [f0, f1 - need]
     const k = Math.min(need, span / 2)
