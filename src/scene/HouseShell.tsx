@@ -39,10 +39,11 @@ import {
 import { parapetEdges, slopeBox, ROOF_LIFT } from '../lib/roof'
 import { roofSkin } from '../lib/roofSkin'
 import { wallFaces } from '../lib/wallFaces'
-import { claddingBoxes, type CladBox } from '../lib/cladding'
+import { claddingBoxes, type CladBox, type CladResult, type Clip } from '../lib/cladding'
+import { gablePanels } from '../lib/gableFaces'
 import { useFacadeMaterial } from './facadeMaterial'
-import Cladding, { type CladGroup } from './Cladding'
-import RoofSkin from './RoofSkin'
+import Cladding, { Backing, type CladGroup } from './Cladding'
+import RoofSkin, { SkinTier } from './RoofSkin'
 import FacadeWalls from './FacadeWalls'
 import { FOUNDATION_H } from '../config/plan'
 import { t } from '../locales'
@@ -1052,9 +1053,13 @@ export default function HouseShell() {
   // Дах уже виріс на своєму кроці — і лишається стояти далі: оздоблення
   // дивляться на цілому будинку, а не на коробці без даху.
   const roofOpen = stepId === 'roof' || stepId === 'facade' || stepId === 'roofMat'
-  // Об'ємне оздоблення — скрізь, крім кроку «Вікна»: там вікно тягнуть мишею,
-  // а перебудовувати тисячі цеглин на кожен кадр руху не можна.
-  const showClad = stepId !== 'windows'
+  // Оздоблення НЕ з'являється раніше свого кроку і не з'являється, доки
+  // користувач не клікнув матеріал. Повернувся назад — будинок знову базовий,
+  // але сам вибір лишається у сторі й повертається разом із кроком.
+  const facadeTouched = useConfigurator((s) => s.facadeTouched)
+  const roofMatTouched = useConfigurator((s) => s.roofMatTouched)
+  const showClad = (stepId === 'facade' || stepId === 'roofMat') && facadeTouched
+  const showSkin = stepId === 'roofMat' && roofMatTouched
   const selectedRoofPart = useConfigurator((s) => s.selectedRoofPart)
   const windowsMode = useConfigurator((s) => s.windowsMode)
   const selectedWindow = useConfigurator((s) => s.selectedWindow)
@@ -1067,7 +1072,9 @@ export default function HouseShell() {
   const facade1 = useFacadeMaterial(specs[1])
   const facades = [facade0, facade1]
   const roofMatBase = useConfigurator((s) => s.roofMat)
+  const roofFlat = useConfigurator((s) => s.roofFlat)
   const roofMats = useConfigurator((s) => s.roofMats)
+  const roofTrim = useConfigurator((s) => s.roofTrimColor)
 
   // Підсвітка обраної частини даху й саме покриття — окремі матеріали:
   // фасадний спільний на весь поверх, emissive на ньому вмикати не можна.
@@ -1076,10 +1083,11 @@ export default function HouseShell() {
     [],
   )
   const roofMat = useMemo(() => new MeshStandardMaterial({ color: ROOF_COLOR, roughness: 0.75 }), [])
-  // Базова коробка стін — АНТРАЦИТ. Оздоблення стоїть перед нею з відступом
-  // 20 мм, і саме ця темна основа, видна у проміжки, читається як шов між
-  // цеглинами/планками/панелями. Тому окремого «кольору шва» ніде немає.
+  // Антрацит — лише ПІДКЛАДКА під оздобленням і фронтони, на які воно лягає.
+  // Саму коробку стін фарбувати в темне не можна: потемніли б і кімнати.
   const baseMat = useMemo(() => new MeshStandardMaterial({ color: BASE_COLOR, roughness: 0.95 }), [])
+  // Стіни без жодного оздоблення — так будинок виглядає до кроку «Фасад».
+  const wallPlain = useMemo(() => new MeshStandardMaterial({ color: WALL_COLOR, roughness: 0.9 }), [])
   const editWindows = stepId === 'windows' && windowsMode === 'custom'
   const ref = useRef<Group>(null)
 
@@ -1101,16 +1109,24 @@ export default function HouseShell() {
   // її ПО ГРАНЯХ і лише за тим, що на розкладку впливає: тип, розміри елемента
   // й отвори. Колір у ключ навмисно не входить — інакше кожен рух повзунка
   // кольору перебудовував би всю цеглу на будинку.
-  const cladCache = useRef(new Map<string, CladBox[]>())
-  const cladGroups = useMemo(() => {
+  const cladCache = useRef(new Map<string, CladResult>())
+  const { cladGroups, cladBacking } = useMemo(() => {
     const prev = cladCache.current
-    const next = new Map<string, CladBox[]>()
+    const next = new Map<string, CladResult>()
     const map = new Map<string, CladGroup>()
-    // На кроці «Вікна» оздоблення не будуємо взагалі: вікно тягнуть мишею, і
-    // перебудова на кожен кадр руху покладе сцену. Там стіни просто носять
-    // фасадний матеріал текстурою, як і до появи об'ємного оздоблення.
-    if (!showClad) return [] as CladGroup[]
-    for (const f of faces) {
+    const backing: CladBox[] = []
+    if (!showClad) return { cladGroups: [] as CladGroup[], cladBacking: backing }
+
+    // Стіни + ФРОНТОНИ над дахом: те, що лишилось стіною, оздоблюється так
+    // само, а розкладка зшивається сама — сітка прив'язана до світового нуля.
+    const panels = [
+      ...faces.map((f) => ({ face: f, baseY: f.floor * FLOOR_H, height: FLOOR_H, clip: undefined as Clip | undefined })),
+      ...roof.flatMap((p) =>
+        gablePanels(p, plan.floors[p.level + 1]?.slab ?? [], (p.level + 1) * FLOOR_H, p.level),
+      ),
+    ]
+
+    for (const { face: f, baseY, height, clip } of panels) {
       const spec = wallFacades[f.id] ?? specs[f.floor] ?? specs[0]
       const holes = openings
         .filter(
@@ -1122,6 +1138,8 @@ export default function HouseShell() {
         .map((o) => ({ a: o.a, b: o.b, y0: o.baseY + o.sill, y1: o.baseY + o.top }))
       const layoutKey = [
         f.id,
+        baseY.toFixed(2),
+        height.toFixed(2),
         spec.kind,
         spec.plankWidth,
         spec.plankGap,
@@ -1131,9 +1149,9 @@ export default function HouseShell() {
         spec.panelHeight,
         holes.map((h) => `${h.a},${h.b},${h.y0},${h.y1}`).join(';'),
       ].join('|')
-      let boxes = prev.get(layoutKey)
-      if (!boxes) boxes = claddingBoxes(f, f.floor * FLOOR_H, FLOOR_H, holes, spec)
-      next.set(layoutKey, boxes)
+      let res = prev.get(layoutKey)
+      if (!res) res = claddingBoxes(f, baseY, height, holes, spec, clip)
+      next.set(layoutKey, res)
 
       const key = `${spec.kind}|${spec.color}|${spec.plankWidth}|${spec.plankGap}|${spec.plankDir}|${spec.panelShape}|${spec.panelWidth}|${spec.panelHeight}`
       let g = map.get(key)
@@ -1142,17 +1160,17 @@ export default function HouseShell() {
         map.set(key, g)
       }
       // Саме циклом: spread на десятки тисяч аргументів ризикує стеком.
-      for (const b of boxes) g.boxes.push(b)
+      for (const b of res.elements) g.boxes.push(b)
+      for (const b of res.backing) backing.push(b)
     }
     cladCache.current = next
-    return [...map.values()].filter((g) => g.boxes.length > 0)
-  }, [showClad, faces, specs, wallFacades, openings])
+    return { cladGroups: [...map.values()].filter((g) => g.boxes.length > 0), cladBacking: backing }
+  }, [showClad, faces, roof, plan, specs, wallFacades, openings])
 
   // Покриття даху — теж геометрія, по ярусах (щоб росло разом зі своїм дахом).
-  // Рахуємо лише там, де дах узагалі видно.
   const skins = useMemo(
-    () => (roofOpen ? roofSkin(plan, roof, roofMatBase, roofMats, FLOOR_H) : []),
-    [roofOpen, plan, roof, roofMatBase, roofMats],
+    () => (showSkin ? roofSkin(plan, roof, roofMatBase, roofFlat, roofMats, roofTrim, FLOOR_H) : []),
+    [showSkin, plan, roof, roofMatBase, roofFlat, roofMats, roofTrim],
   )
 
   // Стіни: простінки + перемички НАД отворами (простінок під підвіконням — окремо,
@@ -1482,7 +1500,7 @@ export default function HouseShell() {
           <mesh
             key={`wall-${idx}-${i}`}
             position={[b.x, b.y, b.z]}
-            material={showClad ? baseMat : facades[idx]}
+            material={wallPlain}
             castShadow
             receiveShadow
           >
@@ -1500,18 +1518,24 @@ export default function HouseShell() {
           b={o.b}
           baseY={o.baseY}
           sill={o.sill}
-          material={showClad ? baseMat : facades[Math.round(o.baseY / FLOOR_H)]}
+          material={wallPlain}
         />
       ))}
+
+      {/* Темна підкладка — рівно на зовнішній площині стіни, у проміжки між
+          елементами видно саме її: це і є шов. Всю коробку стіни фарбувати
+          не можна — потемніли б і кімнати всередині. */}
+      {cladBacking.length > 0 && <Backing boxes={cladBacking} material={baseMat} />}
 
       {/* Об'ємне оздоблення фасаду */}
       <Cladding groups={cladGroups} />
 
-      {/* Покриття даху — по ярусах, щоб виростало разом зі своїм дахом */}
+      {/* Покриття даху. Спускається ЗВЕРХУ: покриття лягає на схил, а не
+          виростає з-під нього. */}
       {skins.map((sg) => (
-        <RoofTier key={`skin-${sg.key}`} baseY={sg.roofY} open={roofOpen}>
-          <RoofSkin spec={sg.spec} boxes={sg.boxes} />
-        </RoofTier>
+        <SkinTier key={`skin-${sg.key}`} top={sg.top} open={showSkin}>
+          <RoofSkin spec={sg.spec} boxes={sg.boxes} trim={sg.trim} />
+        </SkinTier>
       ))}
 
       {/* Вибір стіни під власний матеріал — лише у своєму режимі фасаду */}
@@ -1557,7 +1581,7 @@ export default function HouseShell() {
               <mesh
                 key={`parapet-${g.partId}-${i}`}
                 position={[b.x, b.y, b.z]}
-                material={g.partId === selectedRoofPart ? hlMat : facades[g.level]}
+                material={g.partId === selectedRoofPart ? hlMat : showClad ? facades[g.level] : wallPlain}
                 castShadow
                 receiveShadow
               >
@@ -1578,8 +1602,16 @@ export default function HouseShell() {
               rotation-y={g.rotY}
               // wallLike — це клин під похилою плитою: продовження СТІНИ, тож
               // на ньому фасад, а не покрівля.
+              // Фронтон — це стіна: під оздобленням він теж має бути темним,
+              // інакше у проміжки між елементами світить біле.
               material={
-                g.partId === selectedRoofPart ? hlMat : g.wallLike ? facades[g.level] : roofMat
+                g.partId === selectedRoofPart
+                  ? hlMat
+                  : g.wallLike
+                    ? showClad
+                      ? baseMat
+                      : wallPlain
+                    : roofMat
               }
               castShadow
               receiveShadow

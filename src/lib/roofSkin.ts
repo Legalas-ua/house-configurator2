@@ -1,5 +1,6 @@
 import type { HousePlan, PlanRect, RoofMatKind, RoofMatSpec } from '../config/types'
-import { slopeBox, ROOF_LIFT, type RoofPart } from './roof'
+import { parapetEdges, slopeBox, ROOF_LIFT, type RoofPart } from './roof'
+import { WALL_T } from './windows'
 
 // ============================================================
 // Покрівля як ГЕОМЕТРІЯ. Кожен матеріал — своя розкладка об'ємних елементів на
@@ -41,7 +42,15 @@ const LAYOUT: Record<RoofMatKind, Layout> = {
   seam: { eu: 0.48, pu: 0.5, es: 0, ps: 0, t: 0.014, stagger: 0, rib: { pitch: 0.5, w: 0.028, h: 0.045 } },
   shingle: { eu: 0.33, pu: 0.335, es: 0.19, ps: 0.145, t: 0.009, stagger: 0.5 },
   corrugated: { eu: 0.99, pu: 1.0, es: 0, ps: 0, t: 0.012, stagger: 0, rib: { pitch: 0.185, w: 0.05, h: 0.028 } },
+  // Плоскі — суцільний килим, розкладки як такої немає.
+  builtUp: { eu: 1, pu: 1, es: 0, ps: 0, t: 0.02, stagger: 0 },
+  membrane: { eu: 1, pu: 1, es: 0, ps: 0, t: 0.015, stagger: 0 },
 }
+
+// Торцева планка скатного даху (закриває товщину пирога) і кожух парапету.
+export const FASCIA_T = 0.035 // виступ планки за грань
+export const CAP_OUT = 0.035 // звис кожуха за грань парапету
+export const CAP_H = 0.05 // висота кожуха
 
 // Товщини покрівельних плит з HouseShell — покриття лягає ПОВЕРХ них.
 const ROOF_T = 0.22
@@ -184,8 +193,44 @@ function slopesOf(part: RoofPart, above: PlanRect[], roofY: number): Slope[] {
 export interface RoofSkinGroup {
   key: string
   roofY: number
+  top: number // найвища точка групи — звідси покриття «спускається» при появі
   spec: RoofMatSpec
   boxes: SkinBox[]
+  trim?: boolean // група торцевих планок / кожуха: свій колір, не покриття
+}
+
+// Торцеві планки: обрамляють схил по периметру й закривають торець пирога.
+// Без них дах закінчується білою смугою — видно товщину покриття.
+function fasciaOf(sl: Slope, kind: RoofMatKind, out: SkinBox[]) {
+  const h = LAYOUT[kind].t + (LAYOUT[kind].rib?.h ?? 0) + FASCIA_T
+  const cos = Math.cos(sl.tilt)
+  const sin = Math.sin(sl.tilt)
+  const rc = Math.cos(sl.rotY)
+  const rs = Math.sin(sl.rotY)
+  const put = (u: number, s: number, du: number, ds: number) => {
+    const n = h / 2 - FASCIA_T / 2
+    const ly = s * sin + cos * n
+    const lz = s * cos - sin * n
+    out.push({
+      x: sl.cx + u * rc + lz * rs,
+      y: sl.cy + ly,
+      z: sl.cz - u * rs + lz * rc,
+      dx: du,
+      dy: h,
+      dz: ds,
+      rotY: sl.rotY,
+      tilt: sl.tilt,
+    })
+  }
+  const hw = sl.width / 2
+  const hl = sl.len / 2
+  const w = FASCIA_T
+  // По гребеню й карнизу…
+  put(0, -hl + w / 2, sl.width, w)
+  put(0, hl - w / 2, sl.width, w)
+  // …і по двох торцях схилу.
+  put(-hw + w / 2, 0, w, sl.len)
+  put(hw - w / 2, 0, w, sl.len)
 }
 
 // Покриття всіх зон даху, згруповане за РІВНЕМ і матеріалом: рівень — щоб
@@ -195,22 +240,32 @@ export function roofSkin(
   plan: HousePlan,
   parts: RoofPart[],
   base: RoofMatSpec,
+  flatBase: RoofMatSpec,
   perPart: Record<string, RoofMatSpec>,
+  trimColor: string,
   floorH: number,
 ): RoofSkinGroup[] {
   const groups = new Map<string, RoofSkinGroup>()
-  for (const part of parts) {
-    const spec = perPart[part.id] ?? base
-    const roofY = (part.level + 1) * floorH
-    const key = `${roofY}|${spec.kind}|${spec.color}`
+  const take = (key: string, roofY: number, spec: RoofMatSpec, trim = false) => {
     let g = groups.get(key)
     if (!g) {
-      g = { key, roofY, spec, boxes: [] }
+      g = { key, roofY, top: roofY, spec, boxes: [], trim }
       groups.set(key, g)
     }
+    return g
+  }
+
+  for (const part of parts) {
+    const flat = part.kind === 'flat'
+    const spec = perPart[part.id] ?? (flat ? flatBase : base)
+    const roofY = (part.level + 1) * floorH
+    const g = take(`${roofY}|${spec.kind}|${spec.color}`, roofY, spec)
+    const trimSpec: RoofMatSpec = { kind: spec.kind, color: trimColor }
+    const gt = take(`${roofY}|trim|${trimColor}`, roofY, trimSpec, true)
     const above = plan.floors[part.level + 1]?.slab ?? []
+
     for (const sl of slopesOf(part, above, roofY)) {
-      if (part.kind === 'flat') {
+      if (flat) {
         g.boxes.push({
           x: sl.cx,
           y: sl.cy + FLAT_T / 2,
@@ -221,10 +276,47 @@ export function roofSkin(
           rotY: 0,
           tilt: 0,
         })
+        // Металевий кожух надівається ЗВЕРХУ на парапет по всьому периметру.
+        capBoxes(part, above, roofY, gt.boxes)
+        g.top = Math.max(g.top, roofY + FLAT_T + 0.05)
+        gt.top = Math.max(gt.top, roofY + part.parapetH + CAP_H)
         continue
       }
       layElements(sl, spec.kind, g.boxes, MAX_ELEMENTS)
+      fasciaOf(sl, spec.kind, gt.boxes)
+      // Найвища точка — щоб поява йшла зверху вниз, а не знизу вгору.
+      const topY = sl.cy + (sl.len / 2) * Math.abs(Math.sin(sl.tilt)) + 0.2
+      g.top = Math.max(g.top, topY)
+      gt.top = Math.max(gt.top, topY)
     }
   }
   return [...groups.values()].filter((g) => g.boxes.length > 0)
+}
+
+// Кожух парапету: П-подібна накривка поверх стінки, зі звисом на обидва боки.
+// Робимо трьома брусками — верхня полиця й дві крапельниці, — щоб вона була
+// саме об'ємною, а не пофарбованою гранню.
+function capBoxes(part: RoofPart, above: PlanRect[], roofY: number, out: SkinBox[]) {
+  for (const e of parapetEdges(part, above)) {
+    const t = part.parapetT
+    // Та сама вісь, що й у геометрії парапету: зовнішня грань — грань стіни.
+    const line = e.line + (e.nx + e.nz) * (WALL_T / 2 - t / 2)
+    const y = roofY + part.parapetH
+    const w = t + 2 * CAP_OUT
+    for (const [a, b] of e.spans) {
+      const len = b - a
+      if (len < 0.05) continue
+      const mid = (a + b) / 2
+      const box = (c: number, yy: number, thick: number, hh: number) =>
+        out.push(
+          e.horizontal
+            ? { x: mid, y: yy, z: c, dx: len, dy: hh, dz: thick, rotY: 0, tilt: 0 }
+            : { x: c, y: yy, z: mid, dx: thick, dy: hh, dz: len, rotY: 0, tilt: 0 },
+        )
+      // Полиця зверху…
+      box(line, y + 0.012, w, 0.024)
+      // …і дві крапельниці по краях.
+      for (const s of [-1, 1] as const) box(line + (s * w) / 2, y - CAP_H / 2 + 0.012, 0.02, CAP_H)
+    }
+  }
 }

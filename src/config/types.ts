@@ -120,7 +120,15 @@ export interface FacadeSpec {
 // Прив'язані до ЧАСТИНИ даху (id зони), як фасад — до стіни. Тип задає
 // розкладку об'ємних елементів, колір — довільний.
 
-export type RoofMatKind = 'clayTile' | 'metalTile' | 'seam' | 'shingle' | 'corrugated'
+// Перші п'ять — скатний дах, останні два — плоский.
+export type RoofMatKind =
+  | 'clayTile'
+  | 'metalTile'
+  | 'seam'
+  | 'shingle'
+  | 'corrugated'
+  | 'builtUp'
+  | 'membrane'
 
 export interface RoofMatSpec {
   kind: RoofMatKind

@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef } from 'react'
-import { Color, Object3D, type InstancedMesh } from 'three'
+import { Color, Object3D, type InstancedMesh, type Material } from 'three'
 import type { FacadeSpec } from '../config/types'
 import type { CladBox } from '../lib/cladding'
 import { useFacadeMaterial } from './facadeMaterial'
@@ -70,6 +70,32 @@ function CladInstances({ spec, boxes }: { spec: FacadeSpec; boxes: CladBox[] }) 
       material={mat}
       receiveShadow
     >
+      <boxGeometry args={[1, 1, 1]} />
+    </instancedMesh>
+  )
+}
+
+// Темна підкладка під оздобленням — той самий інстансинг, але один спільний
+// матеріал і без різнотонності.
+export function Backing({ boxes, material }: { boxes: CladBox[]; material: Material }) {
+  const ref = useRef<InstancedMesh>(null)
+  useLayoutEffect(() => {
+    const m = ref.current
+    if (!m) return
+    for (let i = 0; i < boxes.length; i++) {
+      const b = boxes[i]
+      dummy.position.set(b.x, b.y, b.z)
+      dummy.scale.set(b.dx, b.dy, b.dz)
+      dummy.updateMatrix()
+      m.setMatrixAt(i, dummy.matrix)
+    }
+    m.count = boxes.length
+    m.instanceMatrix.needsUpdate = true
+    m.computeBoundingSphere()
+  }, [boxes])
+  if (boxes.length === 0) return null
+  return (
+    <instancedMesh key={boxes.length} ref={ref} args={[undefined, undefined, boxes.length]} material={material} receiveShadow>
       <boxGeometry args={[1, 1, 1]} />
     </instancedMesh>
   )

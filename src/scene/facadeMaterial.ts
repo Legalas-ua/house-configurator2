@@ -23,7 +23,8 @@ import type { FacadeKind } from '../config/types'
 //    скрізь — і на стіні, і на окремому елементі.
 // ============================================================
 
-const PX = 256 // ширина полотна; висота — за пропорцією «кахля»
+const PX = 256 // базова сторона полотна
+const MIN_PX = 128 // найменша сторона: тонкий кахель не має вироджуватись
 
 // Скільки МЕТРІВ фасаду вкриває один кахель текстури (u, v).
 export function facadeTile(s: FacadeSpec): [number, number] {
@@ -56,66 +57,99 @@ const grey = (v: number) => {
   return `rgb(${c},${c},${c})`
 }
 
-// Волокно термодерева. Малюємо в «повздовжніх» координатах (l — уздовж
-// планки, w — упоперек), а розкладаємо на полотно вже з урахуванням напрямку.
+// Волокно термодерева.
+//
+// Малюємо ПОПІКСЕЛЬНО за моделлю річних кілець: беремо викривлене поле
+// відстані до умовної серцевини колоди і робимо з нього смуги. Саме викривлення
+// (низькочастотний шум уздовж дошки) і дає деревині її «пливучий» рисунок —
+// рівні смуги, намальовані прямокутниками, завжди читаються як штрихкод.
+//
+// Координати всередині: l — уздовж планки, a — упоперек.
 function drawWood(ctx: CanvasRenderingContext2D, W: number, H: number, vertical: boolean) {
-  const L = vertical ? H : W // уздовж волокна
-  const A = vertical ? W : H // упоперек
-  const put = (l: number, w: number, dl: number, dw: number) =>
-    vertical ? ctx.fillRect(w, l, dw, dl) : ctx.fillRect(l, w, dl, dw)
+  const L = vertical ? H : W
+  const A = vertical ? W : H
+  const img = ctx.createImageData(W, H)
+  const d = img.data
 
-  ctx.fillStyle = grey(1)
-  ctx.fillRect(0, 0, W, H)
-
-  // 1. Широкі тонові смуги — річні шари. Синусоїда зі змінним періодом дає
-  //    характерний «неповторюваний» вигляд без випадковості на кожен кадр.
-  for (let w = 0; w < A; w++) {
-    const p = w / A
-    const band = 0.5 + 0.5 * Math.sin(p * 21 + Math.sin(p * 6.3) * 2.4)
-    put(0, w, L, 1)
-    ctx.fillStyle = grey(0.9 + band * 0.12)
-    put(0, w, L, 1)
+  // Гладкий шум: інтерполяція між псевдовипадковими вузлами.
+  const lerp = (a: number, b: number, t: number) => a + (b - a) * t * t * (3 - 2 * t)
+  const smooth = (x: number, seed: number) => {
+    const i = Math.floor(x)
+    return lerp(noise(i * 1.7 + seed), noise((i + 1) * 1.7 + seed), x - i)
   }
+  // Сучки: кілька центрів, біля яких кільця стискаються й темніють.
+  const knots = [0.17, 0.52, 0.86].map((p, i) => ({
+    l: p * L,
+    a: (0.2 + noise(i * 11.3) * 0.6) * A,
+    r: (0.05 + noise(i * 5.1) * 0.05) * L,
+  }))
 
-  // 2. Тонкі волокна — короткі штрихи вздовж, різної довжини й тону.
-  for (let i = 0; i < 220; i++) {
-    ctx.fillStyle = grey(0.82 + noise(i * 2.7) * 0.22)
-    const w = noise(i * 5.9) * A
-    const len = (0.08 + noise(i * 1.7) * 0.5) * L
-    const at = noise(i * 9.1) * L
-    put(at, w, len, 1)
-  }
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const l = vertical ? y : x
+      const a = vertical ? x : y
+      const lp = l / L
+      const ap = a / A
 
-  // 3. Сучки — рідкі темні овали з ореолом обтічних волокон.
-  for (let k = 0; k < 3; k++) {
-    const cl = noise(k * 31.7) * L
-    const cw = (0.25 + noise(k * 13.3) * 0.5) * A
-    const r = (0.1 + noise(k * 7.1) * 0.12) * A
-    for (let ring = 4; ring >= 1; ring--) {
-      ctx.fillStyle = grey(0.6 + ring * 0.09)
-      ctx.beginPath()
-      const rl = r * ring * 0.8
-      const rw = r * ring * 0.42
-      if (vertical) ctx.ellipse(cw, cl, rw, rl, 0, 0, Math.PI * 2)
-      else ctx.ellipse(cl, cw, rl, rw, 0, 0, Math.PI * 2)
-      ctx.fill()
+      // Поле «відстані до серцевини»: поперечна координата, зсунута
+      // повільною хвилею вздовж дошки. Дві частоти — щоб не було періодики.
+      let f = ap * 9 + smooth(lp * 3.5, 0) * 1.6 + smooth(lp * 11, 7) * 0.45
+
+      // Біля сучка кільця стискаються й вигинаються навколо нього.
+      let knot = 0
+      for (const k of knots) {
+        const dl = (l - k.l) / k.r
+        const da = (a - k.a) / (k.r * 0.55)
+        const dist = Math.hypot(dl, da)
+        if (dist < 3) {
+          f += (3 - dist) * 1.1
+          knot = Math.max(knot, Math.max(0, 1 - dist / 1.1))
+        }
+      }
+
+      // Кільце: різкий темний край, м'який світлий центр — так виглядає
+      // межа ранньої та пізньої деревини.
+      const ring = f - Math.floor(f)
+      let v = 0.9 + 0.1 * Math.cos(ring * Math.PI * 2)
+      v -= 0.16 * Math.pow(Math.max(0, 1 - Math.abs(ring - 0.5) * 3.2), 2)
+
+      // Дрібне волокно вздовж дошки — короткі штрихи, а не рівномірний шум.
+      v += (noise(Math.floor(l * 0.7) * 31 + Math.floor(a) * 7) - 0.5) * 0.05
+      // Тіло сучка — виразно темніше.
+      v -= knot * 0.42
+      // Легке потемніння до країв планки: дошка не пласка.
+      const edge = Math.min(ap, 1 - ap)
+      if (edge < 0.16) v -= (0.16 - edge) * 0.9
+
+      const c = Math.round(Math.max(0, Math.min(1, v)) * 255)
+      const o = (y * W + x) * 4
+      d[o] = c
+      d[o + 1] = c
+      d[o + 2] = c
+      d[o + 3] = 255
     }
   }
-
-  // 4. Легке потемніння до країв планки — циліндричність дошки.
-  for (let w = 0; w < A; w++) {
-    const edge = Math.min(w, A - 1 - w) / (A * 0.5)
-    if (edge > 0.35) continue
-    ctx.fillStyle = `rgba(0,0,0,${(0.35 - edge) * 0.5})`
-    put(0, w, L, 1)
-  }
+  ctx.putImageData(img, 0, 0)
 }
 
 function drawFacade(s: FacadeSpec): HTMLCanvasElement {
   const [tu, tv] = facadeTile(s)
   const canvas = document.createElement('canvas')
-  canvas.width = PX
-  canvas.height = Math.max(8, Math.min(1024, Math.round((PX * tv) / tu)))
+  // Полотно за пропорцією кахля, але КОРОТКА сторона не менша за MIN_PX:
+  // у планки 140 мм на 1,7 м пропорція дає 21 піксель упоперек — на такій
+  // висоті жоден рисунок деревини не проглядається.
+  const ar = tv / tu
+  let w = PX
+  let h = Math.round(PX * ar)
+  if (h < MIN_PX) {
+    h = MIN_PX
+    w = Math.round(MIN_PX / ar)
+  } else if (w < MIN_PX) {
+    w = MIN_PX
+    h = Math.round(MIN_PX * ar)
+  }
+  canvas.width = Math.max(8, Math.min(2048, w))
+  canvas.height = Math.max(8, Math.min(2048, h))
   const ctx = canvas.getContext('2d')
   if (!ctx) return canvas
   const W = canvas.width

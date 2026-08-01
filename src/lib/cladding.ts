@@ -6,15 +6,24 @@ import { WALL_T } from './windows'
 // Оздоблення фасаду — РЕАЛЬНА геометрія, а не малюнок на стіні.
 //
 // Кожна цеглина / планка / панель — окрема коробка завтовшки CLAD_T, винесена
-// за зовнішню грань стіни. Проміжки між ними НЕ заповнюються нічим: крізь них
-// видно базову стіну, пофарбовану в антрацит, — саме вона й читається як
-// темний шов. Тому окремого «кольору шва» ніде немає й бути не може.
+// за зовнішню грань стіни. У проміжки між ними видно ПІДКЛАДКУ — тонкий
+// темний шар рівно на зовнішній площині стіни. Саме він читається як шов, і
+// саме тому окремого «кольору шва» ніде немає. Фарбувати всю коробку стіни в
+// антрацит не можна: тоді темними стають і кімнати всередині.
 //
-// Штукатурка — суцільний шар PLASTER_T без елементів: у неї швів не буває.
+// Шар стоїть із мікрозазором ПЕРЕД стіною, а не втоплений у неї: сходження
+// граней у товщі стіни давало миготіння (z-fighting) на кожній стіні.
+//
+// Розкладка прив'язана до СВІТОВОГО нуля, а не до початку грані. Довга стіна
+// ріжеться перегородками на кілька граней, і прив'язка «від початку грані»
+// збивала візерунок на кожному стику. Так само це зшиває розкладку стіни з
+// розкладкою фронтону над нею.
 // ============================================================
 
 export const CLAD_T = 0.02 // цегла, термодерево, панелі — 20 мм
 export const PLASTER_T = 0.01 // штукатурка — 10 мм суцільним шаром
+export const BACK_OUT = 0.004 // наскільки темна підкладка виступає за стіну
+export const CLAD_GAP = 0.001 // ледь помітний зазор між підкладкою і елементом
 
 // Клінкер: стандартна ложкова грань 250×65 із швом 12 мм.
 export const BRICK_L = 0.25
@@ -22,8 +31,7 @@ export const BRICK_H = 0.065
 export const BRICK_JOINT = 0.012
 
 // Запобіжник від божевільної кількості елементів (наприклад, планка 60 мм на
-// весь периметр двоповерхового будинку). Краще недомалювати верх стіни, ніж
-// покласти сцену.
+// весь периметр двоповерхового будинку).
 const MAX_ELEMENTS = 90_000
 
 export interface CladBox {
@@ -41,6 +49,15 @@ export interface FaceHole {
   b: number
   y0: number
   y1: number
+}
+
+// Обрізка грані по висоті — для фронтонів: на висоті [v0,v1] стіна існує лише
+// в цьому проміжку вздовж себе. null = на цій висоті стіни немає.
+export type Clip = (v0: number, v1: number) => [number, number] | null
+
+export interface CladResult {
+  elements: CladBox[]
+  backing: CladBox[]
 }
 
 // Вільні прямокутники грані = грань мінус отвори. Ріжемо по горизонталях
@@ -93,28 +110,28 @@ function grid(spec: FacadeSpec): { pu: number; pv: number; eu: number; ev: numbe
   return { pu: w, pv: h, eu: w - gap, ev: h - gap }
 }
 
-// Товщина шару під цей матеріал.
 export const cladThickness = (spec: FacadeSpec) => (spec.kind === 'plaster' ? PLASTER_T : CLAD_T)
 
-// Елементи оздоблення однієї грані. baseY/height — поверх, якому вона належить.
+// Елементи оздоблення однієї грані. baseY/height — прямокутник грані у світі.
 export function claddingBoxes(
   face: WallFace,
   baseY: number,
   height: number,
   holes: FaceHole[],
   spec: FacadeSpec,
-  budget = MAX_ELEMENTS,
-): CladBox[] {
+  clip?: Clip,
+  withBacking = true,
+): CladResult {
   const t = cladThickness(spec)
   const n = face.horizontal ? face.nz : face.nx
-  // Шар стоїть ЗА зовнішньою гранню стіни, з мікронапуском усередину, щоб на
-  // стику не світилась щілина.
-  const centre = face.line + n * (WALL_T / 2 + t / 2 - 0.001)
-  const depth = t + 0.002
+  const outer = face.line + n * (face.halfT ?? WALL_T / 2) // зовнішня площина стіни
+  const backC = outer + n * (BACK_OUT / 2 - 0.002) // підкладка: 2 мм у стіну, 4 мм назовні
+  const cladC = outer + n * (BACK_OUT + CLAD_GAP + t / 2)
 
-  const out: CladBox[] = []
-  const push = (u: number, v: number, du: number, dv: number) => {
-    if (du < 0.004 || dv < 0.004 || out.length >= budget) return
+  const elements: CladBox[] = []
+  const backing: CladBox[] = []
+  const put = (out: CladBox[], u: number, v: number, du: number, dv: number, centre: number, depth: number) => {
+    if (du < 0.004 || dv < 0.004 || out.length >= MAX_ELEMENTS) return
     const uc = u + du / 2
     const vc = v + dv / 2
     out.push(
@@ -126,45 +143,73 @@ export function claddingBoxes(
 
   const rects = freeRects(face.a, face.b, baseY, baseY + height, holes)
   const g = grid(spec)
-  if (!g) {
-    // Штукатурка — суцільний шар на кожен вільний прямокутник.
-    for (const [ua, ub, va, vb] of rects) push(ua, va, ub - ua, vb - va)
-    return out
-  }
 
-  // Ряди рахуємо від НУЛЯ світу, а не від поверху: цегляна кладка на фасаді
-  // наскрізна, і смуга на стику поверхів виглядала б обрізом.
-  // Колонки — від початку САМОЇ грані: тоді на куті будинку лежить ціла
-  // цеглина, а не випадковий обрубок.
-  for (const [ua, ub, va, vb] of rects) {
-    if (out.length >= budget) break
+  for (const [ua0, ub0, va, vb] of rects) {
+    if (elements.length >= MAX_ELEMENTS) break
+
+    // ---- Штукатурка: суцільний шар, без елементів і без підкладки ----
+    if (!g) {
+      if (clip) {
+        // На фронтоні ріжемо шар тонкими смугами по нахилу.
+        const steps = Math.max(1, Math.ceil((vb - va) / 0.1))
+        for (let i = 0; i < steps; i++) {
+          const y0 = va + ((vb - va) * i) / steps
+          const y1 = va + ((vb - va) * (i + 1)) / steps
+          const c = clip(y0, y1)
+          if (!c) continue
+          const a = Math.max(ua0, c[0])
+          const b = Math.min(ub0, c[1])
+          if (b - a > 0.005) put(elements, a, y0, b - a, y1 - y0, cladC, t)
+        }
+      } else {
+        put(elements, ua0, va, ub0 - ua0, vb - va, cladC, t)
+      }
+      continue
+    }
+
+    // ---- Підкладка: суцільна темна площина під елементами ----
+    if (withBacking && !clip) put(backing, ua0, va, ub0 - ua0, vb - va, backC, BACK_OUT + 0.002)
+
+    // ---- Ряди елементів. Прив'язка до СВІТОВОГО нуля по обох осях ----
     const rowFrom = g.pv > 0 ? Math.floor(va / g.pv) : 0
     const rowTo = g.pv > 0 ? Math.ceil(vb / g.pv) : 1
     for (let row = rowFrom; row < rowTo; row++) {
-      if (out.length >= budget) break
+      if (elements.length >= MAX_ELEMENTS) break
       const ry = g.pv > 0 ? row * g.pv : va
       const rh = g.pv > 0 ? g.ev : vb - va
       const v = Math.max(ry, va)
       const dv = Math.min(ry + rh, vb) - v
       if (dv < 0.004) continue
+
+      // Обрізка фронтону: беремо ВЕРХ ряду, щоб нічого не стирчало за схил.
+      let ua = ua0
+      let ub = ub0
+      if (clip) {
+        const c = clip(v, v + dv)
+        if (!c) continue
+        ua = Math.max(ua, c[0])
+        ub = Math.min(ub, c[1])
+        if (ub - ua < 0.005) continue
+        if (withBacking) put(backing, ua, v, ub - ua, dv, backC, BACK_OUT + 0.002)
+      }
+
       if (g.pu <= 0) {
         // Планка вздовж стіни — одна на весь вільний проміжок.
-        push(ua, v, ub - ua, dv)
+        put(elements, ua, v, ub - ua, dv, cladC, t)
         continue
       }
       // Перев'язка: кожен другий ряд зсунуто на пів елемента (для цегли).
-      const stagger = spec.kind === 'clinker' && (((row % 2) + 2) % 2 === 1) ? g.pu / 2 : 0
-      const base = face.a + stagger
-      const colFrom = Math.floor((ua - base) / g.pu)
-      const colTo = Math.ceil((ub - base) / g.pu)
+      const stagger = spec.kind === 'clinker' && ((row % 2) + 2) % 2 === 1 ? g.pu / 2 : 0
+      const colFrom = Math.floor((ua - stagger) / g.pu)
+      const colTo = Math.ceil((ub - stagger) / g.pu)
       for (let col = colFrom; col < colTo; col++) {
-        const cx = base + col * g.pu
+        const cx = stagger + col * g.pu
         const u = Math.max(cx, ua)
         const du = Math.min(cx + g.eu, ub) - u
         if (du < 0.004) continue
-        push(u, v, du, dv)
+        put(elements, u, v, du, dv, cladC, t)
       }
     }
   }
-  return out
+  return { elements, backing }
 }

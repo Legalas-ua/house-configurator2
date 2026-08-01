@@ -1,5 +1,7 @@
-import { useLayoutEffect, useMemo, useRef } from 'react'
-import { Color, MeshStandardMaterial, Object3D, type InstancedMesh } from 'three'
+import { useLayoutEffect, useMemo, useRef, type ReactNode } from 'react'
+import { useFrame } from '@react-three/fiber'
+import { easing } from 'maath'
+import { Color, MeshStandardMaterial, Object3D, type Group, type InstancedMesh } from 'three'
 import type { RoofMatKind, RoofMatSpec } from '../config/types'
 import type { SkinBox } from '../lib/roofSkin'
 
@@ -26,15 +28,19 @@ const LOOK: Record<RoofMatKind, { rough: number; metal: number; spread: number }
   seam: { rough: 0.35, metal: 0.7, spread: 0.03 },
   shingle: { rough: 0.92, metal: 0, spread: 0.14 },
   corrugated: { rough: 0.45, metal: 0.6, spread: 0.04 },
+  builtUp: { rough: 0.95, metal: 0, spread: 0.08 },
+  membrane: { rough: 0.6, metal: 0, spread: 0.03 },
 }
 
-function SkinInstances({ spec, boxes }: { spec: RoofMatSpec; boxes: SkinBox[] }) {
-  const look = LOOK[spec.kind]
+function SkinInstances({ spec, boxes, trim = false }: { spec: RoofMatSpec; boxes: SkinBox[]; trim?: boolean }) {
+  // Торцева планка й кожух парапету — завжди фарбований метал, незалежно від
+  // того, яке покриття обрали: колір у них свій, а вигляд однаковий.
+  const look = trim ? { rough: 0.38, metal: 0.65, spread: 0.02 } : LOOK[spec.kind]
   const ref = useRef<InstancedMesh>(null)
   const mat = useMemo(
     () => new MeshStandardMaterial({ color: spec.color, roughness: look.rough, metalness: look.metal }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [spec.kind],
+    [spec.kind, trim],
   )
   mat.color.set(spec.color)
   mat.roughness = look.rough
@@ -74,6 +80,24 @@ function SkinInstances({ spec, boxes }: { spec: RoofMatSpec; boxes: SkinBox[] })
     >
       <boxGeometry args={[1, 1, 1]} />
     </instancedMesh>
+  )
+}
+
+// Поява покриття. Ярус даху росте знизу вгору — але покриття, що піднімається
+// з-під даху, виглядає неправильно: воно ж лягає ЗВЕРХУ. Тому масштабуємо його
+// відносно найвищої точки — і воно «спускається» на схил згори.
+export function SkinTier({ top, open, children }: { top: number; open: boolean; children: ReactNode }) {
+  const ref = useRef<Group>(null)
+  useFrame((_, dt) => {
+    const g = ref.current
+    if (!g) return
+    easing.damp(g.scale, 'y', open ? 1 : 0.0001, 0.42, dt)
+    g.visible = open || g.scale.y > 0.02
+  })
+  return (
+    <group ref={ref} position={[0, top, 0]} visible={false} scale={[1, 0.0001, 1]}>
+      <group position={[0, -top, 0]}>{children}</group>
+    </group>
   )
 }
 

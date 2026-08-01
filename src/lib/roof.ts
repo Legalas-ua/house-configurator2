@@ -337,6 +337,24 @@ export function slopeBox(part: RoofPart, above: PlanRect[]) {
   }
 }
 
+// Габарит для ПЕРЕВІРКИ колізій. Відрізняється від скату лише притиснутими
+// сторонами: там скат навмисно спиняється НЕ доходячи до осі стіни, і вікно,
+// що стоїть рівно на цій осі, випадало з перевірки — дах його перекривав, а
+// панель мовчала. Тут край повертаємо до зовнішньої грані стіни: площина
+// схилу лінійна, тож продовжити її на ці 5 см цілком коректно.
+function clashBox(part: RoofPart, above: PlanRect[]) {
+  const b = box(part)
+  const pin = pinnedSides(part, above)
+  const o = sideExtend(part, above)
+  const e = (p: boolean, v: number) => (p ? EAVE_BASE : v)
+  return {
+    x0: b.x0 - e(pin.xmin, o.xmin),
+    x1: b.x1 + e(pin.xmax, o.xmax),
+    z0: b.z0 - e(pin.zmin, o.zmin),
+    z1: b.z1 + e(pin.zmax, o.zmax),
+  }
+}
+
 // ---- Колізії даху з вікнами ----
 // Скат чи парапет може перекрити вікно. Рахуємо на рівні ВИСОТ: беремо низ
 // даху над віконним отвором і дивимось, чи він нижчий за верх вікна.
@@ -355,8 +373,11 @@ export interface RoofWindowClash {
 function roofBottomAt(part: RoofPart, x: number, z: number, above: PlanRect[]): number | null {
   const b = box(part)
   if (part.kind !== 'flat') {
+    // Належність перевіряємо ШИРШИМ габаритом, а висоту рахуємо площиною
+    // самого скату: інакше вікно рівно на осі притиснутої стіни випадає.
+    const c = clashBox(part, above)
+    if (x < c.x0 - EPS || x > c.x1 + EPS || z < c.z0 - EPS || z > c.z1 + EPS) return null
     const g = slopeBox(part, above)
-    if (x < g.x0 - EPS || x > g.x1 + EPS || z < g.z0 - EPS || z > g.z1 + EPS) return null
     const gw = g.x1 - g.x0
     const gd = g.z1 - g.z0
     // Той самий вибір напрямку гребеня, що й у геометрії HouseShell.

@@ -10,7 +10,7 @@ import type {
   RoofMatSpec,
 } from '../config/types'
 import { DEFAULT_FACADE } from '../config/facade'
-import { DEFAULT_ROOF_MAT } from '../config/roofMaterial'
+import { DEFAULT_FLAT_MAT, DEFAULT_ROOF_MAT, DEFAULT_TRIM_COLOR } from '../config/roofMaterial'
 import { DEFAULT_CONFIG, STEPS } from '../config/steps'
 import {
   floorsAvailable,
@@ -128,9 +128,17 @@ interface ConfiguratorState {
   facadeMode: PlanMode
   wallFacades: Record<string, FacadeSpec>
   selectedFacadeWall: string | null
-  // Покрівля: типовий матеріал + винятки на окремі зони даху (id частини).
+  // Оздоблення НЕ з'являється саме собою: доки користувач не клікнув матеріал,
+  // будинок стоїть у базовому вигляді. І показуємо його лише на своєму кроці
+  // та далі — повернувшись назад, людина бачить будинок таким, яким він був на
+  // тому кроці, але сам вибір зберігається й повертається разом із кроком.
+  facadeTouched: boolean
+  // Покрівля: типовий матеріал (скатний і плоский окремо) + винятки на зони.
   roofMat: RoofMatSpec
+  roofFlat: RoofMatSpec
   roofMats: Record<string, RoofMatSpec>
+  roofTrimColor: string // торцеві планки скатного / кожух парапету
+  roofMatTouched: boolean
   selectedRoom: string | null // id кімнати, яку зараз редагують (ручний режим)
   dragging: boolean // тягнуть зону на плані → камеру треба знерухомити
   showGrid: boolean // сітка прив'язки під планом (лише в ручному режимі)
@@ -160,8 +168,9 @@ interface ConfiguratorState {
   setWallFacade: (id: string, patch: Partial<FacadeSpec>, base: FacadeSpec) => void
   setSelectedFacadeWall: (id: string | null) => void
   syncFacadeColor: () => void // «однаковий колір» — колір 1-го поверху на все
-  setRoofMat: (patch: Partial<RoofMatSpec>) => void
+  setRoofMat: (patch: Partial<RoofMatSpec>, flat: boolean) => void
   setPartRoofMat: (id: string, patch: Partial<RoofMatSpec>, base: RoofMatSpec) => void
+  setRoofTrimColor: (color: string) => void
   setSelectedRoom: (id: string | null) => void
   setDragging: (on: boolean) => void
   setShowGrid: (on: boolean) => void
@@ -194,8 +203,12 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
   facadeMode: 'template',
   wallFacades: {},
   selectedFacadeWall: null,
+  facadeTouched: false,
   roofMat: { ...DEFAULT_ROOF_MAT },
+  roofFlat: { ...DEFAULT_FLAT_MAT },
   roofMats: {},
+  roofTrimColor: DEFAULT_TRIM_COLOR,
+  roofMatTouched: false,
   selectedRoom: null,
   dragging: false,
   showGrid: true,
@@ -300,7 +313,10 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
   setRoofLevel: (level) => set({ roofLevel: level, selectedRoofPart: null }),
 
   setFacade: (floor, patch) =>
-    set((s) => ({ facades: s.facades.map((f, i) => (i === floor ? { ...f, ...patch } : f)) })),
+    set((s) => ({
+      facades: s.facades.map((f, i) => (i === floor ? { ...f, ...patch } : f)),
+      facadeTouched: true,
+    })),
 
   setFacadeFloor: (floor) => set({ facadeFloor: floor }),
 
@@ -318,7 +334,10 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
   // `base` — оздоблення, яке ця стіна має ЗАРАЗ (своє або поверхове): перша ж
   // правка має лягти поверх видимого, а не поверх типового.
   setWallFacade: (id, patch, base) =>
-    set((s) => ({ wallFacades: { ...s.wallFacades, [id]: { ...base, ...s.wallFacades[id], ...patch } } })),
+    set((s) => ({
+      wallFacades: { ...s.wallFacades, [id]: { ...base, ...s.wallFacades[id], ...patch } },
+      facadeTouched: true,
+    })),
 
   setSelectedFacadeWall: (id) => set({ selectedFacadeWall: id }),
 
@@ -333,10 +352,20 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
       }
     }),
 
-  setRoofMat: (patch) => set((s) => ({ roofMat: { ...s.roofMat, ...patch } })),
+  setRoofMat: (patch, flat) =>
+    set((s) =>
+      flat
+        ? { roofFlat: { ...s.roofFlat, ...patch }, roofMatTouched: true }
+        : { roofMat: { ...s.roofMat, ...patch }, roofMatTouched: true },
+    ),
 
   setPartRoofMat: (id, patch, base) =>
-    set((s) => ({ roofMats: { ...s.roofMats, [id]: { ...base, ...s.roofMats[id], ...patch } } })),
+    set((s) => ({
+      roofMats: { ...s.roofMats, [id]: { ...base, ...s.roofMats[id], ...patch } },
+      roofMatTouched: true,
+    })),
+
+  setRoofTrimColor: (color) => set({ roofTrimColor: color, roofMatTouched: true }),
 
   setSelectedRoom: (id) => set({ selectedRoom: id }),
 

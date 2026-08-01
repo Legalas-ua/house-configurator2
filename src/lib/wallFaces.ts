@@ -1,5 +1,11 @@
 import type { FloorPlan, HousePlan } from '../config/types'
 import { ringContains, unionOutline, type Point, type Ring } from './outline'
+import { WALL_T } from './windows'
+
+// На стільки грань «загортається» за ріг. Значення фіксоване, а не за
+// товщиною матеріалу: на сусідніх стінах матеріали можуть бути різні, а стик
+// має зійтись однаково. Збігається з CLAD_T у lib/cladding.ts.
+const CORNER = 0.02
 
 // ============================================================
 // Зовнішні стіни поверху, розібрані на ГРАНІ — те, що на кроці «Фасад» можна
@@ -23,6 +29,9 @@ export interface WallFace {
   nz: number
   a: number // межі вздовж стіни
   b: number
+  // Відстань від `line` до зовнішньої ПЛОЩИНИ. У стіни це пів товщини; у
+  // фронтону над дахом площина збігається з `line`, тож там 0.
+  halfT?: number
 }
 
 const EPS = 1e-4
@@ -84,7 +93,26 @@ export function wallFaces(plan: HousePlan): WallFace[] {
         const mid = (a + b) / 2
         const probe = (s: number): Point => (horizontal ? [mid, line + s] : [line + s, mid])
         const sign = insideRings(rings, probe(0.25)) ? -1 : 1
-        const stops = [a, ...partitionCuts(fl, horizontal, line, a, b), b]
+        // Кінці ребра — справжні роги будинку. Оздоблення має доходити до
+        // рогу, а не спинятись на ОСІ перпендикулярної стіни (звідки й бралась
+        // непокрита смуга шириною в пів стіни на кожному куті).
+        //
+        // На ОПУКЛОМУ розі грань «загортається» за ріг, на ВГНУТОМУ —
+        // навпаки, підрізається, щоб не влізти в оздоблення сусідньої стіни:
+        // саме таке накладання давало миготіння у внутрішніх кутах.
+        // Горизонтальна стіна завжди «володіє» рогом, вертикальна поступається
+        // — тоді два шари стикаються, а не сходяться в одній площині.
+        const endShift = (at: number, dir: -1 | 1) => {
+          const probe: Point = horizontal ? [at + dir * 0.06, line + sign * 0.06] : [line + sign * 0.06, at + dir * 0.06]
+          const convex = !insideRings(rings, probe)
+          if (convex) return horizontal ? WALL_T / 2 + CORNER : WALL_T / 2
+          return horizontal ? -(WALL_T / 2 + CORNER) : 0
+        }
+        const ea = endShift(a, -1)
+        const eb = endShift(b, 1)
+
+        const cuts = partitionCuts(fl, horizontal, line, a, b)
+        const stops = [a - ea, ...cuts, b + eb]
         for (let k = 0; k + 1 < stops.length; k++) {
           const fa = stops[k]
           const fb = stops[k + 1]
