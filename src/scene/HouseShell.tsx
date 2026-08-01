@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { useFrame, type ThreeEvent } from '@react-three/fiber'
+import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
 import { Html } from '@react-three/drei'
 import { easing } from 'maath'
 import {
@@ -7,7 +7,10 @@ import {
   ExtrudeGeometry,
   Float32BufferAttribute,
   Path,
+  Raycaster,
   Shape,
+  Vector2,
+  type Camera,
   type Group,
   type Mesh,
 } from 'three'
@@ -49,7 +52,10 @@ const HANDLE_COLOR = '#d9622b' // теракота — як і ручки зон
 const CEIL_H = 3.0 // чиста висота стелі на поверсі
 const PLATE_T = 0.2
 const FLOOR_H = CEIL_H + PLATE_T // крок поверху (стеля + перекриття)
-const WALL_T = 0.18
+// Рівно 100 мм — як і перегородки. Раніше було 180, і вікно на стіні жило на
+// сітці, зсунутій на 10 мм: усі межі й напрямні падали «між клітинками».
+// Тримати ЄДИНЕ значення з lib/windows.ts обов'язково.
+const WALL_T = 0.1
 // ---- Яруси: як прибрані шви на стиках ----
 // Шов на стику двох коробок буває з двох причин, і лікуються вони протилежно:
 //   1) коробки стикаються впритул -> похибка float лишає щілину в піксель;
@@ -472,6 +478,54 @@ interface WinDrag {
   start: number // координата захоплення вздовж стіни
   u: number
   width: number
+  // Вісь стіни, по якій їде це вікно, — щоб рахувати рух без меша-«ловця».
+  horizontal: boolean
+  line: number
+  y: number
+}
+
+// Курсор -> координата вздовж осі стіни.
+//
+// Раніше рух ловила горизонтальна площина-«ловець». З нею було дві біди:
+//   1) вона з'являлась лише ПІСЛЯ setState, тож перші рухи миші пропадали —
+//      вікно рушало не одразу;
+//   2) коли камеру опустити низько, промінь іде майже паралельно горизонтальній
+//      площині: перетин або втікає в нескінченність, або його немає — вікно не
+//      зрушити взагалі.
+// Тому площини більше немає: шукаємо найближчу точку САМОЇ осі стіни до променя
+// з-під курсора. Не визначено це лише коли дивишся точно вздовж стіни — а тоді
+// вікна й не видно.
+const pickRay = new Raycaster()
+const pickNdc = new Vector2()
+
+function alongAxis(
+  e: PointerEvent,
+  canvas: HTMLCanvasElement,
+  camera: Camera,
+  horizontal: boolean,
+  line: number,
+  y: number,
+): number | null {
+  const r = canvas.getBoundingClientRect()
+  if (!r.width || !r.height) return null
+  pickNdc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1)
+  pickRay.setFromCamera(pickNdc, camera)
+  const o = pickRay.ray.origin
+  const v = pickRay.ray.direction // одиничний
+  // Вісь стіни: точка A (там, де координата вздовж = 0) і одиничний напрямок u.
+  const ax = horizontal ? 0 : line
+  const az = horizontal ? line : 0
+  const ux = horizontal ? 1 : 0
+  const uz = horizontal ? 0 : 1
+  const wx = ax - o.x
+  const wy = y - o.y
+  const wz = az - o.z
+  const b = ux * v.x + uz * v.z
+  const denom = 1 - b * b
+  if (Math.abs(denom) < 1e-4) return null
+  const d = ux * wx + uz * wz
+  const ev = v.x * wx + v.y * wy + v.z * wz
+  return (b * ev - d) / denom
 }
 
 // Локальна вісь X групи вікна збігається з віссю стіни не на всіх сторонах:
@@ -509,19 +563,17 @@ function WindowEditor({ openings, plan }: { openings: Opening[]; plan: HousePlan
   const [hoverWall, setHoverWall] = useState<string | null>(null)
   const [hoverWin, setHoverWin] = useState<string | null>(null)
   const downAt = useRef<{ x: number; y: number } | null>(null)
+  const hitWin = useRef(false) // натиснули по вікну/стіні, а не по порожньому
+  const dragRef = useRef<WinDrag | null>(null)
+  const camera = useThree((s) => s.camera)
+  const gl = useThree((s) => s.gl)
 
   // Редагуються вікна ВСІХ поверхів одразу — перемикати поверхи тут зайве.
   const mine = openings
 
-  useEffect(() => {
-    if (!drag) return
-    const up = () => {
-      setDrag(null)
-      setDragging(false)
-    }
-    window.addEventListener('pointerup', up)
-    return () => window.removeEventListener('pointerup', up)
-  }, [drag, setDragging])
+  // Рух рахуємо в ref-і: слухач висить на window і має бачити СВІЖІ вікна, але
+  // перепідписуватись на кожну зміну ширини під час тягання не мусить.
+  const moveRef = useRef<(delta: number) => void>(() => {})
 
   // Esc знімає вибір вікна і виходить із режиму додавання.
   useEffect(() => {
@@ -531,42 +583,86 @@ function WindowEditor({ openings, plan }: { openings: Opening[]; plan: HousePlan
       setSelectedWall(null)
       setAdding(false)
     }
+    // Скидаємо прапорець уже ПІСЛЯ того, як полотно розібралось із pointerup.
+    const up = () => {
+      hitWin.current = false
+    }
     window.addEventListener('keydown', key)
-    return () => window.removeEventListener('keydown', key)
+    window.addEventListener('pointerup', up)
+    return () => {
+      window.removeEventListener('keydown', key)
+      window.removeEventListener('pointerup', up)
+    }
   }, [setSelected, setSelectedWall, setAdding])
 
-  // Координата курсора вздовж стіни цього вікна.
-  const along = (o: Opening, p: { x: number; z: number }) => (o.horizontal ? p.x : p.z)
+  const sel = mine.find((o) => o.id === selected)
+  const midY = (o: Opening) => o.baseY + (o.sill + o.top) / 2
+
+  moveRef.current = (d: number) => {
+    const dg = dragRef.current
+    if (!dg) return
+    const spec = windows.find((w) => w.id === dg.id)
+    if (!spec) return
+    const room = plan.floors[spec.floor]?.rooms.find((r) => r.id === spec.roomId)
+    if (!room) return
+    const wall = wallOf(room, spec.side)
+    const next =
+      dg.mode === 'move'
+        ? fitToWall(spec, wall, dg.u + d, dg.width)
+        : dg.mode === 'uStart'
+          ? fitToWall(spec, wall, dg.u + d, dg.width - d)
+          : fitToWall(spec, wall, dg.u, dg.width + d)
+    setCustomWindows(updateWindow(windows, dg.id, next))
+  }
+
+  // Слухачі вішаємо на window, а не на меш у сцені: тягнути можна навіть коли
+  // курсор зійшов з вікна, і рух не губиться на першому ж кадрі.
+  useEffect(() => {
+    if (!drag) return
+    const onMove = (e: PointerEvent) => {
+      const dg = dragRef.current
+      if (!dg) return
+      const a = alongAxis(e, gl.domElement, camera, dg.horizontal, dg.line, dg.y)
+      if (a == null) return
+      moveRef.current(a - dg.start)
+    }
+    const up = () => {
+      dragRef.current = null
+      setDrag(null)
+      setDragging(false)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', up)
+    return () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', up)
+    }
+  }, [drag, camera, gl, setDragging])
 
   const grab = (o: Opening, mode: WinDrag['mode'], e: ThreeEvent<PointerEvent>) => {
     e.stopPropagation()
+    hitWin.current = true
     setSelected(o.id)
     setSelectedWall(null)
     setHovered(null)
     setDragging(true)
-    setDrag({ id: o.id, mode, start: along(o, e.point), u: o.u, width: o.width })
+    const y = midY(o)
+    // Точку захоплення беремо ТІЄЮ САМОЮ математикою, що й наступні рухи, —
+    // інакше вікно на першому ж русі стрибнуло б на різницю двох методів.
+    const start = alongAxis(e.nativeEvent, gl.domElement, camera, o.horizontal, o.line, y)
+    const next: WinDrag = {
+      id: o.id,
+      mode,
+      start: start ?? (o.horizontal ? e.point.x : e.point.z),
+      u: o.u,
+      width: o.width,
+      horizontal: o.horizontal,
+      line: o.line,
+      y,
+    }
+    dragRef.current = next
+    setDrag(next)
   }
-
-  const move = (p: { x: number; z: number }) => {
-    if (!drag) return
-    const o = openings.find((x) => x.id === drag.id)
-    const spec = windows.find((w) => w.id === drag.id)
-    if (!o || !spec) return
-    const room = plan.floors[spec.floor]?.rooms.find((r) => r.id === spec.roomId)
-    if (!room) return
-    const wall = wallOf(room, spec.side)
-    const d = along(o, p) - drag.start
-    const next =
-      drag.mode === 'move'
-        ? fitToWall(spec, wall, drag.u + d, drag.width)
-        : drag.mode === 'uStart'
-          ? fitToWall(spec, wall, drag.u + d, drag.width - d)
-          : fitToWall(spec, wall, drag.u, drag.width + d)
-    setCustomWindows(updateWindow(windows, drag.id, next))
-  }
-
-  const sel = mine.find((o) => o.id === selected)
-  const midY = (o: Opening) => o.baseY + (o.sill + o.top) / 2
 
   // Стіни активного поверху, на які можна ставити вікна.
   const walls = useMemo(
@@ -626,6 +722,10 @@ function WindowEditor({ openings, plan }: { openings: Opening[]; plan: HousePlan
         onPointerUp={(e) => {
           const d = downAt.current
           downAt.current = null
+          // Порядок обходу перетинів залежить від камери: під низьким кутом
+          // підкладка може трапитись РАНІШЕ за вікно, і її pointerup зняв би
+          // щойно зроблений вибір. Прапорець ставить саме вікно на pointerdown.
+          if (hitWin.current) return
           if (d && Math.hypot(e.nativeEvent.clientX - d.x, e.nativeEvent.clientY - d.y) < 4) {
             setSelected(null)
             setSelectedWall(null)
@@ -707,6 +807,7 @@ function WindowEditor({ openings, plan }: { openings: Opening[]; plan: HousePlan
             }}
             onPointerDown={(e) => {
               e.stopPropagation()
+              hitWin.current = true
               setSelectedWall(active ? null : w.key)
               setSelected(null)
             }}
@@ -765,6 +866,25 @@ function WindowEditor({ openings, plan }: { openings: Opening[]; plan: HousePlan
 
       {sel && (
         <group rotation-y={sel.rotY} position={[sel.fx, midY(sel), sel.fz]}>
+          {/* Розміри обраного вікна — так само, як підписи граней у зон плану.
+              Ширина зверху, висота збоку: знизу вже стоять стрілки дверей. */}
+          <Html
+            position={[0, (sel.top - sel.sill) / 2 + 0.28, 0.12]}
+            center
+            zIndexRange={[10, 0]}
+            style={{ pointerEvents: 'none' }}
+          >
+            <span className="plan-size">{t.plan.meters(sel.width)}</span>
+          </Html>
+          <Html
+            position={[sel.width / 2 + 0.4, 0, 0.12]}
+            center
+            zIndexRange={[10, 0]}
+            style={{ pointerEvents: 'none' }}
+          >
+            <span className="plan-size">{t.plan.meters(sel.top - sel.sill)}</span>
+          </Html>
+
           {/* Ручки: 'uStart' завжди тягне ПОЧАТОК вікна вздовж стіни, тож на
               дзеркальних сторонах вона й малюється з іншого боку. */}
           {(['uStart', 'uEnd'] as const).map((mode) => {
@@ -828,22 +948,6 @@ function WindowEditor({ openings, plan }: { openings: Opening[]; plan: HousePlan
           />
         ))}
 
-      {/* Ловець руху курсора. Площина стоїть на ВИСОТІ ВІКНА: якщо ловити на
-          рівні землі, промінь для 2-го поверху падає під іншим кутом, і вікно
-          «біжить» за курсором помітно швидше, ніж на 1-му. */}
-      {drag && sel && (
-        <mesh
-          rotation={[-Math.PI / 2, 0, 0]}
-          position={[0, midY(sel), 0]}
-          onPointerMove={(e) => {
-            e.stopPropagation()
-            move(e.point)
-          }}
-        >
-          <planeGeometry args={[200, 200]} />
-          <meshBasicMaterial transparent opacity={0} depthWrite={false} />
-        </mesh>
-      )}
     </>
   )
 }

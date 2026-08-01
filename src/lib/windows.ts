@@ -286,11 +286,12 @@ export function validateWindows(plan: HousePlan, specs: WindowSpec[]): WindowIss
 export const WIN_GRID = 0.1 // крок прив'язки вікна вздовж стіни
 const snapW = (v: number) => Math.round(v / WIN_GRID) * WIN_GRID
 
-// Вікно рухається по ВНУТРІШНЬОМУ контуру стіни, та ще й з відступом 100 мм:
-// сторона кімнати задана по осях стін, тож без цього вікно заїжджало б у
-// товщу перпендикулярної стіни на розі.
-const WALL_T = 0.18
-export const WIN_EDGE = WALL_T / 2 + 0.1
+// Вікно рухається по ВНУТРІШНЬОМУ контуру стіни, з відступом від рогу.
+// Стіна — рівно 100 мм, а відступ дібраний так, щоб WIN_EDGE теж був кратний
+// кроку сітки вікна: інакше межі руху лежали б на 190 мм, вікно впиралось у них
+// «між клітинками», і напрямні від сусідніх вікон ніколи точно не збігались.
+const WALL_T = 0.1
+export const WIN_EDGE = WALL_T / 2 + 0.05 // = WIN_GRID, тобто рівно на сітці
 
 // Проміжок, у якому може жити вікно на цій стіні.
 export function wallRange(wall: WallSeg): { from: number; to: number } {
@@ -298,8 +299,25 @@ export function wallRange(wall: WallSeg): { from: number; to: number } {
   return { from, to: Math.max(from, wall.len - from) }
 }
 
+// Двері, які вже НЕ вміщаються у вікно, просто прибираємо. Раніше тут була лише
+// підказка «завузьке вікно», а самі двері лишались висіти в отворі, вужчому за
+// стулку. Тепер правило одне на обидва боки: вужче за MIN_DOOR_W — дверей не
+// поставити і наявні зникають.
+function clampDoors(spec: WindowSpec): WindowSpec {
+  if (spec.doors.length === 0) return spec
+  const panels = panelCount(spec.mullions, spec.width)
+  const limit = Math.max(0, Math.min(maxDoors(spec.width), panels))
+  const doors = spec.doors
+    .slice(0, limit)
+    .map((d) => ({ width: Math.min(d.width, spec.width), slot: Math.min(d.slot, panels - 1) }))
+  const same =
+    doors.length === spec.doors.length &&
+    doors.every((d, i) => d.width === spec.doors[i].width && d.slot === spec.doors[i].slot)
+  return same ? spec : { ...spec, doors }
+}
+
 export function updateWindow(specs: WindowSpec[], id: string, patch: Partial<WindowSpec>): WindowSpec[] {
-  return specs.map((s) => (s.id === id ? { ...s, ...patch } : s))
+  return specs.map((s) => (s.id === id ? clampDoors({ ...s, ...patch }) : s))
 }
 
 export function removeWindow(specs: WindowSpec[], id: string): WindowSpec[] {

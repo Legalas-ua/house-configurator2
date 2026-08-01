@@ -73,6 +73,13 @@ export default function RoofView() {
 
   const [drag, setDrag] = useState<Drag | null>(null)
   const downAt = useRef<{ x: number; y: number } | null>(null)
+  // Чи потрапило натискання по САМІЙ зоні. Порядок обходу перетинів залежить
+  // від камери: коли її опустити низько, промінь іде ВГОРУ і підкладка (вона
+  // трохи нижче зон) трапляється РАНІШЕ за зону. Тоді її pointerup встигав
+  // зняти вибір, зроблений мілісекундою раніше, — дах першого поверху
+  // «виділявся і одразу гаснув». Прапорець від порядку не залежить: на
+  // pointerdown його ставить зона, а підкладка лише читає.
+  const hitPart = useRef(false)
   const [hover, setHover] = useState<string | null>(null)
 
   const levels = roofLevels(plan)
@@ -113,8 +120,17 @@ export default function RoofView() {
     const key = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setSelected(null)
     }
+    // Скидаємо прапорець ПІСЛЯ того, як полотно розібралось із pointerup:
+    // слухач на window спрацьовує вже після обробників мешів.
+    const up = () => {
+      hitPart.current = false
+    }
     window.addEventListener('keydown', key)
-    return () => window.removeEventListener('keydown', key)
+    window.addEventListener('pointerup', up)
+    return () => {
+      window.removeEventListener('keydown', key)
+      window.removeEventListener('pointerup', up)
+    }
   }, [active, setSelected])
 
   if (!active) return null
@@ -126,6 +142,7 @@ export default function RoofView() {
 
   const grab = (part: RoofPart, mode: DragMode, e: ThreeEvent<PointerEvent>) => {
     e.stopPropagation()
+    hitPart.current = true
     setSelected(part.id)
     setDragging(true)
     setDrag({ id: part.id, mode, px: e.point.x, pz: e.point.z, rect: { x: part.x, z: part.z, width: part.width, depth: part.depth } })
@@ -157,6 +174,7 @@ export default function RoofView() {
         onPointerUp={(e) => {
           const d = downAt.current
           downAt.current = null
+          if (hitPart.current) return
           if (d && Math.hypot(e.nativeEvent.clientX - d.x, e.nativeEvent.clientY - d.y) < 4) setSelected(null)
         }}
       >
@@ -188,7 +206,14 @@ export default function RoofView() {
               e.stopPropagation()
               setHover((cur) => (cur === p.id ? null : cur))
             }}
-            onPointerDown={(e) => (drawing ? grab(p, 'move', e) : (e.stopPropagation(), setSelected(p.id)))}
+            onPointerDown={(e) => {
+              hitPart.current = true
+              if (drawing) grab(p, 'move', e)
+              else {
+                e.stopPropagation()
+                setSelected(p.id)
+              }
+            }}
             // Без цього pointerup доходить до підкладки під зоною, і вона
             // одразу ж знімає щойно зроблений вибір.
             onPointerUp={(e) => e.stopPropagation()}
