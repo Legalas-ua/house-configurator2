@@ -116,6 +116,17 @@ export interface FacadeSpec {
   panelHeight: number
 }
 
+// ===== Матеріали даху (крок 8) =====
+// Прив'язані до ЧАСТИНИ даху (id зони), як фасад — до стіни. Тип задає
+// розкладку об'ємних елементів, колір — довільний.
+
+export type RoofMatKind = 'clayTile' | 'metalTile' | 'seam' | 'shingle' | 'corrugated'
+
+export interface RoofMatSpec {
+  kind: RoofMatKind
+  color: string
+}
+
 // Звідки береться план:
 // 'template' — виводиться з конфігурації (generateHousePlan), як і раніше;
 // 'custom'   — лежить у сторі й редагується користувачем, конфігурація його не чіпає.

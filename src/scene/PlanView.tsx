@@ -753,9 +753,10 @@ export default function PlanView() {
   // Тягати зони можна лише там, де їх видно, і лише у ручному режимі.
   const editable = showZones && planMode === 'custom'
   const issues = useMemo(() => (editable ? validatePlan(plan) : []), [editable, plan])
-  // Плиту показуємо на «формі» тощо, але не на «кімнати» (зони) і не на «вікна»/«дах»
-  // (там основу дає 3D-оболонка HouseShell).
-  const showSlab = !showZones && stepId !== 'windows' && stepId !== 'roofZones' && stepId !== 'roof'
+  // Плита — ЛИШЕ на кроці формотворення. Далі основу дає 3D-оболонка
+  // HouseShell, а біла площина за обрисом поверху лізе крізь неї артефактом.
+  // Перелічувати кроки-винятки не можна: кожен новий крок знову «вмикав» плиту.
+  const showSlab = stepId === 'shape'
 
   if (plan.floors.length === 0) return null
 

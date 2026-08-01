@@ -91,7 +91,9 @@ export default function RoofView() {
   // у готовому даху контур заданий наперед, але кожен його сегмент так само
   // можна виділити й налаштувати.
   const drawing = stepId === 'roofZones' && roofMode === 'custom'
-  const active = (drawing || stepId === 'roof') && levels.length > 0
+  // На кроці «Матеріали даху» частину теж обирають кліком — тими самими
+  // площинами-ловцями, що й на кроці «Дах».
+  const active = (drawing || stepId === 'roof' || stepId === 'roofMat') && levels.length > 0
 
   // Контур покриття рівня — орієнтир, куди можна ставити зони.
   const outlineGeo = useMemo(() => {

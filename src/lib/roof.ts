@@ -296,37 +296,44 @@ export const ROOF_LIFT = 0.09
 
 export type SideKey = 'xmin' | 'xmax' | 'zmin' | 'zmax'
 
-// Звіс ПО КОЖНІЙ СТОРОНІ. Сторона, притиснута до стіни поверху ВИЩЕ, звісу не
-// має взагалі: інакше, збільшуючи звіс, користувач заганяв би скат усередину
-// приміщення другого поверху. Ознака та сама, що й для парапету, — грань
-// накрита плитою поверху вище.
-export function sideOverhang(part: RoofPart, above: PlanRect[]): Record<SideKey, number> {
-  const out: Record<SideKey, number> = {
-    xmin: part.overhang,
-    xmax: part.overhang,
-    zmin: part.overhang,
-    zmax: part.overhang,
-  }
+// Сторони, ПРИТИСНУТІ до стіни поверху вище. Ознака та сама, що й для
+// парапету, — грань накрита плитою поверху вище.
+export function pinnedSides(part: RoofPart, above: PlanRect[]): Record<SideKey, boolean> {
+  const out: Record<SideKey, boolean> = { xmin: false, xmax: false, zmin: false, zmax: false }
   for (const e of parapetEdges(part, above)) {
     const key: SideKey = e.horizontal ? (e.nz < 0 ? 'zmin' : 'zmax') : e.nx < 0 ? 'xmin' : 'xmax'
     const full = e.max - e.min
     const open = e.spans.reduce((s, [a, b]) => s + (b - a), 0)
     // Досить, щоб грань упиралась у стіну ХОЧ ЧАСТИНОЮ: пускати звіс лише на
     // вільний шматок прямокутна геометрія все одно не вміє.
-    if (open < full - 0.05) out[key] = 0
+    if (open < full - 0.05) out[key] = true
   }
   return out
+}
+
+// На скільки скат виходить ЗА грань зони по кожній стороні. Знак важливий:
+//
+//   вільна сторона  -> назовні: пів стіни (до зовнішньої грані) + звіс;
+//   притиснута      -> УСЕРЕДИНУ: дах має спинитись рівно на ЗОВНІШНІЙ грані
+//                      стіни поверху вище. Раніше тут теж стояв «+пів стіни»,
+//                      і скат прошивав ту стіну наскрізь — до її середини й
+//                      далі в кімнату. Мінус 2 мм лишаємо як напуск, щоб на
+//                      стику не світилась волосяна щілина.
+export function sideExtend(part: RoofPart, above: PlanRect[]): Record<SideKey, number> {
+  const pin = pinnedSides(part, above)
+  const value = (p: boolean) => (p ? -(WALL_T / 2 - 0.002) : EAVE_BASE + part.overhang)
+  return { xmin: value(pin.xmin), xmax: value(pin.xmax), zmin: value(pin.zmin), zmax: value(pin.zmax) }
 }
 
 // Габарит СКАТУ у світі — рівно те, що будує HouseShell.
 export function slopeBox(part: RoofPart, above: PlanRect[]) {
   const b = box(part)
-  const o = sideOverhang(part, above)
+  const o = sideExtend(part, above)
   return {
-    x0: b.x0 - EAVE_BASE - o.xmin,
-    x1: b.x1 + EAVE_BASE + o.xmax,
-    z0: b.z0 - EAVE_BASE - o.zmin,
-    z1: b.z1 + EAVE_BASE + o.zmax,
+    x0: b.x0 - o.xmin,
+    x1: b.x1 + o.xmax,
+    z0: b.z0 - o.zmin,
+    z1: b.z1 + o.zmax,
   }
 }
 

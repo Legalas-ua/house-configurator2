@@ -7,8 +7,10 @@ import type {
   HouseConfig,
   HousePlan,
   PlanMode,
+  RoofMatSpec,
 } from '../config/types'
 import { DEFAULT_FACADE } from '../config/facade'
+import { DEFAULT_ROOF_MAT } from '../config/roofMaterial'
 import { DEFAULT_CONFIG, STEPS } from '../config/steps'
 import {
   floorsAvailable,
@@ -120,6 +122,15 @@ interface ConfiguratorState {
   // другого поверху не скидало вже налаштоване.
   facades: FacadeSpec[]
   facadeFloor: number // поверх, оздоблення якого зараз правлять
+  // 'template' — матеріал на ВЕСЬ поверх; 'custom' — на окремі стіни.
+  // Стіна тут — грань із lib/wallFaces.ts; чого немає в мапі, те бере
+  // оздоблення свого поверху.
+  facadeMode: PlanMode
+  wallFacades: Record<string, FacadeSpec>
+  selectedFacadeWall: string | null
+  // Покрівля: типовий матеріал + винятки на окремі зони даху (id частини).
+  roofMat: RoofMatSpec
+  roofMats: Record<string, RoofMatSpec>
   selectedRoom: string | null // id кімнати, яку зараз редагують (ручний режим)
   dragging: boolean // тягнуть зону на плані → камеру треба знерухомити
   showGrid: boolean // сітка прив'язки під планом (лише в ручному режимі)
@@ -145,6 +156,12 @@ interface ConfiguratorState {
   setRoofLevel: (level: number) => void
   setFacade: (floor: number, patch: Partial<FacadeSpec>) => void
   setFacadeFloor: (floor: number) => void
+  setFacadeMode: (mode: PlanMode) => void
+  setWallFacade: (id: string, patch: Partial<FacadeSpec>, base: FacadeSpec) => void
+  setSelectedFacadeWall: (id: string | null) => void
+  syncFacadeColor: () => void // «однаковий колір» — колір 1-го поверху на все
+  setRoofMat: (patch: Partial<RoofMatSpec>) => void
+  setPartRoofMat: (id: string, patch: Partial<RoofMatSpec>, base: RoofMatSpec) => void
   setSelectedRoom: (id: string | null) => void
   setDragging: (on: boolean) => void
   setShowGrid: (on: boolean) => void
@@ -174,6 +191,11 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
   roofLevel: 0,
   facades: [{ ...DEFAULT_FACADE }, { ...DEFAULT_FACADE }],
   facadeFloor: 0,
+  facadeMode: 'template',
+  wallFacades: {},
+  selectedFacadeWall: null,
+  roofMat: { ...DEFAULT_ROOF_MAT },
+  roofMats: {},
   selectedRoom: null,
   dragging: false,
   showGrid: true,
@@ -281,6 +303,40 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
     set((s) => ({ facades: s.facades.map((f, i) => (i === floor ? { ...f, ...patch } : f)) })),
 
   setFacadeFloor: (floor) => set({ facadeFloor: floor }),
+
+  // Повернення до «на весь поверх» стирає винятки по стінах: інакше вони
+  // тихо чекали б у сторі й вискакували при наступному вмиканні режиму.
+  setFacadeMode: (mode) =>
+    set((s) =>
+      mode === s.facadeMode
+        ? s
+        : mode === 'template'
+          ? { facadeMode: 'template', wallFacades: {}, selectedFacadeWall: null }
+          : { facadeMode: 'custom', selectedFacadeWall: null },
+    ),
+
+  // `base` — оздоблення, яке ця стіна має ЗАРАЗ (своє або поверхове): перша ж
+  // правка має лягти поверх видимого, а не поверх типового.
+  setWallFacade: (id, patch, base) =>
+    set((s) => ({ wallFacades: { ...s.wallFacades, [id]: { ...base, ...s.wallFacades[id], ...patch } } })),
+
+  setSelectedFacadeWall: (id) => set({ selectedFacadeWall: id }),
+
+  // Один колір на весь будинок: беремо колір 1-го поверху й розкладаємо на
+  // решту поверхів і на всі стіни-винятки.
+  syncFacadeColor: () =>
+    set((s) => {
+      const color = s.facades[0].color
+      return {
+        facades: s.facades.map((f) => (f.color === color ? f : { ...f, color })),
+        wallFacades: Object.fromEntries(Object.entries(s.wallFacades).map(([k, f]) => [k, { ...f, color }])),
+      }
+    }),
+
+  setRoofMat: (patch) => set((s) => ({ roofMat: { ...s.roofMat, ...patch } })),
+
+  setPartRoofMat: (id, patch, base) =>
+    set((s) => ({ roofMats: { ...s.roofMats, [id]: { ...base, ...s.roofMats[id], ...patch } } })),
 
   setSelectedRoom: (id) => set({ selectedRoom: id }),
 

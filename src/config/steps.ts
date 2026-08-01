@@ -8,11 +8,20 @@ import { ALL_SHAPES, ROOF_TYPES, WINDOW_TYPES } from './availability'
 // show3D визначає, чи видно 3D-вьюпорт на цьому кроці.
 // ============================================================
 
-export type StepId = 'budget' | 'constructionType' | 'shape' | 'rooms' | 'windows' | 'roofZones' | 'roof' | 'facade'
+export type StepId =
+  | 'budget'
+  | 'constructionType'
+  | 'shape'
+  | 'rooms'
+  | 'windows'
+  | 'roofZones'
+  | 'roof'
+  | 'facade'
+  | 'roofMat'
 
 export interface StepDef {
   id: StepId
-  kind: 'slider' | 'cards' | 'rooms' | 'windows' | 'roofZones' | 'roof' | 'facade' // майбутнє: 'toggle', 'form'…
+  kind: 'slider' | 'cards' | 'rooms' | 'windows' | 'roofZones' | 'roof' | 'facade' | 'roofMat'
   configKey?: ConfigKey // композитні кроки (rooms) працюють з кількома ключами
   show3D: boolean
   slider?: { min: number; max: number; step: number }
@@ -78,6 +87,14 @@ export const STEPS: StepDef[] = [
     kind: 'facade',
     show3D: true,
     isComplete: () => true, // типовий фасад заданий одразу
+  },
+  {
+    // Покрівля. Так само власний зріз стору: типовий матеріал + винятки на
+    // окремі зони даху, які обирають кліком у 3D — як на кроці «Дах».
+    id: 'roofMat',
+    kind: 'roofMat',
+    show3D: true,
+    isComplete: () => true,
   },
 ]
 
