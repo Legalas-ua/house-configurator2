@@ -39,6 +39,7 @@ import {
 import { parapetEdges, slopeBox, ROOF_LIFT } from '../lib/roof'
 import { roofSkin } from '../lib/roofSkin'
 import { terraceSkin, terraceSurfaces, TERRACE_UP_STACK } from '../lib/terraceSkin'
+import { interiorSkin, interiorSurfaces } from '../lib/interiorSkin'
 import { wallFaces, type WallFace } from '../lib/wallFaces'
 import { claddingBoxes, type CladBox, type CladResult, type HeightAt } from '../lib/cladding'
 import { gablePanels, parapetPanels } from '../lib/gableFaces'
@@ -1135,7 +1136,12 @@ export default function HouseShell() {
   const roof = useRoof()
   const stepId = STEPS[currentStep].id
   // Кроки ПІСЛЯ даху: там будинок уже стоїть цілком, з дахом.
-  const lateStep = stepId === 'facade' || stepId === 'roofMat' || stepId === 'terrace' || stepId === 'terraceMat'
+  const lateStep =
+    stepId === 'facade' ||
+    stepId === 'roofMat' ||
+    stepId === 'terrace' ||
+    stepId === 'terraceMat' ||
+    stepId === 'interior'
   // Коробка видима на «Вікна», «Форма даху» і «Дах» — на кроці форми зони
   // малюються просто поверх неї.
   const show = stepId === 'windows' || stepId === 'roofZones' || stepId === 'roof' || lateStep
@@ -1150,7 +1156,9 @@ export default function HouseShell() {
   const terraceMatTouched = useConfigurator((s) => s.terraceMatTouched)
   const showClad = lateStep && facadeTouched
   const showSkin = (stepId === 'roofMat' || stepId === 'terrace' || stepId === 'terraceMat') && roofMatTouched
-  const showTerrace = stepId === 'terraceMat' && terraceMatTouched
+  const showTerrace = (stepId === 'terraceMat' || stepId === 'interior') && terraceMatTouched
+  const interiorTouched = useConfigurator((s) => s.interiorTouched)
+  const showInterior = stepId === 'interior' && interiorTouched
   const selectedRoofPart = useConfigurator((s) => s.selectedRoofPart)
   const windowsMode = useConfigurator((s) => s.windowsMode)
   const selectedWindow = useConfigurator((s) => s.selectedWindow)
@@ -1167,6 +1175,8 @@ export default function HouseShell() {
   const roofMats = useConfigurator((s) => s.roofMats)
   const terraceZones = useConfigurator((s) => s.terraceZones)
   const terraceSpecs = useConfigurator((s) => s.terraceMats)
+  const interiorSpecs = useConfigurator((s) => s.interiorFloors)
+  const roomFloorMats = useConfigurator((s) => s.roomFloorMats)
 
   // Підсвітка обраної частини даху й саме покриття — окремі матеріали:
   // фасадний спільний на весь поверх, emissive на ньому вмикати не можна.
@@ -1184,6 +1194,13 @@ export default function HouseShell() {
     () => [0, 1].map(() => new MeshStandardMaterial({ roughness: 0.8 })),
     [],
   )
+  // Підлога інтер'єру: по матеріалу на поверх.
+  const interiorMats = useMemo(() => [0, 1].map(() => new MeshStandardMaterial({ roughness: 0.7 })), [])
+  interiorSpecs.forEach((sp, i) => {
+    if (!interiorMats[i]) return
+    interiorMats[i].color.set(sp.color)
+    interiorMats[i].roughness = sp.kind === 'carpet' ? 0.95 : sp.kind === 'board' ? 0.6 : 0.4
+  })
   terraceSpecs.forEach((sp, i) => {
     if (!terraceMats[i]) return
     terraceMats[i].color.set(sp.color)
@@ -1294,6 +1311,12 @@ export default function HouseShell() {
   const terraceSkins = useMemo(
     () => (showTerrace ? terraceSkin(terraceSurfaces(plan, terraceZones, FLOOR_H, WALL_T / 2), terraceSpecs) : []),
     [showTerrace, plan, terraceZones, terraceSpecs],
+  )
+
+  // Підлога в кімнатах — та сама об'ємна розкладка, тільки тонша.
+  const interiorSkins = useMemo(
+    () => (showInterior ? interiorSkin(interiorSurfaces(plan, FLOOR_H), interiorSpecs, roomFloorMats) : []),
+    [showInterior, plan, interiorSpecs, roomFloorMats],
   )
 
   // Покриття даху — теж геометрія, по ярусах (щоб росло разом зі своїм дахом).
@@ -1684,6 +1707,14 @@ export default function HouseShell() {
 
       {/* Об'ємне оздоблення фасаду */}
       <Cladding groups={cladGroups} />
+
+      {/* Підлога в кімнатах */}
+      {interiorSkins.map((fs) => (
+        <group key={`floor-${fs.key}`}>
+          <Backing boxes={fs.base} material={baseMat} />
+          <Backing boxes={fs.boxes} material={interiorMats[fs.floor]} />
+        </group>
+      ))}
 
       {/* Покриття тераси — така сама об'ємна розкладка, тільки горизонтальна */}
       {terraceSkins.map((ts) => (

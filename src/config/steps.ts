@@ -20,10 +20,11 @@ export type StepId =
   | 'roofMat'
   | 'terrace'
   | 'terraceMat'
+  | 'interior'
 
 export interface StepDef {
   id: StepId
-  kind: 'slider' | 'cards' | 'rooms' | 'windows' | 'roofZones' | 'roof' | 'facade' | 'roofMat' | 'terrace' | 'terraceMat'
+  kind: 'slider' | 'cards' | 'rooms' | 'windows' | 'roofZones' | 'roof' | 'facade' | 'roofMat' | 'terrace' | 'terraceMat' | 'interior'
   configKey?: ConfigKey // композитні кроки (rooms) працюють з кількома ключами
   show3D: boolean
   slider?: { min: number; max: number; step: number }
@@ -109,6 +110,14 @@ export const STEPS: StepDef[] = [
     // Покриття тераси — окремо для землі й для тераси 2-го поверху.
     id: 'terraceMat',
     kind: 'terraceMat',
+    show3D: true,
+    isComplete: () => true,
+  },
+  {
+    // Інтер'єр: поки що підлога по кімнатах. Далі сюди ляжуть двері, сходи
+    // й опорядження стін.
+    id: 'interior',
+    kind: 'interior',
     show3D: true,
     isComplete: () => true,
   },

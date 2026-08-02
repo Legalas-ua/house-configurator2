@@ -226,11 +226,13 @@ export function claddingBoxes(
     if (withBacking && !heightAt) put(backing, ua, va, ub - ua, vb - va, backC, BACK_OUT + 0.002)
 
     // ---- Ряди елементів. Прив'язка до СВІТОВОГО нуля по обох осях ----
-    const rowFrom = g.pv > 0 ? Math.floor(va / g.pv) : 0
-    const rowTo = g.pv > 0 ? Math.ceil(vb / g.pv) : 1
+    // Панелі рахуємо від НИЗУ грані, решту — від світового нуля.
+    const rowBase = spec.kind === 'panels' ? baseY : 0
+    const rowFrom = g.pv > 0 ? Math.floor((va - rowBase) / g.pv) : 0
+    const rowTo = g.pv > 0 ? Math.ceil((vb - rowBase) / g.pv) : 1
     for (let row = rowFrom; row < rowTo; row++) {
       if (elements.length >= MAX_ELEMENTS) break
-      const ry = g.pv > 0 ? row * g.pv : va
+      const ry = g.pv > 0 ? rowBase + row * g.pv : va
       const rh = g.pv > 0 ? g.ev : vb - va
       const v = Math.max(ry, va)
       const dv = Math.min(ry + rh, vb) - v
@@ -243,10 +245,14 @@ export function claddingBoxes(
       }
       // Перев'язка: кожен другий ряд зсунуто на пів елемента (для цегли).
       const stagger = spec.kind === 'clinker' && ((row % 2) + 2) % 2 === 1 ? g.pu / 2 : 0
-      const colFrom = Math.floor((ua - stagger) / g.pu)
-      const colTo = Math.ceil((ub - stagger) / g.pu)
+      // Панелі кладуть ВІД КУТА цілою плитою — обрізок лишається в кінці, а не
+      // з обох боків. Цегла й планка навпаки прив'язані до світового нуля, щоб
+      // візерунок не збивався на стиках граней.
+      const anchor = spec.kind === 'panels' ? face.a + stagger : stagger
+      const colFrom = Math.floor((ua - anchor) / g.pu)
+      const colTo = Math.ceil((ub - anchor) / g.pu)
       for (let col = colFrom; col < colTo; col++) {
-        const cx = stagger + col * g.pu
+        const cx = anchor + col * g.pu
         const u = Math.max(cx, ua)
         const du = Math.min(cx + g.eu, ub) - u
         if (du < 0.004) continue

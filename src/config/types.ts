@@ -156,6 +156,20 @@ export interface TerraceMatSpec {
   joint: number
 }
 
+// ===== Інтер'єр: підлога (крок 11) =====
+// Задається на поверх, з винятками на окремі кімнати.
+
+export type InteriorKind = 'board' | 'tile' | 'stone' | 'carpet'
+
+export interface InteriorSpec {
+  kind: InteriorKind
+  color: string
+  boardWidth: number // дошка
+  dir: 'x' | 'z'
+  tile: number // плитка / камінь
+  joint: number
+}
+
 // Звідки береться план:
 // 'template' — виводиться з конфігурації (generateHousePlan), як і раніше;
 // 'custom'   — лежить у сторі й редагується користувачем, конфігурація його не чіпає.

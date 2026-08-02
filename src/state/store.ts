@@ -10,8 +10,10 @@ import type {
   PlanRect,
   RoofMatSpec,
   TerraceMatSpec,
+  InteriorSpec,
 } from '../config/types'
 import { DEFAULT_TERRACE_MAT } from '../config/terraceMaterial'
+import { DEFAULT_INTERIOR } from '../config/interior'
 import { normalizeTerrace, type TerraceZone } from '../lib/terrace'
 import { DEFAULT_FACADE } from '../config/facade'
 import { DEFAULT_FLAT_MAT, DEFAULT_ROOF_MAT } from '../config/roofMaterial'
@@ -152,6 +154,12 @@ interface ConfiguratorState {
   terraceMats: TerraceMatSpec[]
   terraceFloor: number
   terraceMatTouched: boolean
+  // Інтер'єр: підлога на поверх + винятки на кімнати (ключ `поверх|id`).
+  interiorFloors: InteriorSpec[]
+  roomFloorMats: Record<string, InteriorSpec>
+  interiorFloor: number
+  selectedInteriorRoom: string | null
+  interiorTouched: boolean
   selectedRoom: string | null // id кімнати, яку зараз редагують (ручний режим)
   dragging: boolean // тягнуть зону на плані → камеру треба знерухомити
   showGrid: boolean // сітка прив'язки під планом (лише в ручному режимі)
@@ -189,6 +197,9 @@ interface ConfiguratorState {
   setSelectedTerrace: (id: string | null) => void
   setTerraceMat: (floor: number, patch: Partial<TerraceMatSpec>) => void
   setTerraceFloor: (floor: number) => void
+  setInteriorFloor: (floor: number) => void
+  setSelectedInteriorRoom: (key: string | null) => void
+  setInterior: (patch: Partial<InteriorSpec>) => void
   setSelectedRoom: (id: string | null) => void
   setDragging: (on: boolean) => void
   setShowGrid: (on: boolean) => void
@@ -232,6 +243,11 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
   terraceMats: [{ ...DEFAULT_TERRACE_MAT }, { ...DEFAULT_TERRACE_MAT }],
   terraceFloor: 0,
   terraceMatTouched: false,
+  interiorFloors: [{ ...DEFAULT_INTERIOR }, { ...DEFAULT_INTERIOR }],
+  roomFloorMats: {},
+  interiorFloor: 0,
+  selectedInteriorRoom: null,
+  interiorTouched: false,
   selectedRoom: null,
   dragging: false,
   showGrid: true,
@@ -410,6 +426,24 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
     })),
 
   setTerraceFloor: (floor) => set({ terraceFloor: floor }),
+
+  setInteriorFloor: (floor) => set({ interiorFloor: floor, selectedInteriorRoom: null }),
+
+  setSelectedInteriorRoom: (key) => set({ selectedInteriorRoom: key }),
+
+  // Обрана кімната правиться окремо, без вибору — весь поверх.
+  setInterior: (patch) =>
+    set((s) => {
+      const key = s.selectedInteriorRoom
+      if (key) {
+        const base = s.roomFloorMats[key] ?? s.interiorFloors[s.interiorFloor] ?? s.interiorFloors[0]
+        return { roomFloorMats: { ...s.roomFloorMats, [key]: { ...base, ...patch } }, interiorTouched: true }
+      }
+      return {
+        interiorFloors: s.interiorFloors.map((f, i) => (i === s.interiorFloor ? { ...f, ...patch } : f)),
+        interiorTouched: true,
+      }
+    }),
 
   setSelectedRoom: (id) => set({ selectedRoom: id }),
 

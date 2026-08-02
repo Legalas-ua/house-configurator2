@@ -20,7 +20,8 @@ export const ROOF_SWATCHES: Record<RoofMatKind, string[]> = {
 }
 
 // Торцева планка скатного даху й кожух парапету — той самий фарбований метал.
-export const TRIM_SWATCHES = ['#3f4a52', '#8c9298', '#2f3336', '#7a4a38']
+// Останній — теракота під керамічну черепицю.
+export const TRIM_SWATCHES = ['#3f4a52', '#8c9298', '#2f3336', '#9c5136']
 export const DEFAULT_TRIM_COLOR = '#3f4a52'
 
 export const DEFAULT_ROOF_MAT: RoofMatSpec = { kind: 'metalTile', color: '#3f4a52', trim: DEFAULT_TRIM_COLOR }

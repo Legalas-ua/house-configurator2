@@ -15,6 +15,7 @@ import FacadeField from './fields/FacadeField'
 import RoofMaterialField from './fields/RoofMaterialField'
 import TerraceField from './fields/TerraceField'
 import TerraceMaterialField from './fields/TerraceMaterialField'
+import InteriorField from './fields/InteriorField'
 import FloorsPicker from './fields/FloorsPicker'
 
 // Рендерить поточний крок за його описом (StepDef) — без знання про конкретику.
@@ -65,6 +66,7 @@ export default function StepContent() {
         {step.kind === 'roofMat' && <RoofMaterialField />}
         {step.kind === 'terrace' && <TerraceField />}
         {step.kind === 'terraceMat' && <TerraceMaterialField />}
+        {step.kind === 'interior' && <InteriorField />}
         {step.id === 'shape' && <FloorsPicker />}
       </div>
 

@@ -13,18 +13,20 @@ import type { TerraceZone } from './terrace'
 // перекриття: 20 мм на 5 мм основи, інакше вона задирає рівень підлоги.
 export const TERRACE_T_GROUND = 0.05
 export const TERRACE_T_UPPER = 0.02
-// Основа — тонка підкладка ПІД настилом, а не всередині нього. Раніше вона
-// заповнювала товщу дошки й лізла крізь неї; тепер це окремий шар 4 мм, на
-// якому настил лежить, і видно її лише в зазорах між дошками.
+// Темна підкладка. На ЗЕМЛІ це окремий шар під настилом; на ПОВЕРСІ окремого
+// шару немає взагалі — там просто фарбуємо верх плити перекриття, інакше
+// настил підіймався б над рівнем підлоги.
 export const TERRACE_BASE = 0.004
-// Повна товщина пирога — на стільки треба підняти те, що стоїть на терасі.
-export const TERRACE_UP_STACK = TERRACE_BASE + TERRACE_T_UPPER
+export const TERRACE_GAP = 0.001 // зазор між підкладкою і настилом
+// На стільки треба підняти те, що стоїть на терасі поверху (паркан).
+export const TERRACE_UP_STACK = TERRACE_T_UPPER
 const MAX_ELEMENTS = 60_000
 
 export interface TerraceSurface {
   floor: number // 0 — зони на землі, 1 — кімната-тераса 2-го поверху
-  rest: number // рівень, ВІД якого росте пиріг: основа, на ній настил
+  deck: number // рівень НИЗУ настилу
   t: number // товщина настилу
+  paint: boolean // true — темне це фарбування плити, а не окремий шар
   rects: PlanRect[]
 }
 
@@ -40,8 +42,7 @@ export function terraceSurfaces(
   const out: TerraceSurface[] = []
   // На землі верх настилу має збігтися з верхом фундаменту (нуль), тож увесь
   // пиріг лежить НИЖЧЕ нуля.
-  if (zones.length > 0)
-    out.push({ floor: 0, rest: -(TERRACE_BASE + TERRACE_T_GROUND), t: TERRACE_T_GROUND, rects: zones })
+  if (zones.length > 0) out.push({ floor: 0, deck: -TERRACE_T_GROUND, t: TERRACE_T_GROUND, paint: false, rects: zones })
   plan.floors.forEach((fl, i) => {
     if (i === 0) return
     const rects = fl.rooms
@@ -52,8 +53,9 @@ export function terraceSurfaces(
         width: r.width + 2 * wallHalf,
         depth: r.depth + 2 * wallHalf,
       }))
-    // Пиріг лягає НА плиту перекриття: рівень підлоги поверху — це верх плити.
-    if (rects.length > 0) out.push({ floor: i, rest: i * floorH, t: TERRACE_T_UPPER, rects })
+    // Настил лягає НА плиту: рівень підлоги поверху — це верх плити. Окремої
+    // підкладки тут немає, темне — це сама плита, пофарбована в зоні тераси.
+    if (rects.length > 0) out.push({ floor: i, deck: i * floorH, t: TERRACE_T_UPPER, paint: true, rects })
   })
   return out
 }
@@ -95,19 +97,20 @@ export function terraceSkin(surfaces: TerraceSurface[], specs: TerraceMatSpec[])
     const g = grid(spec)
     const boxes: CladBox[] = []
     const base: CladBox[] = []
-    const deckBottom = surf.rest + TERRACE_BASE
-    const y = deckBottom + surf.t / 2
+    const y = surf.deck + surf.t / 2
 
     for (const r of surf.rects) {
       const u0 = r.x - r.width / 2
       const u1 = r.x + r.width / 2
       const v0 = r.z - r.depth / 2
       const v1 = r.z + r.depth / 2
-      // Основа — окремий тонкий шар ПІД настилом. Ніякого перетину з
-      // дошками: вони просто лежать на ній, а в зазори видно її темний тон.
+      // На поверсі — тонке ФАРБУВАННЯ верху плити (втоплене в неї), на землі —
+      // окремий шар під настилом. І там, і там між ним і настилом рівно 1 мм.
       base.push({
         x: r.x,
-        y: surf.rest + TERRACE_BASE / 2,
+        y: surf.paint
+          ? surf.deck - TERRACE_GAP - TERRACE_BASE / 2
+          : surf.deck - TERRACE_GAP - TERRACE_BASE / 2,
         z: r.z,
         dx: r.width,
         dy: TERRACE_BASE,
@@ -141,7 +144,7 @@ export function terraceSkin(surfaces: TerraceSurface[], specs: TerraceMatSpec[])
     out.push({
       key: `${surf.floor}|${spec.kind}|${spec.color}`,
       floor: surf.floor,
-      top: deckBottom + surf.t + 0.05,
+      top: surf.deck + surf.t + 0.05,
       spec,
       boxes,
       base,

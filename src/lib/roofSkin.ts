@@ -81,10 +81,17 @@ function layElements(sl: Slope, kind: RoofMatKind, out: SkinBox[], budget: numbe
   const rc = Math.cos(sl.rotY)
   const rs = Math.sin(sl.rotY)
 
+  // Ряди з НАПУСКОМ (черепиця, металочерепиця, ґонт) перекривають одне одного:
+  // якщо класти їх пласко, кожен ряд врізається в наступний. Тому кожен
+  // елемент ще й трохи «задирається» — нижній край піднімається рівно на
+  // товщину, і ряд лягає НА сусідній знизу, як на справжньому даху.
+  const lap = L.es > L.ps && L.ps > 0 ? Math.atan2(L.t, L.es) : 0
+  const lapLift = (ds: number) => (ds / 2) * Math.sin(lap)
+
   // (u, s) на площині + підйом по нормалі -> світ.
-  const place = (u: number, s: number, du: number, ds: number, dy: number, lift: number) => {
+  const place = (u: number, s: number, du: number, ds: number, dy: number, lift: number, bow = 0) => {
     if (out.length >= budget || du < 0.005 || ds < 0.005) return
-    const n = dy / 2 + lift
+    const n = dy / 2 + lift + bow
     const ly = s * sin + cos * n
     const lz = s * cos - sin * n
     out.push({
@@ -95,7 +102,8 @@ function layElements(sl: Slope, kind: RoofMatKind, out: SkinBox[], budget: numbe
       dy,
       dz: ds,
       rotY: sl.rotY,
-      tilt: sl.tilt,
+      // Додатковий нахил елемента піднімає його НИЖНІЙ край над сусіднім рядом.
+      tilt: sl.tilt + lap,
     })
   }
 
@@ -111,7 +119,8 @@ function layElements(sl: Slope, kind: RoofMatKind, out: SkinBox[], budget: numbe
   const cutToHip = (ea: number, eb: number, sa: number, sb: number) => {
     const emit = (a: number, b: number, p: number, q: number) => {
       if (b - a < 0.01 || q - p < 0.005 || out.length >= budget) return
-      place((a + b) / 2, (p + q) / 2, b - a, q - p, L.t, 0)
+      // Верхній край елемента лишається на площині, нижній — задирається.
+      place((a + b) / 2, (p + q) / 2, b - a, q - p, L.t, 0, lapLift(q - p))
     }
     if (!sl.clipU) {
       emit(Math.max(ea, u0), Math.min(eb, u1), sa, sb)
