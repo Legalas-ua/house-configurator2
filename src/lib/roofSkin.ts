@@ -209,9 +209,9 @@ function fasciaOf(sl: Slope, kind: RoofMatKind, out: SkinBox[], plate: number) {
   const sin = Math.sin(sl.tilt)
   const rc = Math.cos(sl.rotY)
   const rs = Math.sin(sl.rotY)
-  // Планка звисає ВНИЗ від поверхні покриття: верх на рівні покриття, а далі
+  // Планка звисає ВНИЗ від поверхні покриття: верх трохи вище покриття, а далі
   // вона закриває плиту. n — зсув центру по нормалі до схилу.
-  const n = cover - h / 2
+  const n = cover + 0.004 - h / 2
   const put = (u: number, s: number, du: number, ds: number) => {
     const ly = s * sin + cos * n
     const lz = s * cos - sin * n
@@ -229,12 +229,15 @@ function fasciaOf(sl: Slope, kind: RoofMatKind, out: SkinBox[], plate: number) {
   const hw = sl.width / 2
   const hl = sl.len / 2
   const w = FASCIA_W
-  // По карнизу й гребеню — на всю ширину з напуском, щоб роги зійшлись…
-  put(0, -hl + w / 2, sl.width + 2 * w, w)
-  put(0, hl - w / 2, sl.width + 2 * w, w)
-  // …і по двох торцях схилу.
-  put(-hw + w / 2, 0, w, sl.len)
-  put(hw - w / 2, 0, w, sl.len)
+  const lap = 0.005 // напуск на плиту, щоб не світилась щілина
+  // Планка стоїть ЗА гранню плити, а не всередині неї: раніше вона сиділа в
+  // межах схилу й накладалась на саме покриття — звідси й колізія.
+  const low = sl.tilt > 0 ? -1 : 1 // де нижній край схилу вздовж s
+  put(0, low * (hl + w / 2 - lap), sl.width + 2 * w, w) // карниз
+  put(-hw - w / 2 + lap, 0, w, sl.len + 2 * w) // торці схилу
+  put(hw + w / 2 - lap, 0, w, sl.len + 2 * w)
+  // Верхній край планкою не закриваємо: у двосхилого там гребінь, а в
+  // односхилого — стіна поверху вище, і планка залізла б у неї.
 }
 
 // Покриття всіх зон даху, згруповане за РІВНЕМ і матеріалом: рівень — щоб
@@ -308,10 +311,12 @@ function capBoxes(part: RoofPart, above: PlanRect[], roofY: number, out: SkinBox
     const y = roofY + part.parapetH
     const w = t + 2 * CAP_OUT
     for (const [ra, rb] of e.spans) {
-      // На РОЗІ зони кожух має зійтися з перпендикулярним: подовжуємо його на
-      // пів своєї ширини, інакше в кожному куті парапету лишався виріз.
-      const a = Math.abs(ra - e.min) < 1e-4 ? ra - w / 2 : ra
-      const b = Math.abs(rb - e.max) < 1e-4 ? rb + w / 2 : rb
+      // На РОЗІ кожух має дійти рівно до ЗОВНІШНЬОГО краю перпендикулярного —
+      // це пів стіни плюс його звис. Раніше тут стояло пів ширини кожуха, і
+      // на кожному куті він виступав на зайві 5 см.
+      const grow = WALL_T / 2 + CAP_OUT
+      const a = Math.abs(ra - e.min) < 1e-4 ? ra - grow : ra
+      const b = Math.abs(rb - e.max) < 1e-4 ? rb + grow : rb
       const len = b - a
       if (len < 0.05) continue
       const mid = (a + b) / 2

@@ -51,9 +51,16 @@ export interface FaceHole {
   y1: number
 }
 
-// Обрізка грані по висоті — для фронтонів: на висоті [v0,v1] стіна існує лише
-// в цьому проміжку вздовж себе. null = на цій висоті стіни немає.
-export type Clip = (v0: number, v1: number) => [number, number] | null
+// Верх грані в точці `u` (світова висота). Для фронтону це лінія схилу.
+//
+// Обрізали ми це раніше цілими РЯДАМИ — і на панелі 1,2 м «сходинка» вздовж
+// схилу виходила в пів метра голої основи. Тепер ріжемо КОЖЕН елемент і, якщо
+// схил перетинає його, ще й ділимо на вузькі смуги: так само різали б панель
+// на будові, і зріз читається як рівна діагональ.
+export type HeightAt = (u: number) => number
+
+// Крок дроблення елемента на діагоналі.
+const SLOPE_STEP = 0.08
 
 export interface CladResult {
   elements: CladBox[]
@@ -119,7 +126,7 @@ export function claddingBoxes(
   height: number,
   holes: FaceHole[],
   spec: FacadeSpec,
-  clip?: Clip,
+  heightAt?: HeightAt,
   withBacking = true,
 ): CladResult {
   const t = cladThickness(spec)
@@ -141,34 +148,56 @@ export function claddingBoxes(
     )
   }
 
+  // Елемент під схилом. Якщо схил його перетинає — ділимо на вузькі смуги й
+  // кожну підрізаємо окремо: вийде рівний діагональний зріз, а не сходинка
+  // заввишки з цілу панель.
+  const putSloped = (u: number, v: number, du: number, dv: number) => {
+    if (!heightAt) {
+      put(elements, u, v, du, dv, cladC, t)
+      return
+    }
+    const top = v + dv
+    // Швидкий шлях: увесь елемент нижчий за схил — різати нічого.
+    if (heightAt(u) >= top && heightAt(u + du) >= top && heightAt(u + du / 2) >= top) {
+      put(elements, u, v, du, dv, cladC, t)
+      return
+    }
+    const steps = Math.max(1, Math.ceil(du / SLOPE_STEP))
+    for (let i = 0; i < steps; i++) {
+      const su = u + (du * i) / steps
+      const sdu = du / steps
+      const lim = Math.min(heightAt(su), heightAt(su + sdu))
+      const h = Math.min(top, lim) - v
+      if (h > 0.004) put(elements, su, v, sdu, h, cladC, t)
+    }
+  }
+
   const rects = freeRects(face.a, face.b, baseY, baseY + height, holes)
   const g = grid(spec)
 
-  for (const [ua0, ub0, va, vb] of rects) {
+  for (const [ua, ub, va, vb] of rects) {
     if (elements.length >= MAX_ELEMENTS) break
 
-    // ---- Штукатурка: суцільний шар, без елементів і без підкладки ----
+    // ---- Штукатурка: суцільний шар, без елементів ----
     if (!g) {
-      if (clip) {
-        // На фронтоні ріжемо шар тонкими смугами по нахилу.
-        const steps = Math.max(1, Math.ceil((vb - va) / 0.1))
+      if (heightAt) {
+        // Під схилом кладемо вузькими смугами — зріз по діагоналі.
+        const steps = Math.max(1, Math.ceil((ub - ua) / SLOPE_STEP))
         for (let i = 0; i < steps; i++) {
-          const y0 = va + ((vb - va) * i) / steps
-          const y1 = va + ((vb - va) * (i + 1)) / steps
-          const c = clip(y0, y1)
-          if (!c) continue
-          const a = Math.max(ua0, c[0])
-          const b = Math.min(ub0, c[1])
-          if (b - a > 0.005) put(elements, a, y0, b - a, y1 - y0, cladC, t)
+          const su = ua + ((ub - ua) * i) / steps
+          const sdu = (ub - ua) / steps
+          const lim = Math.min(heightAt(su), heightAt(su + sdu))
+          const h = Math.min(vb, lim) - va
+          if (h > 0.004) put(elements, su, va, sdu, h, cladC, t)
         }
       } else {
-        put(elements, ua0, va, ub0 - ua0, vb - va, cladC, t)
+        put(elements, ua, va, ub - ua, vb - va, cladC, t)
       }
       continue
     }
 
-    // ---- Підкладка: суцільна темна площина під елементами ----
-    if (withBacking && !clip) put(backing, ua0, va, ub0 - ua0, vb - va, backC, BACK_OUT + 0.002)
+    // ---- Підкладка. На фронтоні її не треба: сам клин уже темний ----
+    if (withBacking && !heightAt) put(backing, ua, va, ub - ua, vb - va, backC, BACK_OUT + 0.002)
 
     // ---- Ряди елементів. Прив'язка до СВІТОВОГО нуля по обох осях ----
     const rowFrom = g.pv > 0 ? Math.floor(va / g.pv) : 0
@@ -181,21 +210,9 @@ export function claddingBoxes(
       const dv = Math.min(ry + rh, vb) - v
       if (dv < 0.004) continue
 
-      // Обрізка фронтону: беремо ВЕРХ ряду, щоб нічого не стирчало за схил.
-      let ua = ua0
-      let ub = ub0
-      if (clip) {
-        const c = clip(v, v + dv)
-        if (!c) continue
-        ua = Math.max(ua, c[0])
-        ub = Math.min(ub, c[1])
-        if (ub - ua < 0.005) continue
-        if (withBacking) put(backing, ua, v, ub - ua, dv, backC, BACK_OUT + 0.002)
-      }
-
       if (g.pu <= 0) {
         // Планка вздовж стіни — одна на весь вільний проміжок.
-        put(elements, ua, v, ub - ua, dv, cladC, t)
+        putSloped(ua, v, ub - ua, dv)
         continue
       }
       // Перев'язка: кожен другий ряд зсунуто на пів елемента (для цегли).
@@ -207,7 +224,7 @@ export function claddingBoxes(
         const u = Math.max(cx, ua)
         const du = Math.min(cx + g.eu, ub) - u
         if (du < 0.004) continue
-        put(elements, u, v, du, dv, cladC, t)
+        putSloped(u, v, du, dv)
       }
     }
   }

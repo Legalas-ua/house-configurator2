@@ -38,8 +38,8 @@ import {
 } from '../lib/windows'
 import { parapetEdges, slopeBox, ROOF_LIFT } from '../lib/roof'
 import { roofSkin } from '../lib/roofSkin'
-import { wallFaces } from '../lib/wallFaces'
-import { claddingBoxes, type CladBox, type CladResult, type Clip } from '../lib/cladding'
+import { wallFaces, type WallFace } from '../lib/wallFaces'
+import { claddingBoxes, type CladBox, type CladResult, type HeightAt } from '../lib/cladding'
 import { gablePanels, parapetPanels } from '../lib/gableFaces'
 import { useFacadeMaterial } from './facadeMaterial'
 import Cladding, { Backing, type CladGroup } from './Cladding'
@@ -590,6 +590,26 @@ const WIN_PICK_OUT = 0.26
 const LIMIT_COLOR = '#ffffff' // межі руху вікна
 const GUIDE_COLOR = '#2f6fb8' // напрямні від сусідніх вікон
 
+// Стіна, НАД якою стоїть фронтон чи парапет: та сама орієнтація, найбільший
+// перекрив уздовж себе і найближча площина. Її оздоблення вони й успадковують.
+function faceUnder(panel: WallFace, faces: WallFace[]): string | undefined {
+  let best: WallFace | undefined
+  let bestScore = 0
+  for (const f of faces) {
+    if (f.floor !== panel.floor || f.horizontal !== panel.horizontal) continue
+    const gap = Math.abs(f.line - panel.line)
+    if (gap > 1.5) continue
+    const over = Math.min(f.b, panel.b) - Math.max(f.a, panel.a)
+    if (over < 0.2) continue
+    const score = over - gap
+    if (score > bestScore) {
+      bestScore = score
+      best = f
+    }
+  }
+  return best?.id
+}
+
 // Зовнішня нормаль сторони, помножена на відстань.
 const outward = (side: Side, d: number): [number, number] => [
   side === 'xmax' ? d : side === 'xmin' ? -d : 0,
@@ -1123,18 +1143,30 @@ export default function HouseShell() {
     // Стіни + ФРОНТОНИ над дахом: те, що лишилось стіною, оздоблюється так
     // само, а розкладка зшивається сама — сітка прив'язана до світового нуля.
     const panels = [
-      ...faces.map((f) => ({ face: f, baseY: f.floor * FLOOR_H, height: FLOOR_H, clip: undefined as Clip | undefined })),
+      ...faces.map((f) => ({
+        face: f,
+        baseY: f.floor * FLOOR_H,
+        height: FLOOR_H,
+        heightAt: undefined as HeightAt | undefined,
+        over: undefined as string | undefined,
+      })),
       ...roof.flatMap((p) => {
         const above = plan.floors[p.level + 1]?.slab ?? []
         const y = (p.level + 1) * FLOOR_H
         // Фронтони скатного і стінки парапету плоского — усе це так само
         // зовнішні стіни, тільки вище покриття.
-        return [...gablePanels(p, above, y, p.level), ...parapetPanels(p, above, y, p.level)]
+        return [...gablePanels(p, above, y, p.level), ...parapetPanels(p, above, y, p.level)].map((g) => ({
+          ...g,
+          // Матеріал фронтон/парапет НЕ обирають окремо: вони продовжують ту
+          // стіну, над якою стоять. Інакше, помінявши матеріал стіни під
+          // дахом, людина бачила над нею стару розкладку.
+          over: faceUnder(g.face, faces),
+        }))
       }),
     ]
 
-    for (const { face: f, baseY, height, clip } of panels) {
-      const spec = wallFacades[f.id] ?? specs[f.floor] ?? specs[0]
+    for (const { face: f, baseY, height, heightAt, over } of panels) {
+      const spec = wallFacades[over ?? f.id] ?? specs[f.floor] ?? specs[0]
       const holes = openings
         .filter(
           (o) =>
@@ -1157,7 +1189,7 @@ export default function HouseShell() {
         holes.map((h) => `${h.a},${h.b},${h.y0},${h.y1}`).join(';'),
       ].join('|')
       let res = prev.get(layoutKey)
-      if (!res) res = claddingBoxes(f, baseY, height, holes, spec, clip)
+      if (!res) res = claddingBoxes(f, baseY, height, holes, spec, heightAt)
       next.set(layoutKey, res)
 
       const key = `${spec.kind}|${spec.color}|${spec.plankWidth}|${spec.plankGap}|${spec.plankDir}|${spec.panelShape}|${spec.panelWidth}|${spec.panelHeight}`

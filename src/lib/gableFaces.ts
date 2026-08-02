@@ -1,5 +1,5 @@
 import type { PlanRect } from '../config/types'
-import type { Clip } from './cladding'
+import type { HeightAt } from './cladding'
 import { parapetEdges, slopeBox, ROOF_LIFT, type RoofPart } from './roof'
 import { WALL_T } from './windows'
 import type { WallFace } from './wallFaces'
@@ -25,7 +25,7 @@ export interface GablePanel {
   face: WallFace
   baseY: number
   height: number
-  clip?: Clip
+  heightAt?: HeightAt
 }
 
 // Стінка ПАРАПЕТУ — це теж зовнішня стіна, тільки над покриттям: оздоблення
@@ -85,16 +85,11 @@ export function gablePanels(part: RoofPart, above: PlanRect[], roofY: number, fl
   const r1 = ridgeAlongZ ? g.z1 : g.x1
   const highAtMax = !(mono && part.rotation >= 180)
 
-  // Проміжок уздовж падіння, де стіна ще існує на висоті v.
-  // v приходить у СВІТОВИХ координатах (так їх веде claddingBoxes), тому
-  // спершу віднімаємо низ панелі. Без цього `need` виходив у сотні метрів,
-  // проміжок ставав порожнім — і на фронтоні не з'являлось нічого.
-  const clip: Clip = (_v0, v1) => {
-    const need = (v1 - roofY - ROOF_LIFT) / Math.max(tan, 1e-6)
-    if (need <= 0) return [f0, f1]
-    if (mono) return highAtMax ? [f0 + need, f1] : [f0, f1 - need]
-    const k = Math.min(need, span / 2)
-    return [f0 + k, f1 - k]
+  // Верх стіни в точці u — це лінія схилу. Саме до неї підрізаються елементи,
+  // тож оздоблення доходить упритул до похилої плити, без сходинок.
+  const heightAt: HeightAt = (u) => {
+    const p = mono ? (highAtMax ? u - f0 : f1 - u) : Math.min(u - f0, f1 - u)
+    return roofY + ROOF_LIFT + Math.max(0, p) * tan
   }
 
   const out: GablePanel[] = []
@@ -117,7 +112,7 @@ export function gablePanels(part: RoofPart, above: PlanRect[], roofY: number, fl
       },
       baseY: roofY,
       height,
-      clip,
+      heightAt,
     })
   }
 
@@ -140,7 +135,6 @@ export function gablePanels(part: RoofPart, above: PlanRect[], roofY: number, fl
       },
       baseY: roofY,
       height,
-      clip: () => [r0, r1],
     })
   }
   return out
