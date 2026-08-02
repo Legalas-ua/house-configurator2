@@ -38,7 +38,7 @@ import {
 } from '../lib/windows'
 import { parapetEdges, slopeBox, ROOF_LIFT } from '../lib/roof'
 import { roofSkin } from '../lib/roofSkin'
-import { terraceSkin, terraceSurfaces } from '../lib/terraceSkin'
+import { terraceSkin, terraceSurfaces, TERRACE_T_UPPER } from '../lib/terraceSkin'
 import { wallFaces, type WallFace } from '../lib/wallFaces'
 import { claddingBoxes, type CladBox, type CladResult, type HeightAt } from '../lib/cladding'
 import { gablePanels, parapetPanels } from '../lib/gableFaces'
@@ -263,6 +263,75 @@ function gablePlateGeometry(width: number, depth: number, height: number, tv: nu
   s.closePath()
   const g = new ExtrudeGeometry(s, { depth, bevelEnabled: false })
   g.translate(0, 0, -depth / 2)
+  return g
+}
+
+// Вальмовий дах: схили з чотирьох боків, гребінь уздовж ДОВШОЇ сторони.
+// Профілем його не витягнеш (розріз різний уздовж будинку), тож збираємо
+// многогранник вручну. Обхід вершин навмисно не вивіряємо на око — нормаль
+// кожного трикутника розвертаємо назовні від центра тіла.
+function hipGeometry(width: number, depth: number, pitch: number, skirt: number): BufferGeometry {
+  const hw = width / 2
+  const hd = depth / 2
+  const short = Math.min(width, depth)
+  const h = (short / 2) * Math.tan((pitch * Math.PI) / 180)
+  const along = width >= depth
+  // Гребінь: відступ від коротких країв на пів короткої сторони.
+  const r1: [number, number, number] = along ? [-hw + short / 2, h, 0] : [0, h, -hd + short / 2]
+  const r2: [number, number, number] = along ? [hw - short / 2, h, 0] : [0, h, hd - short / 2]
+
+  const A: [number, number, number] = [-hw, 0, -hd]
+  const B: [number, number, number] = [hw, 0, -hd]
+  const C: [number, number, number] = [hw, 0, hd]
+  const D: [number, number, number] = [-hw, 0, hd]
+  const A2: [number, number, number] = [-hw, -skirt, -hd]
+  const B2: [number, number, number] = [hw, -skirt, -hd]
+  const C2: [number, number, number] = [hw, -skirt, hd]
+  const D2: [number, number, number] = [-hw, -skirt, hd]
+
+  const pos: number[] = []
+  const centre: [number, number, number] = [0, (h - skirt) / 2, 0]
+  const tri = (a: number[], b: number[], c: number[]) => {
+    const ux = b[0] - a[0]
+    const uy = b[1] - a[1]
+    const uz = b[2] - a[2]
+    const vx = c[0] - a[0]
+    const vy = c[1] - a[1]
+    const vz = c[2] - a[2]
+    const nx = uy * vz - uz * vy
+    const ny = uz * vx - ux * vz
+    const nz = ux * vy - uy * vx
+    const out = nx * (a[0] - centre[0]) + ny * (a[1] - centre[1]) + nz * (a[2] - centre[2])
+    const [p, q] = out >= 0 ? [b, c] : [c, b]
+    pos.push(a[0], a[1], a[2], p[0], p[1], p[2], q[0], q[1], q[2])
+  }
+  const quad = (a: number[], b: number[], c: number[], d: number[]) => {
+    tri(a, b, c)
+    tri(a, c, d)
+  }
+
+  // Спідниця й низ.
+  quad(A, B, B2, A2)
+  quad(B, C, C2, B2)
+  quad(C, D, D2, C2)
+  quad(D, A, A2, D2)
+  quad(A2, B2, C2, D2)
+  // Схили: два довгі — трапеції, два короткі — трикутники.
+  if (along) {
+    quad(A, B, r2, r1)
+    quad(C, D, r1, r2)
+    tri(D, A, r1)
+    tri(B, C, r2)
+  } else {
+    quad(B, C, r2, r1)
+    quad(D, A, r1, r2)
+    tri(A, B, r1)
+    tri(C, D, r2)
+  }
+
+  const g = new BufferGeometry()
+  g.setAttribute('position', new Float32BufferAttribute(pos, 3))
+  g.computeVertexNormals()
   return g
 }
 
@@ -1221,7 +1290,7 @@ export default function HouseShell() {
   // Покриття тераси. З'являється, як і решта матеріалів, лише на своєму кроці
   // й лише після того, як його справді обрали.
   const terraceSkins = useMemo(
-    () => (showTerrace ? terraceSkin(terraceSurfaces(plan, terraceZones, FLOOR_H), terraceSpecs) : []),
+    () => (showTerrace ? terraceSkin(terraceSurfaces(plan, terraceZones, FLOOR_H, WALL_T / 2), terraceSpecs) : []),
     [showTerrace, plan, terraceZones, terraceSpecs],
   )
 
@@ -1473,7 +1542,7 @@ export default function HouseShell() {
       roofY: number
       partId: string
       level: number
-      geo: ExtrudeGeometry
+      geo: BufferGeometry
       x: number
       y: number
       z: number
@@ -1503,7 +1572,21 @@ export default function HouseShell() {
       const mono = part.kind === 'mono'
       const rotY = (ridgeAlongZ ? 0 : Math.PI / 2) + (mono && part.rotation >= 180 ? Math.PI : 0)
       const tan = Math.tan((part.pitch * Math.PI) / 180)
-      if (mono) {
+      if (part.kind === 'hip') {
+        // Вальмовий будується в СВІТОВИХ осях (гребінь сам іде вздовж довшої
+        // сторони), тож жодного повороту групи йому не треба.
+        out.push({
+          roofY,
+          partId: part.id,
+          level: part.level,
+          geo: hipGeometry(w, d, part.pitch, skirt),
+          x,
+          y,
+          z,
+          rotY: 0,
+          wallLike: false,
+        })
+      } else if (mono) {
         // Односхилий: висота на ПОВНИЙ проліт (схил один, а не два).
         const mh = span * tan
         const b = { roofY, partId: part.id, level: part.level, x, y, z, rotY }
@@ -1725,9 +1808,11 @@ export default function HouseShell() {
         </mesh>
       )}
 
+      {/* Паркан стоїть НА покритті тераси, а не в ньому: інакше його низ
+          тонув у дошці. Підйом мікроскопічний і на вигляд не читається. */}
       {fences.map((f, i) => (
         <group key={`fence-${i}`}>
-          <mesh position={[f.cx, f.baseY + FENCE_H / 2, f.cz]}>
+          <mesh position={[f.cx, f.baseY + TERRACE_T_UPPER + FENCE_H / 2, f.cz]}>
             <boxGeometry args={f.horizontal ? [f.len, FENCE_H, FENCE_D] : [FENCE_D, FENCE_H, f.len]} />
             {/* depthWrite=false — інакше прозорі панелі паркану пишуть у буфер
                 глибини й на стиках дають дрібні артефакти. */}
@@ -1740,7 +1825,7 @@ export default function HouseShell() {
               depthWrite={false}
             />
           </mesh>
-          <mesh position={[f.cx, f.baseY + FENCE_H + RAIL_H / 2, f.cz]}>
+          <mesh position={[f.cx, f.baseY + TERRACE_T_UPPER + FENCE_H + RAIL_H / 2, f.cz]}>
             <boxGeometry args={f.horizontal ? [f.len + RAIL_W, RAIL_H, RAIL_W] : [RAIL_W, RAIL_H, f.len + RAIL_W]} />
             <meshStandardMaterial {...frameMat} />
           </mesh>

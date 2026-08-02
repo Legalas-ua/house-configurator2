@@ -67,6 +67,10 @@ interface Slope {
   tilt: number // нахил площини
   width: number // уздовж гребеня
   len: number // уздовж падіння, по площині
+  // Вальмовий дах: схил не прямокутний, а трапеція/трикутник. Функція каже,
+  // який проміжок уздовж гребеня існує на відстані s від центру схилу.
+  clipU?: (s: number) => [number, number]
+  noRake?: boolean // краї схилу — вальми, торцевої планки там не буває
 }
 
 function layElements(sl: Slope, kind: RoofMatKind, out: SkinBox[], budget: number) {
@@ -108,9 +112,11 @@ function layElements(sl: Slope, kind: RoofMatKind, out: SkinBox[], budget: numbe
     if (ds < 0.01) continue
     const off = L.stagger > 0 && r % 2 === 1 ? L.pu * L.stagger : 0
     const cols = Math.ceil((sl.width + off) / L.pu) + 1
+    // Вальма: на цій відстані від карниза схил вужчий за габарит.
+    const [cu0, cu1] = sl.clipU ? sl.clipU(sa + ds / 2) : [u0, u1]
     for (let k = 0; k < cols && out.length < budget; k++) {
-      const ca = Math.max(u0 - off + k * L.pu, u0)
-      const cb = Math.min(u0 - off + k * L.pu + L.eu, u1)
+      const ca = Math.max(u0 - off + k * L.pu, cu0)
+      const cb = Math.min(u0 - off + k * L.pu + L.eu, cu1)
       const du = cb - ca
       if (du < 0.01) continue
       place(ca + du / 2, sa + ds / 2, du, ds, L.t, 0)
@@ -121,7 +127,19 @@ function layElements(sl: Slope, kind: RoofMatKind, out: SkinBox[], budget: numbe
   if (L.rib) {
     const n = Math.floor(sl.width / L.rib.pitch)
     for (let k = 0; k <= n && out.length < budget; k++) {
-      place(u0 + k * L.rib.pitch, 0, L.rib.w, sl.len, L.rib.h, L.t)
+      const u = u0 + k * L.rib.pitch
+      if (!sl.clipU) {
+        place(u, 0, L.rib.w, sl.len, L.rib.h, L.t)
+        continue
+      }
+      // На вальмі ребро обрізається там, де схил закінчився.
+      const steps = Math.max(2, Math.ceil(sl.len / 0.25))
+      for (let i = 0; i < steps; i++) {
+        const sc = -sl.len / 2 + (sl.len * (i + 0.5)) / steps
+        const [a, b] = sl.clipU(sc)
+        if (u < a - 0.01 || u > b + 0.01) continue
+        place(u, sc, L.rib.w, sl.len / steps + 0.01, L.rib.h, L.t)
+      }
     }
   }
 }
@@ -150,6 +168,39 @@ function slopesOf(part: RoofPart, above: PlanRect[], roofY: number): Slope[] {
   const tan = Math.tan((part.pitch * Math.PI) / 180)
   const ang = Math.atan(tan)
 
+  if (part.kind === 'hip') {
+    // Вальмовий: схили з чотирьох боків, гребінь уздовж ДОВШОЇ сторони.
+    // Кожен схил — трапеція (довгі боки) або трикутник (короткі): при
+    // підйомі проміжок уздовж гребеня звужується на пройдену в плані відстань.
+    const shortSide = Math.min(w, d)
+    const rise = (shortSide / 2) * tan
+    const tv = (ROOF_T * Math.hypot(shortSide / 2, rise)) / Math.max(shortSide / 2, 1e-6)
+    const len = Math.hypot(shortSide / 2, rise)
+    const cy = roofY + ROOF_LIFT + rise / 2 + tv
+    const inset = shortSide / 2
+    const sides: { rotY: number; cx: number; cz: number; base: number }[] = [
+      { rotY: 0, cx, cz: g.z0 + inset / 2, base: w }, // падає на -Z
+      { rotY: Math.PI, cx, cz: g.z1 - inset / 2, base: w }, // падає на +Z
+      { rotY: Math.PI / 2, cx: g.x0 + inset / 2, cz, base: d }, // падає на -X
+      { rotY: -Math.PI / 2, cx: g.x1 - inset / 2, cz, base: d }, // падає на +X
+    ]
+    return sides.map((sd) => ({
+      cx: sd.cx,
+      cy,
+      cz: sd.cz,
+      rotY: sd.rotY,
+      tilt: ang,
+      width: sd.base,
+      len,
+      clipU: (sp: number) => {
+        const cut = ((sp + len / 2) * inset) / Math.max(len, 1e-6)
+        const half = Math.max(0, sd.base / 2 - cut)
+        return [-half, half] as [number, number]
+      },
+      noRake: true,
+    }))
+  }
+
   if (part.kind === 'mono') {
     const run = Math.max(span, 1e-6)
     const rise = span * tan
@@ -177,11 +228,11 @@ function slopesOf(part: RoofPart, above: PlanRect[], roofY: number): Slope[] {
   const tv = part.overhang > 0 ? 0 : (ROOF_T * Math.hypot(run, rise)) / run
   const len = Math.hypot(half, rise)
   const c = Math.cos(meshRotY)
-  const s = Math.sin(meshRotY)
+  const sn = Math.sin(meshRotY)
   return ([-1, 1] as const).map((dir) => ({
     cx: cx + dir * (half / 2) * c,
     cy: roofY + ROOF_LIFT + rise / 2 + tv,
-    cz: cz - dir * (half / 2) * s,
+    cz: cz - dir * (half / 2) * sn,
     rotY,
     // Схил падає ВІД гребеня, тож на половинах нахил дзеркальний.
     tilt: dir > 0 ? -ang : ang,
@@ -244,21 +295,55 @@ function fasciaOf(sl: Slope, kind: RoofMatKind, out: SkinBox[], plateT: number) 
   const hl = sl.len / 2
   const low = sl.tilt > 0 ? -1 : 1 // де нижній край схилу вздовж s
 
-  // Карниз — одна дошка на всю ширину, з напуском на роги.
+  // КАРНИЗ. Торець плити тут вертикальний, тож і дошка вертикальна — при
+  // будь-якому куті вона закриває всю товщину пирога.
   put(0, low * (hl + w / 2 - lap), sl.width + 2 * w, w)
 
-  // Скатні краї: вертикальна дошка не може бути одним нахиленим бруском, тож
-  // набираємо її відрізками — низ виходить рівною прямою вздовж усього скату.
-  const segs = Math.max(2, Math.ceil(sl.len / 0.2))
-  const ds = sl.len / segs
+  // СКАТНІ КРАЇ. Тут навпаки: торець плити йде ПАРАЛЕЛЬНО схилу, тож дошка
+  // теж нахилена — одним суцільним бруском. Набирати її вертикальними
+  // відрізками не можна: край перетворювався на сходинки.
+  if (sl.noRake) return
+  const hRake = plateT + cover + 0.02
+  const nRake = cover + 0.004 - hRake / 2
   for (const side of [-1, 1] as const) {
     const u = side * (hw + w / 2 - lap)
-    for (let i = 0; i < segs; i++) {
-      const sc = -hl + ds * (i + 0.5)
-      // Глибина по горизонталі: похилий відрізок у плані коротший.
-      put(u, sc, w, ds * Math.abs(cos) + 0.01)
-    }
+    const ly = cos * nRake
+    const lz = -sin * nRake
+    out.push({
+      x: sl.cx + u * rc + lz * rs,
+      y: sl.cy + ly,
+      z: sl.cz - u * rs + lz * rc,
+      dx: w,
+      dy: hRake,
+      dz: sl.len + 2 * w,
+      rotY: sl.rotY,
+      tilt: sl.tilt,
+    })
   }
+}
+
+// Кожух гребеня: без нього між двома схилами світить щілина. Кладеться просто
+// зверху, як і на будові.
+function ridgeCap(sl: Slope, kind: RoofMatKind, out: SkinBox[]) {
+  const cover = LAYOUT[kind].t + (LAYOUT[kind].rib?.h ?? 0)
+  const sin = Math.sin(sl.tilt)
+  const cos = Math.cos(sl.tilt)
+  const rc = Math.cos(sl.rotY)
+  const rs = Math.sin(sl.rotY)
+  const s = sl.tilt > 0 ? sl.len / 2 : -sl.len / 2 // верхній край схилу
+  const n = cover + 0.02
+  const ly = s * sin + cos * n
+  const lz = s * cos - sin * n
+  out.push({
+    x: sl.cx + lz * rs,
+    y: sl.cy + ly,
+    z: sl.cz + lz * rc,
+    dx: sl.width + 0.06,
+    dy: 0.06,
+    dz: 0.16,
+    rotY: sl.rotY,
+    tilt: 0,
+  })
 }
 
 
@@ -313,6 +398,8 @@ export function roofSkin(
       }
       layElements(sl, spec.kind, g.boxes, MAX_ELEMENTS)
       fasciaOf(sl, spec.kind, gt.boxes, ROOF_T)
+      // Між схилами на гребені лишається щілина — накриваємо кожухом.
+      if (part.kind !== 'mono') ridgeCap(sl, spec.kind, gt.boxes)
       // Найвища точка — щоб поява йшла зверху вниз, а не знизу вгору.
       const topY = sl.cy + (sl.len / 2) * Math.abs(Math.sin(sl.tilt)) + 0.2
       g.top = Math.max(g.top, topY)

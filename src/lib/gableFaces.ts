@@ -64,7 +64,8 @@ export function parapetPanels(part: RoofPart, above: PlanRect[], roofY: number, 
 }
 
 export function gablePanels(part: RoofPart, above: PlanRect[], roofY: number, floor: number): GablePanel[] {
-  if (part.kind === 'flat') return []
+  // У вальмового фронтонів немає взагалі — схили сходяться з усіх боків.
+  if (part.kind === 'flat' || part.kind === 'hip') return []
   // Двосхилий ЗІ ЗВІСОМ — суцільна призма даху, стіни там немає (див.
   // HouseShell: wallLike лише за overhang === 0).
   if (part.kind === 'gable' && part.overhang > 0) return []

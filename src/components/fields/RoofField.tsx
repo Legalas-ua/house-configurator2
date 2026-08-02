@@ -16,7 +16,7 @@ import { resolveWindows, updateWindow, removeWindow, WIN_TOP, MIN_WIN_W } from '
 import { t } from '../../locales'
 import OptionCards from './OptionCards'
 
-const KINDS: RoofKind[] = ['flat', 'gable', 'mono']
+const KINDS: RoofKind[] = ['flat', 'gable', 'mono', 'hip']
 
 // Крок «Дах». Готовий варіант — картки типу, як і раніше. Свій — зони даху:
 // малюються на площині покриття поверху, у кожної свій тип і параметри.
@@ -155,6 +155,9 @@ function RoofEditorPanel() {
                     </button>
                   </div>
                 </div>
+                {/* Вальмовий симетричний — повертати його нічого. */}
+                {part.kind !== 'hip' && (
+                  <>
                 <span className="rooms__subtitle">{texts.rotation}</span>
                 <div className="chips">
                   {(part.kind === 'gable' ? [0, 90] : [0, 90, 180, 270]).map((r) => (
@@ -168,6 +171,8 @@ function RoofEditorPanel() {
                     </button>
                   ))}
                 </div>
+                  </>
+                )}
               </>
             )}
           </>

@@ -8,25 +8,43 @@ import type { TerraceZone } from './terrace'
 // Той самий принцип, що й на фасаді, тільки горизонтально.
 // ============================================================
 
-export const TERRACE_T = 0.05 // товщина покриття
-const BASE_DROP = 0.012 // на скільки основа нижча — вона й читається як шов
+// Тераса НА ЗЕМЛІ — це підлога на ґрунті: 50 мм, і її верх має збігтися з
+// верхом фундаменту (нуль). Тераса НА ПОВЕРСІ — тонке покриття поверх плити
+// перекриття: 20 мм на 5 мм основи, інакше вона задирає рівень підлоги.
+export const TERRACE_T_GROUND = 0.05
+export const TERRACE_T_UPPER = 0.02
+export const TERRACE_BASE = 0.005
 const MAX_ELEMENTS = 60_000
 
 export interface TerraceSurface {
   floor: number // 0 — зони на землі, 1 — кімната-тераса 2-го поверху
-  y: number // рівень, на якому лежить покриття
+  top: number // ГОТОВИЙ рівень підлоги: покриття лежить під ним
+  t: number // товщина покриття
   rects: PlanRect[]
 }
 
 // Поверхні, які треба накрити: намальовані зони 1-го поверху й кімнати-тераси
-// верхніх поверхів.
-export function terraceSurfaces(plan: HousePlan, zones: TerraceZone[], floorH: number): TerraceSurface[] {
+// верхніх поверхів. Кімнату-терасу розширюємо до ЗОВНІШНЬОЇ грані стін —
+// прямокутник кімнати заданий по осях стін, і покриття не діставало краю.
+export function terraceSurfaces(
+  plan: HousePlan,
+  zones: TerraceZone[],
+  floorH: number,
+  wallHalf: number,
+): TerraceSurface[] {
   const out: TerraceSurface[] = []
-  if (zones.length > 0) out.push({ floor: 0, y: 0, rects: zones })
+  if (zones.length > 0) out.push({ floor: 0, top: 0, t: TERRACE_T_GROUND, rects: zones })
   plan.floors.forEach((fl, i) => {
     if (i === 0) return
-    const rects = fl.rooms.filter((r) => r.type === 'terrace')
-    if (rects.length > 0) out.push({ floor: i, y: i * floorH, rects })
+    const rects = fl.rooms
+      .filter((r) => r.type === 'terrace')
+      .map((r) => ({
+        x: r.x,
+        z: r.z,
+        width: r.width + 2 * wallHalf,
+        depth: r.depth + 2 * wallHalf,
+      }))
+    if (rects.length > 0) out.push({ floor: i, top: i * floorH, t: TERRACE_T_UPPER, rects })
   })
   return out
 }
@@ -68,7 +86,7 @@ export function terraceSkin(surfaces: TerraceSurface[], specs: TerraceMatSpec[])
     const g = grid(spec)
     const boxes: CladBox[] = []
     const base: CladBox[] = []
-    const y = surf.y + TERRACE_T / 2
+    const y = surf.top - surf.t / 2
 
     for (const r of surf.rects) {
       const u0 = r.x - r.width / 2
@@ -76,12 +94,14 @@ export function terraceSkin(surfaces: TerraceSurface[], specs: TerraceMatSpec[])
       const v0 = r.z - r.depth / 2
       const v1 = r.z + r.depth / 2
       // Темна основа під покриттям — у зазори видно саме її.
+      // Основа лежить під покриттям і трохи виступає за нього — саме її
+      // видно у зазори між дошками/плитами.
       base.push({
         x: r.x,
-        y: surf.y + (TERRACE_T - BASE_DROP) / 2,
+        y: surf.top - surf.t - TERRACE_BASE / 2 + 0.004,
         z: r.z,
         dx: r.width,
-        dy: TERRACE_T - BASE_DROP,
+        dy: TERRACE_BASE + 0.008,
         dz: r.depth,
       })
 
@@ -102,7 +122,7 @@ export function terraceSkin(surfaces: TerraceSurface[], specs: TerraceMatSpec[])
             y,
             z: (va + vb) / 2,
             dx: ub - ua,
-            dy: TERRACE_T,
+            dy: surf.t,
             dz: vb - va,
           })
         }
@@ -112,7 +132,7 @@ export function terraceSkin(surfaces: TerraceSurface[], specs: TerraceMatSpec[])
     out.push({
       key: `${surf.floor}|${spec.kind}|${spec.color}`,
       floor: surf.floor,
-      top: surf.y + TERRACE_T + 0.05,
+      top: surf.top + 0.05,
       spec,
       boxes,
       base,

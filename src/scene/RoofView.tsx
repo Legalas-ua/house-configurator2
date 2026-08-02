@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { Html } from '@react-three/drei'
 import type { ThreeEvent } from '@react-three/fiber'
 import { BufferGeometry, Float32BufferAttribute } from 'three'
 import { useConfigurator, useHousePlan, useRoof } from '../state/store'
 import { STEPS } from '../config/steps'
 import { MIN_SIDE, snap } from '../lib/editPlan'
-import { levelOutline, roofLevels, updateRoofPart, type RoofPart } from '../lib/roof'
+import { joinRoofParts, levelOutline, roofJunctions, roofLevels, updateRoofPart, type RoofPart } from '../lib/roof'
 import type { PlanRect } from '../config/types'
+import { t } from '../locales'
 
 // ============================================================
 // Зони даху на площині ПОКРИТТЯ поверху. Малюються так само, як зони
@@ -22,6 +24,7 @@ const KIND_COLOR: Record<RoofPart['kind'], string> = {
   flat: '#9fb2c4',
   gable: '#c98b6b',
   mono: '#8fbf9f',
+  hip: '#b9a3d0',
 }
 
 type DragMode = 'move' | 'xmin' | 'xmax' | 'zmin' | 'zmax'
@@ -234,6 +237,27 @@ export default function RoofView() {
           </mesh>
         )
       })}
+
+      {/* «+» на стику двох зон одного рівня: зливає їх в одну. Показуємо лише
+          там, де об'єднання лишиться прямокутником — зона даху інакшою бути
+          не може. */}
+      {drawing &&
+        roofJunctions(parts, level).map((j) => (
+          <Html key={`${j.a}|${j.b}`} position={[j.x, 0.5, j.z]} center zIndexRange={[20, 0]}>
+            <button
+              type="button"
+              className="plan-join"
+              title={t.steps.roof.editor.join}
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={() => {
+                setCustomRoof(joinRoofParts(parts, j.a, j.b))
+                setSelected(j.a)
+              }}
+            >
+              +
+            </button>
+          </Html>
+        ))}
 
       {handles.map((h) => (
         <mesh key={h.mode} position={[h.x, 0.22, h.z]} onPointerDown={(e) => grab(sel!, h.mode, e)}>

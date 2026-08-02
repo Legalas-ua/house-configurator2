@@ -3,7 +3,7 @@ import { addRoofPart, removeRoofPart, roofLevels, type RoofKind } from '../../li
 import { t } from '../../locales'
 import { RoofModePicker } from './RoofField'
 
-const KINDS: RoofKind[] = ['flat', 'gable', 'mono']
+const KINDS: RoofKind[] = ['flat', 'gable', 'mono', 'hip']
 
 // Крок «Форма даху»: тільки МАЛЮВАННЯ зон. Параметри — на наступному кроці,
 // коли дах уже виріс в об'ємі й нічого не перекриває.

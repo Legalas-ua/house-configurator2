@@ -16,7 +16,7 @@ import { WALL_T } from './windows'
 // планування, тільки на площині покриття.
 // ============================================================
 
-export type RoofKind = 'flat' | 'gable' | 'mono'
+export type RoofKind = 'flat' | 'gable' | 'mono' | 'hip'
 
 export interface RoofPart extends PlanRect {
   id: string
@@ -67,7 +67,11 @@ export function normalizeRoof(part: RoofPart): RoofPart {
     pitch: clampStep(part.pitch, PITCH),
     // Скатний має два осмислені напрямки (гребінь уздовж / упоперек),
     // односхилий — чотири (куди дивиться схил). Плоскому поворот байдужий.
-    rotation: ((Math.round(part.rotation / 90) * 90) % (part.kind === 'gable' ? 180 : 360) + 360) % 360,
+    // Вальмовий симетричний: гребінь сам іде вздовж довшої сторони, поворот
+    // йому нічого не додає — тому, як і в скатного, лише 0/90.
+    rotation:
+      ((Math.round(part.rotation / 90) * 90) % (part.kind === 'gable' || part.kind === 'hip' ? 180 : 360) + 360) %
+      360,
     overhang: part.overhang < OVERHANG.min / 2 ? NO_OVERHANG : clampStep(part.overhang, OVERHANG),
   }
 }
@@ -170,6 +174,51 @@ export function addRoofPart(
     ...DEFAULTS,
   })
   return { parts: [...parts, part], id }
+}
+
+// ---- Об'єднання зон ----
+// Дві сусідні зони одного рівня можна злити в одну, якщо їхнє об'єднання —
+// знову ПРЯМОКУТНИК: зона даху прямокутна за визначенням, і з Г-подібного
+// об'єднання коректного скату вже не збудувати. Кнопка «+» з'являється рівно
+// там, де таке злиття можливе.
+export interface RoofJunction {
+  a: string
+  b: string
+  x: number // де малювати кнопку
+  z: number
+}
+
+export function roofJunctions(parts: RoofPart[], level: number): RoofJunction[] {
+  const mine = parts.filter((p) => p.level === level)
+  const out: RoofJunction[] = []
+  for (let i = 0; i < mine.length; i++) {
+    for (let k = i + 1; k < mine.length; k++) {
+      const p = box(mine[i])
+      const q = box(mine[k])
+      const sameZ = Math.abs(p.z0 - q.z0) < 0.01 && Math.abs(p.z1 - q.z1) < 0.01
+      const sameX = Math.abs(p.x0 - q.x0) < 0.01 && Math.abs(p.x1 - q.x1) < 0.01
+      const touchX = Math.min(Math.abs(p.x1 - q.x0), Math.abs(q.x1 - p.x0)) < 0.01
+      const touchZ = Math.min(Math.abs(p.z1 - q.z0), Math.abs(q.z1 - p.z0)) < 0.01
+      if (sameZ && touchX) out.push({ a: mine[i].id, b: mine[k].id, x: (Math.max(p.x0, q.x0) + Math.min(p.x1, q.x1)) / 2, z: mine[i].z })
+      else if (sameX && touchZ) out.push({ a: mine[i].id, b: mine[k].id, x: mine[i].x, z: (Math.max(p.z0, q.z0) + Math.min(p.z1, q.z1)) / 2 })
+    }
+  }
+  return out
+}
+
+// Зливаємо b у a: параметри лишаються від a, габарит стає спільним.
+export function joinRoofParts(parts: RoofPart[], a: string, b: string): RoofPart[] {
+  const pa = parts.find((p) => p.id === a)
+  const pb = parts.find((p) => p.id === b)
+  if (!pa || !pb) return parts
+  const p = box(pa)
+  const q = box(pb)
+  const x0 = Math.min(p.x0, q.x0)
+  const x1 = Math.max(p.x1, q.x1)
+  const z0 = Math.min(p.z0, q.z0)
+  const z1 = Math.max(p.z1, q.z1)
+  const merged = normalizeRoof({ ...pa, x: (x0 + x1) / 2, z: (z0 + z1) / 2, width: x1 - x0, depth: z1 - z0 })
+  return parts.filter((r) => r.id !== b).map((r) => (r.id === a ? merged : r))
 }
 
 export { GRID as ROOF_GRID }
@@ -388,6 +437,11 @@ function roofBottomAt(part: RoofPart, x: number, z: number, above: PlanRect[]): 
     if (part.kind === 'mono') {
       const fromLow = part.rotation >= 180 ? span - u : u
       return ROOF_LIFT + fromLow * tan
+    }
+    // Вальмовий: схили з УСІХ чотирьох боків, тож рахуємо найближчу грань.
+    if (part.kind === 'hip') {
+      const near = Math.min(x - g.x0, g.x1 - x, z - g.z0, g.z1 - z)
+      return ROOF_LIFT + Math.max(0, near) * tan
     }
     // Двосхилий: від найближчого краю до гребеня посередині.
     return ROOF_LIFT + Math.min(u, span - u) * tan
