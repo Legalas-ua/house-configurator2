@@ -73,6 +73,7 @@ export default function RoofView() {
   const setSelected = useConfigurator((s) => s.setSelectedRoofPart)
   const setDragging = useConfigurator((s) => s.setDragging)
   const roofLevel = useConfigurator((s) => s.roofLevel)
+  const overTerrace = useConfigurator((s) => s.roofOverTerrace)
 
   const [drag, setDrag] = useState<Drag | null>(null)
   const downAt = useRef<{ x: number; y: number } | null>(null)
@@ -85,7 +86,7 @@ export default function RoofView() {
   const hitPart = useRef(false)
   const [hover, setHover] = useState<string | null>(null)
 
-  const levels = roofLevels(plan)
+  const levels = roofLevels(plan, overTerrace)
   const level = levels.includes(roofLevel) ? roofLevel : (levels[0] ?? 0)
   const stepId = STEPS[currentStep].id
   // draw — крок «Форма даху»: пласкі зони з ручками, дах ще не виріс.
@@ -101,7 +102,7 @@ export default function RoofView() {
   // Контур покриття рівня — орієнтир, куди можна ставити зони.
   const outlineGeo = useMemo(() => {
     const pts: number[] = []
-    for (const { pts: ring } of levelOutline(plan, level)) {
+    for (const { pts: ring } of levelOutline(plan, level, overTerrace)) {
       for (let i = 0; i < ring.length; i++) {
         const [x0, z0] = ring[i]
         const [x1, z1] = ring[(i + 1) % ring.length]
@@ -111,7 +112,7 @@ export default function RoofView() {
     const g = new BufferGeometry()
     g.setAttribute('position', new Float32BufferAttribute(pts, 3))
     return g
-  }, [plan, level])
+  }, [plan, level, overTerrace])
 
   useEffect(() => {
     if (!drag) return

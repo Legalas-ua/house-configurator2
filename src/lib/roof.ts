@@ -90,10 +90,10 @@ function ringArea(pts: [number, number][]): number {
 // Рівні, де дах справді потрібен: там, де ПІСЛЯ вирахування поверху вище й
 // власних терас лишилась помітна площа. Тераса — надвір, над нею даху не буває,
 // а те, що накрите поверхом вище, — це вже не дах.
-export function roofLevels(plan: HousePlan): number[] {
+export function roofLevels(plan: HousePlan, overTerrace = false): number[] {
   const out: number[] = []
   for (let i = 0; i < plan.floors.length; i++) {
-    const open = levelOutline(plan, i)
+    const open = levelOutline(plan, i, overTerrace)
       .filter((r) => !r.hole)
       .reduce((s, r) => s + ringArea(r.pts), 0)
     if (open > 2) out.push(i)
@@ -103,18 +103,20 @@ export function roofLevels(plan: HousePlan): number[] {
 
 // Контур покриття рівня — по ньому клієнт орієнтується, малюючи зони.
 // Верхній рівень накриваємо цілком; нижній — лише те, що не під поверхом вище.
-export function levelOutline(plan: HousePlan, level: number) {
+// `overTerrace` — режим «дах над терасою»: тераса лишається В КОНТУРІ, тож
+// зону даху можна протягнути й над нею. Без нього тераса вирізається — над
+// відкритою терасою даху за замовчуванням не буває.
+export function levelOutline(plan: HousePlan, level: number, overTerrace = false) {
   const fl = plan.floors[level]
   if (!fl) return []
   const above = level < plan.floors.length - 1 ? plan.floors[level + 1].slab : []
-  // Тераса САМОГО цього рівня — відкрита ділянка, даху над нею не треба.
-  const terraces = fl.rooms.filter((r) => r.type === 'terrace')
+  const terraces = overTerrace ? [] : fl.rooms.filter((r) => r.type === 'terrace')
   return unionOutline(fl.slab, [...above, ...terraces])
 }
 
 // Габарит відкритого покриття — стартовий прямокутник зони.
-function levelBox(plan: HousePlan, level: number): PlanRect | null {
-  const pts = levelOutline(plan, level).flatMap((r) => r.pts)
+function levelBox(plan: HousePlan, level: number, overTerrace = false): PlanRect | null {
+  const pts = levelOutline(plan, level, overTerrace).flatMap((r) => r.pts)
   if (pts.length === 0) return null
   const xs = pts.map((p) => p[0])
   const zs = pts.map((p) => p[1])
@@ -126,9 +128,9 @@ function levelBox(plan: HousePlan, level: number): PlanRect | null {
 }
 
 // Готовий варіант: одна зона на весь відкритий габарит кожного рівня.
-export function generateRoof(plan: HousePlan, kind: RoofKind): RoofPart[] {
-  return roofLevels(plan).flatMap((level) => {
-    const box = levelBox(plan, level)
+export function generateRoof(plan: HousePlan, kind: RoofKind, overTerrace = false): RoofPart[] {
+  return roofLevels(plan, overTerrace).flatMap((level) => {
+    const box = levelBox(plan, level, overTerrace)
     if (!box) return []
     return [normalizeRoof({ id: `roof-${level}`, level, kind, ...box, ...DEFAULTS })]
   })
@@ -154,8 +156,9 @@ export function addRoofPart(
   parts: RoofPart[],
   level: number,
   kind: RoofKind,
+  overTerrace = false,
 ): { parts: RoofPart[]; id: string } | null {
-  const box = levelBox(plan, level)
+  const box = levelBox(plan, level, overTerrace)
   if (!box) return null
   const mine = parts.filter((p) => p.level === level)
   const width = Math.max(MIN_SIDE, Math.min(4, box.width))
@@ -195,18 +198,26 @@ export function roofJunctions(parts: RoofPart[], level: number): RoofJunction[] 
     for (let k = i + 1; k < mine.length; k++) {
       const p = box(mine[i])
       const q = box(mine[k])
-      const sameZ = Math.abs(p.z0 - q.z0) < 0.01 && Math.abs(p.z1 - q.z1) < 0.01
-      const sameX = Math.abs(p.x0 - q.x0) < 0.01 && Math.abs(p.x1 - q.x1) < 0.01
+      const xOver = Math.min(p.x1, q.x1) - Math.max(p.x0, q.x0)
+      const zOver = Math.min(p.z1, q.z1) - Math.max(p.z0, q.z0)
       const touchX = Math.min(Math.abs(p.x1 - q.x0), Math.abs(q.x1 - p.x0)) < 0.01
       const touchZ = Math.min(Math.abs(p.z1 - q.z0), Math.abs(q.z1 - p.z0)) < 0.01
-      if (sameZ && touchX) out.push({ a: mine[i].id, b: mine[k].id, x: (Math.max(p.x0, q.x0) + Math.min(p.x1, q.x1)) / 2, z: mine[i].z })
-      else if (sameX && touchZ) out.push({ a: mine[i].id, b: mine[k].id, x: mine[i].x, z: (Math.max(p.z0, q.z0) + Math.min(p.z1, q.z1)) / 2 })
+      // Досить, щоб зони просто СТИКАЛИСЬ помітною ділянкою. Раніше вимагалось
+      // ще й повне збігання по другій осі — і на зсунутих зонах «+» не
+      // з'являвся зовсім, хоч об'єднати їх якраз і треба було.
+      if (zOver > 0.2 && touchX) {
+        out.push({ a: mine[i].id, b: mine[k].id, x: (Math.max(p.x0, q.x0) + Math.min(p.x1, q.x1)) / 2, z: (Math.max(p.z0, q.z0) + Math.min(p.z1, q.z1)) / 2 })
+      } else if (xOver > 0.2 && touchZ) {
+        out.push({ a: mine[i].id, b: mine[k].id, x: (Math.max(p.x0, q.x0) + Math.min(p.x1, q.x1)) / 2, z: (Math.max(p.z0, q.z0) + Math.min(p.z1, q.z1)) / 2 })
+      }
     }
   }
   return out
 }
 
-// Зливаємо b у a: параметри лишаються від a, габарит стає спільним.
+// Зливаємо b у a: параметри лишаються від a, габарит стає СПІЛЬНИМ. Якщо
+// зони були зсунуті, спільний габарит захопить і трохи зайвого — це видно
+// одразу, бо перевірка покриття підсвітить вихід за контур.
 export function joinRoofParts(parts: RoofPart[], a: string, b: string): RoofPart[] {
   const pa = parts.find((p) => p.id === a)
   const pb = parts.find((p) => p.id === b)
@@ -249,10 +260,10 @@ function axis(values: number[]): number[] {
 
 // Ріжемо площину координатами контуру та зон і дивимось на кожну комірку:
 // «під дахом, але поза контуром» і «в контурі, але без даху» — дві помилки.
-export function validateRoof(plan: HousePlan, parts: RoofPart[]): RoofIssue[] {
+export function validateRoof(plan: HousePlan, parts: RoofPart[], overTerrace = false): RoofIssue[] {
   const issues: RoofIssue[] = []
-  for (const level of roofLevels(plan)) {
-    const rings = levelOutline(plan, level).filter((r) => !r.hole)
+  for (const level of roofLevels(plan, overTerrace)) {
+    const rings = levelOutline(plan, level, overTerrace).filter((r) => !r.hole)
     if (rings.length === 0) continue
     const zones = parts.filter((p) => p.level === level).map(box)
     const pts = rings.flatMap((r) => r.pts)

@@ -742,9 +742,10 @@ function WindowEditor({ openings, plan }: { openings: Opening[]; plan: HousePlan
     if (!dg) return
     const spec = windows.find((w) => w.id === dg.id)
     if (!spec) return
-    const room = plan.floors[spec.floor]?.rooms.find((r) => r.id === spec.roomId)
+    const fl = plan.floors[spec.floor]
+    const room = fl?.rooms.find((r) => r.id === spec.roomId)
     if (!room) return
-    const wall = wallOf(room, spec.side)
+    const wall = wallOf(room, spec.side, fl.rooms)
     const next =
       dg.mode === 'move'
         ? fitToWall(spec, wall, dg.u + d, dg.width)
@@ -814,7 +815,7 @@ function WindowEditor({ openings, plan }: { openings: Opening[]; plan: HousePlan
               key: `${i}-${room.id}-${side}`,
               floor: i,
               room,
-              wall: wallOf(room, side),
+              wall: wallOf(room, side, fl.rooms),
             })),
           ),
       ),
@@ -824,9 +825,10 @@ function WindowEditor({ openings, plan }: { openings: Opening[]; plan: HousePlan
   // Межі, у яких дозволено рухати ОБРАНЕ вікно, — показуємо пунктиром.
   const limits = useMemo(() => {
     if (!sel) return null
-    const room = plan.floors[sel.floor]?.rooms.find((r) => r.id === sel.roomId)
+    const fl = plan.floors[sel.floor]
+    const room = fl?.rooms.find((r) => r.id === sel.roomId)
     if (!room) return null
-    const w = wallOf(room, sel.side)
+    const w = wallOf(room, sel.side, fl.rooms)
     const { from, to } = wallRange(w)
     return { horizontal: w.horizontal, line: w.line, a: w.uStart + from, b: w.uStart + to, y: sel.baseY }
   }, [sel, plan])

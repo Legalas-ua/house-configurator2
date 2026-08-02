@@ -16,6 +16,7 @@ export default function PlanIssues() {
   const windows = useWindows()
   const roof = useRoof()
   const roofMode = useConfigurator((s) => s.roofMode)
+  const roofOverTerrace = useConfigurator((s) => s.roofOverTerrace)
   const stepId = STEPS[currentStep].id
 
   if (stepId === 'rooms' && planMode === 'custom') {
@@ -59,7 +60,7 @@ export default function PlanIssues() {
   }
 
   if (stepId === 'roofZones' && roofMode === 'custom') {
-    const issues = validateRoof(plan, roof)
+    const issues = validateRoof(plan, roof, roofOverTerrace)
     if (issues.length === 0) return null
     const texts = t.steps.roofZones.issues
     return (

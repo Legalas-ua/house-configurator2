@@ -17,10 +17,12 @@ export default function RoofZonesField() {
   const selected = useConfigurator((s) => s.selectedRoofPart)
   const setSelected = useConfigurator((s) => s.setSelectedRoofPart)
   const roofLevel = useConfigurator((s) => s.roofLevel)
+  const overTerrace = useConfigurator((s) => s.roofOverTerrace)
+  const setOverTerrace = useConfigurator((s) => s.setRoofOverTerrace)
   const setRoofLevel = useConfigurator((s) => s.setRoofLevel)
   const texts = t.steps.roof
 
-  const levels = roofLevels(plan)
+  const levels = roofLevels(plan, overTerrace)
   const level = levels.includes(roofLevel) ? roofLevel : (levels[0] ?? 0)
   const part = parts.find((p) => p.id === selected)
 
@@ -60,7 +62,7 @@ export default function RoofZonesField() {
                   type="button"
                   className="chip"
                   onClick={() => {
-                    const res = addRoofPart(plan, parts, level, k)
+                    const res = addRoofPart(plan, parts, level, k, overTerrace)
                     if (!res) return
                     setCustomRoof(res.parts)
                     setSelected(res.id)
@@ -72,6 +74,13 @@ export default function RoofZonesField() {
             </div>
             <p className="rooms__hint">{texts.editor.drawHint}</p>
           </div>
+
+          {/* Дах над терасою: тераса приєднується до контуру покриття, і зону
+              можна протягнути так, щоб вона накрила й терасу. */}
+          <label className="floor-hide">
+            <input type="checkbox" checked={overTerrace} onChange={(e) => setOverTerrace(e.target.checked)} />
+            {texts.editor.overTerrace}
+          </label>
 
           <div className="rooms__group">
             <span className="rooms__group-title">{texts.editor.selected}</span>

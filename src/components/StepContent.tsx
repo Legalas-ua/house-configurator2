@@ -29,6 +29,7 @@ export default function StepContent() {
   const windowsMode = useConfigurator((s) => s.windowsMode)
   const roofMode = useConfigurator((s) => s.roofMode)
   const terraceZones = useConfigurator((s) => s.terraceZones)
+  const roofOverTerrace = useConfigurator((s) => s.roofOverTerrace)
   const roof = useRoof()
   const plan = useHousePlan()
   const windows = useWindows()
@@ -39,7 +40,7 @@ export default function StepContent() {
   const blocked =
     (step.id === 'rooms' && planMode === 'custom' && validatePlan(plan).length > 0) ||
     (step.id === 'windows' && windowsMode === 'custom' && validateWindows(plan, windows).length > 0) ||
-    (step.id === 'roofZones' && roofMode === 'custom' && validateRoof(plan, roof).length > 0) ||
+    (step.id === 'roofZones' && roofMode === 'custom' && validateRoof(plan, roof, roofOverTerrace).length > 0) ||
     (step.id === 'terrace' && validateTerrace(plan, terraceZones).length > 0)
   // У ручному режимі тип вікон/даху картками не обирають, тож step.isComplete
   // (він дивиться на config) там ніколи не спрацював би — кнопка «Далі»

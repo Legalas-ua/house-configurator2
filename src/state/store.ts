@@ -121,6 +121,9 @@ interface ConfiguratorState {
   customRoof: RoofPart[] | null
   selectedRoofPart: string | null // id обраної зони даху
   roofLevel: number // рівень даху, який зараз редагують
+  // «Дах над терасою»: тераса лишається в контурі покриття, тож зону даху
+  // можна протягнути й над нею.
+  roofOverTerrace: boolean
   // Фасад: свій набір параметрів на КОЖЕН поверх (індекс = поверх). Тримаємо
   // завжди два записи — навіть в одноповерховому будинку, щоб додавання
   // другого поверху не скидало вже налаштоване.
@@ -172,6 +175,7 @@ interface ConfiguratorState {
   setCustomRoof: (parts: RoofPart[]) => void
   setSelectedRoofPart: (id: string | null) => void
   setRoofLevel: (level: number) => void
+  setRoofOverTerrace: (on: boolean) => void
   setFacade: (floor: number, patch: Partial<FacadeSpec>) => void
   setFacadeFloor: (floor: number) => void
   setFacadeMode: (mode: PlanMode) => void
@@ -212,6 +216,7 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
   customRoof: null,
   selectedRoofPart: null,
   roofLevel: 0,
+  roofOverTerrace: false,
   facades: [{ ...DEFAULT_FACADE }, { ...DEFAULT_FACADE }],
   facadeFloor: 0,
   facadeMode: 'template',
@@ -329,6 +334,10 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
   setSelectedRoofPart: (id) => set({ selectedRoofPart: id }),
 
   setRoofLevel: (level) => set({ roofLevel: level, selectedRoofPart: null }),
+
+  // Контур покриття змінився — готовий набір зон рахуємо наново.
+  setRoofOverTerrace: (on) =>
+    set((s) => (on === s.roofOverTerrace ? s : { roofOverTerrace: on, selectedRoofPart: null })),
 
   setFacade: (floor, patch) =>
     set((s) => ({
@@ -462,10 +471,11 @@ export function useHousePlan(): HousePlan {
 export function useRoof(): RoofPart[] {
   const config = useConfigurator((s) => s.config)
   const customRoof = useConfigurator((s) => s.customRoof)
+  const over = useConfigurator((s) => s.roofOverTerrace)
   const plan = useHousePlan()
   return useMemo(
-    () => customRoof ?? generateRoof(plan, config.roof === 'pitched' ? 'gable' : 'flat'),
-    [customRoof, plan, config.roof],
+    () => customRoof ?? generateRoof(plan, config.roof === 'pitched' ? 'gable' : 'flat', over),
+    [customRoof, plan, config.roof, over],
   )
 }
 

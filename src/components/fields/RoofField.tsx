@@ -81,9 +81,10 @@ function RoofEditorPanel() {
   const parts = useRoof()
   const setCustomRoof = useConfigurator((s) => s.setCustomRoof)
   const selected = useConfigurator((s) => s.selectedRoofPart)
+  const overTerrace = useConfigurator((s) => s.roofOverTerrace)
   const texts = t.steps.roof.editor
 
-  const levels = roofLevels(plan)
+  const levels = roofLevels(plan, overTerrace)
   if (levels.length === 0) return <p className="rooms__hint">{texts.noLevels}</p>
 
   const part = parts.find((p) => p.id === selected)

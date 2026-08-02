@@ -183,6 +183,7 @@ export const uk = {
         kind: 'Тип',
         kinds: { flat: 'Плоский', gable: 'Двосхилий', mono: 'Односхилий', hip: 'Вальмовий' },
         join: 'Об’єднати зони',
+        overTerrace: 'Дах над терасою',
         parapetH: 'Висота парапету',
         parapetT: 'Товщина парапету',
         pitch: 'Кут скату',
