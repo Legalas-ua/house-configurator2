@@ -1,4 +1,5 @@
 import type { FloorPlan, HouseConfig, HousePlan, RoomType, RoomZone, WindowType } from '../config/types'
+import { unionOutline, type Ring } from './outline'
 
 // ============================================================
 // Вікна як ДАНІ. Раніше отвори обчислювались просто в HouseShell і ніде не
@@ -140,15 +141,73 @@ export interface WallSeg {
   free?: [number, number]
 }
 
-// Ділянки сторони, за якими НЕМАЄ сусідньої кімнати. Тераса за сусіда не
-// рахується — на неї вікна й двері саме що виходять.
-export function exteriorSpans(rooms: RoomZone[], room: RoomZone, side: Side): [number, number][] {
+// Контур СТІН поверху (плита мінус тераси) — той самий, що будує HouseShell.
+// Кешуємо на об'єкті поверху: у нього десятки звернень на кожен перерахунок.
+const outlineCache = new WeakMap<FloorPlan, Ring[]>()
+function floorOutline(fl: FloorPlan): Ring[] {
+  let r = outlineCache.get(fl)
+  if (!r) {
+    r = unionOutline(
+      fl.slab,
+      fl.rooms.filter((x) => x.type === 'terrace'),
+    )
+    outlineCache.set(fl, r)
+  }
+  return r
+}
+
+// Ділянки КОНТУРУ, що лежать на цій стороні кімнати. Стіна існує лише там —
+// і саме тому цього перетину бракувало: сторона, вільна від сусідів, могла
+// виявитись усередині плити (порожнє місце в розкладці кімнат), вікно туди
+// ставилось, а стіни, у якій прорізати отвір, там не було зовсім.
+function outlineSpans(fl: FloorPlan, room: RoomZone, side: Side): [number, number][] {
+  const b = bounds(room)
+  const vertical = side === 'xmax' || side === 'xmin'
+  const line = side === 'xmax' ? b.x1 : side === 'xmin' ? b.x0 : side === 'zmax' ? b.z1 : b.z0
+  const u0 = vertical ? b.z0 : b.x0
+  const u1 = vertical ? b.z1 : b.x1
+  const out: [number, number][] = []
+  for (const { pts } of floorOutline(fl)) {
+    for (let i = 0; i < pts.length; i++) {
+      const [x0, z0] = pts[i]
+      const [x1, z1] = pts[(i + 1) % pts.length]
+      const eHorizontal = Math.abs(z1 - z0) < 1e-4
+      if (eHorizontal === vertical) continue // орієнтація не та
+      const eLine = eHorizontal ? z0 : x0
+      if (Math.abs(eLine - line) > 0.05) continue
+      const a = Math.min(eHorizontal ? x0 : z0, eHorizontal ? x1 : z1)
+      const c = Math.max(eHorizontal ? x0 : z0, eHorizontal ? x1 : z1)
+      const lo = Math.max(a, u0)
+      const hi = Math.min(c, u1)
+      if (hi - lo > 0.05) out.push([lo - u0, hi - u0])
+    }
+  }
+  return out
+}
+
+// Перетин двох наборів проміжків.
+function intersectSpans(a: [number, number][], b: [number, number][]): [number, number][] {
+  const out: [number, number][] = []
+  for (const [p0, p1] of a) {
+    for (const [q0, q1] of b) {
+      const lo = Math.max(p0, q0)
+      const hi = Math.min(p1, q1)
+      if (hi - lo > 0.05) out.push([lo, hi])
+    }
+  }
+  return out.sort((p, q) => p[0] - q[0])
+}
+
+// Ділянки сторони, ПРИДАТНІ для вікна: там є стіна (контур) і за нею немає
+// сусідньої кімнати. Тераса за сусіда не рахується — на неї вікна й двері
+// саме що виходять.
+export function exteriorSpans(fl: FloorPlan, room: RoomZone, side: Side): [number, number][] {
   const b = bounds(room)
   const vertical = side === 'xmax' || side === 'xmin'
   const len = vertical ? b.z1 - b.z0 : b.x1 - b.x0
   const u0 = vertical ? b.z0 : b.x0
   const busy: [number, number][] = []
-  for (const r2 of rooms) {
+  for (const r2 of fl.rooms) {
     if (r2 === room || r2.type === 'terrace') continue
     const c = bounds(r2)
     const adj =
@@ -172,14 +231,14 @@ export function exteriorSpans(rooms: RoomZone[], room: RoomZone, side: Side): [n
     cur = Math.max(cur, q)
   }
   if (len - cur > 0.05) free.push([cur, len])
-  return free
+  return intersectSpans(free, outlineSpans(fl, room, side))
 }
 
 // Найдовша вільна ділянка сторони.
 const widest = (spans: [number, number][]): [number, number] | undefined =>
   spans.length === 0 ? undefined : spans.reduce((a, b) => (b[1] - b[0] > a[1] - a[0] ? b : a))
 
-export function wallOf(room: RoomZone, side: Side, rooms?: RoomZone[]): WallSeg {
+export function wallOf(room: RoomZone, side: Side, fl?: FloorPlan): WallSeg {
   const b = bounds(room)
   const base =
     side === 'xmax'
@@ -190,7 +249,7 @@ export function wallOf(room: RoomZone, side: Side, rooms?: RoomZone[]): WallSeg 
           ? { side, horizontal: true, line: b.z1, uStart: b.x0, len: b.x1 - b.x0, rotY: 0 }
           : { side, horizontal: true, line: b.z0, uStart: b.x0, len: b.x1 - b.x0, rotY: Math.PI }
   const seg = base as WallSeg
-  if (rooms) seg.free = widest(exteriorSpans(rooms, room, side))
+  if (fl) seg.free = widest(exteriorSpans(fl, room, side))
   return seg
 }
 
@@ -202,7 +261,7 @@ export const ALL_SIDES: Side[] = ['xmax', 'xmin', 'zmax', 'zmin']
 // не давала себе клікнути.
 const USABLE = MIN_WIN_W + 2 * 0.1
 export function openSides(floor: FloorPlan, room: RoomZone): Side[] {
-  return ALL_SIDES.filter((s) => exteriorSpans(floor.rooms, room, s).some(([a, b]) => b - a >= USABLE))
+  return ALL_SIDES.filter((s) => exteriorSpans(floor, room, s).some(([a, b]) => b - a >= USABLE))
 }
 
 // ---- Готовий варіант ----
@@ -230,7 +289,7 @@ export function generateWindows(plan: HousePlan, config: HouseConfig): WindowSpe
       const b = bounds(room)
       let sides = openSides(fl, room)
         .filter((s) => !(overLowerRoof(s, b) && !facesTerrace(fl.rooms, room, s)))
-        .map((s) => wallOf(room, s, fl.rooms))
+        .map((s) => wallOf(room, s, fl))
       // Гардероб-смуга, розтягнута вздовж стіни: вікна лише на ДОВГІЙ грані.
       // На торцях смуги вони теж виростали — і фасад рябів зайвими отворами
       // там, де за ними стоять полиці.
@@ -295,7 +354,7 @@ export function resolveWindows(plan: HousePlan, specs: WindowSpec[], floorH: num
     const fl = plan.floors[spec.floor]
     const room = fl?.rooms.find((r) => r.id === spec.roomId)
     if (!room) continue // кімнату прибрали — вікно зникає разом з нею
-    const w = wallOf(room, spec.side, fl.rooms)
+    const w = wallOf(room, spec.side, fl)
     const { from, to } = wallRange(w)
     const width = Math.min(spec.width, to - from)
     const u = Math.max(from, Math.min(spec.u, to - width))
@@ -419,7 +478,7 @@ export function addWindow(
   // Тераса — надворі, вікон на ній не буває.
   if (!room || room.type === 'terrace') return null
   const walls = openSides(fl, room)
-    .map((s) => wallOf(room, s, fl.rooms))
+    .map((s) => wallOf(room, s, fl))
     .filter((w) => countOnWall(specs, floor, roomId, w.side) < MAX_PER_WALL)
     .sort((a, b) => b.len - a.len)
   if (walls.length === 0) return null
