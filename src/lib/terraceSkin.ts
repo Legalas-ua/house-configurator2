@@ -13,13 +13,18 @@ import type { TerraceZone } from './terrace'
 // перекриття: 20 мм на 5 мм основи, інакше вона задирає рівень підлоги.
 export const TERRACE_T_GROUND = 0.05
 export const TERRACE_T_UPPER = 0.02
-export const TERRACE_BASE = 0.005
+// Основа — тонка підкладка ПІД настилом, а не всередині нього. Раніше вона
+// заповнювала товщу дошки й лізла крізь неї; тепер це окремий шар 4 мм, на
+// якому настил лежить, і видно її лише в зазорах між дошками.
+export const TERRACE_BASE = 0.004
+// Повна товщина пирога — на стільки треба підняти те, що стоїть на терасі.
+export const TERRACE_UP_STACK = TERRACE_BASE + TERRACE_T_UPPER
 const MAX_ELEMENTS = 60_000
 
 export interface TerraceSurface {
   floor: number // 0 — зони на землі, 1 — кімната-тераса 2-го поверху
-  top: number // ГОТОВИЙ рівень підлоги: покриття лежить під ним
-  t: number // товщина покриття
+  rest: number // рівень, ВІД якого росте пиріг: основа, на ній настил
+  t: number // товщина настилу
   rects: PlanRect[]
 }
 
@@ -33,7 +38,10 @@ export function terraceSurfaces(
   wallHalf: number,
 ): TerraceSurface[] {
   const out: TerraceSurface[] = []
-  if (zones.length > 0) out.push({ floor: 0, top: 0, t: TERRACE_T_GROUND, rects: zones })
+  // На землі верх настилу має збігтися з верхом фундаменту (нуль), тож увесь
+  // пиріг лежить НИЖЧЕ нуля.
+  if (zones.length > 0)
+    out.push({ floor: 0, rest: -(TERRACE_BASE + TERRACE_T_GROUND), t: TERRACE_T_GROUND, rects: zones })
   plan.floors.forEach((fl, i) => {
     if (i === 0) return
     const rects = fl.rooms
@@ -44,9 +52,8 @@ export function terraceSurfaces(
         width: r.width + 2 * wallHalf,
         depth: r.depth + 2 * wallHalf,
       }))
-    // Покриття лягає НА плиту перекриття, а не в неї: рівень підлоги поверху
-    // — це верх плити, тож готовий верх настилу на його товщину вище.
-    if (rects.length > 0) out.push({ floor: i, top: i * floorH + TERRACE_T_UPPER, t: TERRACE_T_UPPER, rects })
+    // Пиріг лягає НА плиту перекриття: рівень підлоги поверху — це верх плити.
+    if (rects.length > 0) out.push({ floor: i, rest: i * floorH, t: TERRACE_T_UPPER, rects })
   })
   return out
 }
@@ -88,23 +95,22 @@ export function terraceSkin(surfaces: TerraceSurface[], specs: TerraceMatSpec[])
     const g = grid(spec)
     const boxes: CladBox[] = []
     const base: CladBox[] = []
-    const y = surf.top - surf.t / 2
+    const deckBottom = surf.rest + TERRACE_BASE
+    const y = deckBottom + surf.t / 2
 
     for (const r of surf.rects) {
       const u0 = r.x - r.width / 2
       const u1 = r.x + r.width / 2
       const v0 = r.z - r.depth / 2
       const v1 = r.z + r.depth / 2
-      // Основа заповнює товщу настилу, не доходячи до верху: саме її видно
-      // у зазори між дошками/плитами. Опускати її НИЖЧЕ настилу не можна —
-      // на поверсі вона потонула б у плиті перекриття.
-      const drop = Math.min(0.008, surf.t / 2)
+      // Основа — окремий тонкий шар ПІД настилом. Ніякого перетину з
+      // дошками: вони просто лежать на ній, а в зазори видно її темний тон.
       base.push({
         x: r.x,
-        y: surf.top - surf.t / 2 - drop / 2,
+        y: surf.rest + TERRACE_BASE / 2,
         z: r.z,
         dx: r.width,
-        dy: Math.max(0.004, surf.t - drop),
+        dy: TERRACE_BASE,
         dz: r.depth,
       })
 
@@ -135,7 +141,7 @@ export function terraceSkin(surfaces: TerraceSurface[], specs: TerraceMatSpec[])
     out.push({
       key: `${surf.floor}|${spec.kind}|${spec.color}`,
       floor: surf.floor,
-      top: surf.top + 0.05,
+      top: deckBottom + surf.t + 0.05,
       spec,
       boxes,
       base,

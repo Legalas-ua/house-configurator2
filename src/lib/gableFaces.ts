@@ -117,6 +117,28 @@ export function gablePanels(part: RoofPart, above: PlanRect[], roofY: number, fl
     })
   }
 
+  // КАРНИЗНІ смуги — вузькі грані клина під самим схилом (заввишки ROOF_LIFT).
+  // Їх оздоблення не діставало, і між верхом стіни та торцевою планкою
+  // лишалась світла смуга: саме той шов, на який скаржився замовник.
+  const eave = (line: number, n: number) => ({
+    face: {
+      id: id(`eave${n > 0 ? 1 : 0}`),
+      floor,
+      horizontal: !ridgeAlongZ,
+      line,
+      nx: ridgeAlongZ ? n : 0,
+      nz: ridgeAlongZ ? 0 : n,
+      a: r0,
+      b: r1,
+      halfT: 0,
+    },
+    baseY: roofY,
+    height: ROOF_LIFT,
+  })
+  // В односхилого низька грань одна, у двосхилого — обидві.
+  if (mono) out.push(eave(highAtMax ? f0 : f1, highAtMax ? -1 : 1))
+  else out.push(eave(f0, -1), eave(f1, 1))
+
   // Односхилий: висока стіна під верхньою кромкою схилу. Прямокутник на всю
   // ширину — обрізати нічого.
   if (mono) {

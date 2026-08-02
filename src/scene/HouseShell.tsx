@@ -38,7 +38,7 @@ import {
 } from '../lib/windows'
 import { parapetEdges, slopeBox, ROOF_LIFT } from '../lib/roof'
 import { roofSkin } from '../lib/roofSkin'
-import { terraceSkin, terraceSurfaces, TERRACE_T_UPPER } from '../lib/terraceSkin'
+import { terraceSkin, terraceSurfaces, TERRACE_UP_STACK } from '../lib/terraceSkin'
 import { wallFaces, type WallFace } from '../lib/wallFaces'
 import { claddingBoxes, type CladBox, type CladResult, type HeightAt } from '../lib/cladding'
 import { gablePanels, parapetPanels } from '../lib/gableFaces'
@@ -1315,8 +1315,18 @@ export default function HouseShell() {
       const ops = openings.filter((o) => o.baseY === baseY)
       const rings = wallOutline(fl)
       for (const e of edgesOf(rings)) {
+        // Отвір вирізаємо за ПЕРЕКРИВОМ із ребром, а не за повним входженням.
+        // Вимога «вікно цілком усередині ребра» лишала стіну суцільною, коли
+        // отвір хоч трохи вилазив за межі сегмента, — і вікно опинялось у
+        // глухій стіні.
         const eo = ops
-          .filter((o) => o.horizontal === e.horizontal && Math.abs(o.line - e.line) < 0.05 && o.a >= e.min - 0.01 && o.b <= e.max + 0.01)
+          .filter(
+            (o) =>
+              o.horizontal === e.horizontal &&
+              Math.abs(o.line - e.line) < 0.05 &&
+              Math.min(o.b, e.max) - Math.max(o.a, e.min) > 0.05,
+          )
+          .map((o) => ({ ...o, a: Math.max(o.a, e.min), b: Math.min(o.b, e.max) }))
           .sort((a, b) => a.a - b.a)
         // Зовнішня стіна — на ВСЮ висоту поверху (FLOOR_H), щоб закрити край плити
         // перекриття (не було «прожилок»). Знизу заходить у нижній ярус на
@@ -1814,7 +1824,7 @@ export default function HouseShell() {
           тонув у дошці. Підйом мікроскопічний і на вигляд не читається. */}
       {fences.map((f, i) => (
         <group key={`fence-${i}`}>
-          <mesh position={[f.cx, f.baseY + TERRACE_T_UPPER + FENCE_H / 2, f.cz]}>
+          <mesh position={[f.cx, f.baseY + TERRACE_UP_STACK + FENCE_H / 2, f.cz]}>
             <boxGeometry args={f.horizontal ? [f.len, FENCE_H, FENCE_D] : [FENCE_D, FENCE_H, f.len]} />
             {/* depthWrite=false — інакше прозорі панелі паркану пишуть у буфер
                 глибини й на стиках дають дрібні артефакти. */}
@@ -1827,7 +1837,7 @@ export default function HouseShell() {
               depthWrite={false}
             />
           </mesh>
-          <mesh position={[f.cx, f.baseY + TERRACE_T_UPPER + FENCE_H + RAIL_H / 2, f.cz]}>
+          <mesh position={[f.cx, f.baseY + TERRACE_UP_STACK + FENCE_H + RAIL_H / 2, f.cz]}>
             <boxGeometry args={f.horizontal ? [f.len + RAIL_W, RAIL_H, RAIL_W] : [RAIL_W, RAIL_H, f.len + RAIL_W]} />
             <meshStandardMaterial {...frameMat} />
           </mesh>
