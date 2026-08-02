@@ -7,10 +7,14 @@ import type {
   HouseConfig,
   HousePlan,
   PlanMode,
+  PlanRect,
   RoofMatSpec,
+  TerraceMatSpec,
 } from '../config/types'
+import { DEFAULT_TERRACE_MAT } from '../config/terraceMaterial'
+import { normalizeTerrace, type TerraceZone } from '../lib/terrace'
 import { DEFAULT_FACADE } from '../config/facade'
-import { DEFAULT_FLAT_MAT, DEFAULT_ROOF_MAT, DEFAULT_TRIM_COLOR } from '../config/roofMaterial'
+import { DEFAULT_FLAT_MAT, DEFAULT_ROOF_MAT } from '../config/roofMaterial'
 import { DEFAULT_CONFIG, STEPS } from '../config/steps'
 import {
   floorsAvailable,
@@ -137,8 +141,14 @@ interface ConfiguratorState {
   roofMat: RoofMatSpec
   roofFlat: RoofMatSpec
   roofMats: Record<string, RoofMatSpec>
-  roofTrimColor: string // торцеві планки скатного / кожух парапету
   roofMatTouched: boolean
+  // Тераса 1-го поверху: зони на землі (крок «Тераса»).
+  terraceZones: TerraceZone[]
+  selectedTerrace: string | null
+  // Покриття тераси по поверхах: 0 — зони на землі, 1 — кімната-тераса.
+  terraceMats: TerraceMatSpec[]
+  terraceFloor: number
+  terraceMatTouched: boolean
   selectedRoom: string | null // id кімнати, яку зараз редагують (ручний режим)
   dragging: boolean // тягнуть зону на плані → камеру треба знерухомити
   showGrid: boolean // сітка прив'язки під планом (лише в ручному режимі)
@@ -170,7 +180,11 @@ interface ConfiguratorState {
   syncFacadeColor: () => void // «однаковий колір» — колір 1-го поверху на все
   setRoofMat: (patch: Partial<RoofMatSpec>, flat: boolean) => void
   setPartRoofMat: (id: string, patch: Partial<RoofMatSpec>, base: RoofMatSpec) => void
-  setRoofTrimColor: (color: string) => void
+  setTerraceZones: (zones: TerraceZone[]) => void
+  addTerraceZone: (zone: PlanRect) => void
+  setSelectedTerrace: (id: string | null) => void
+  setTerraceMat: (floor: number, patch: Partial<TerraceMatSpec>) => void
+  setTerraceFloor: (floor: number) => void
   setSelectedRoom: (id: string | null) => void
   setDragging: (on: boolean) => void
   setShowGrid: (on: boolean) => void
@@ -207,8 +221,12 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
   roofMat: { ...DEFAULT_ROOF_MAT },
   roofFlat: { ...DEFAULT_FLAT_MAT },
   roofMats: {},
-  roofTrimColor: DEFAULT_TRIM_COLOR,
   roofMatTouched: false,
+  terraceZones: [],
+  selectedTerrace: null,
+  terraceMats: [{ ...DEFAULT_TERRACE_MAT }, { ...DEFAULT_TERRACE_MAT }],
+  terraceFloor: 0,
+  terraceMatTouched: false,
   selectedRoom: null,
   dragging: false,
   showGrid: true,
@@ -365,7 +383,24 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
       roofMatTouched: true,
     })),
 
-  setRoofTrimColor: (color) => set({ roofTrimColor: color, roofMatTouched: true }),
+
+  setTerraceZones: (zones) => set({ terraceZones: zones }),
+
+  addTerraceZone: (zone) =>
+    set((s) => {
+      const id = `terr-${Date.now().toString(36)}`
+      return { terraceZones: [...s.terraceZones, { id, ...normalizeTerrace(zone) }], selectedTerrace: id }
+    }),
+
+  setSelectedTerrace: (id) => set({ selectedTerrace: id }),
+
+  setTerraceMat: (floor, patch) =>
+    set((s) => ({
+      terraceMats: s.terraceMats.map((m, i) => (i === floor ? { ...m, ...patch } : m)),
+      terraceMatTouched: true,
+    })),
+
+  setTerraceFloor: (floor) => set({ terraceFloor: floor }),
 
   setSelectedRoom: (id) => set({ selectedRoom: id }),
 

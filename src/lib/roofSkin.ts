@@ -199,46 +199,68 @@ export interface RoofSkinGroup {
   trim?: boolean // група торцевих планок / кожуха: свій колір, не покриття
 }
 
-// Торцеві планки: обрамляють схил по периметру й закривають ТОВЩИНУ ПИРОГА —
-// і покриття, і похилу плиту під ним. Саме ця світла смуга по краю даху
-// впадала в око: планка мусить сягати не тільки покриття, а й плити.
-function fasciaOf(sl: Slope, kind: RoofMatKind, out: SkinBox[], plate: number) {
+// Торцеві планки. Дошка стоїть ВЕРТИКАЛЬНО — не перпендикулярно до схилу.
+// Перпендикулярна смуга при будь-якому куті лишала торець плити відкритим:
+// торець плити вертикальний, а смуга нахилена. Уздовж скату вертикальну
+// дошку набираємо короткими відрізками, і її нижня грань іде рівною лінією.
+function fasciaOf(sl: Slope, kind: RoofMatKind, out: SkinBox[], plateT: number) {
   const cover = LAYOUT[kind].t + (LAYOUT[kind].rib?.h ?? 0)
-  const h = cover + plate + 0.02
   const cos = Math.cos(sl.tilt)
   const sin = Math.sin(sl.tilt)
   const rc = Math.cos(sl.rotY)
   const rs = Math.sin(sl.rotY)
-  // Планка звисає ВНИЗ від поверхні покриття: верх трохи вище покриття, а далі
-  // вона закриває плиту. n — зсув центру по нормалі до схилу.
-  const n = cover + 0.004 - h / 2
-  const put = (u: number, s: number, du: number, ds: number) => {
+  // Вертикальна товщина пирога: перпендикулярна плита при нахилі «розтягується».
+  const H = plateT / Math.max(Math.abs(cos), 0.2) + cover + 0.03
+  const w = FASCIA_W
+  const lap = 0.005
+
+  // Точка на площині покриття (u вздовж гребеня, s уздовж падіння) -> світ.
+  const at = (u: number, s: number) => {
+    const n = cover
     const ly = s * sin + cos * n
     const lz = s * cos - sin * n
-    out.push({
+    return {
       x: sl.cx + u * rc + lz * rs,
       y: sl.cy + ly,
       z: sl.cz - u * rs + lz * rc,
+    }
+  }
+  // Вертикальна коробка: верх на рівні покриття, далі вниз на H.
+  const put = (u: number, s: number, du: number, ds: number) => {
+    const p = at(u, s)
+    out.push({
+      x: p.x,
+      y: p.y + 0.004 - H / 2,
+      z: p.z,
       dx: du,
-      dy: h,
+      dy: H,
       dz: ds,
       rotY: sl.rotY,
-      tilt: sl.tilt,
+      tilt: 0,
     })
   }
+
   const hw = sl.width / 2
   const hl = sl.len / 2
-  const w = FASCIA_W
-  const lap = 0.005 // напуск на плиту, щоб не світилась щілина
-  // Планка стоїть ЗА гранню плити, а не всередині неї: раніше вона сиділа в
-  // межах схилу й накладалась на саме покриття — звідси й колізія.
   const low = sl.tilt > 0 ? -1 : 1 // де нижній край схилу вздовж s
-  put(0, low * (hl + w / 2 - lap), sl.width + 2 * w, w) // карниз
-  put(-hw - w / 2 + lap, 0, w, sl.len + 2 * w) // торці схилу
-  put(hw + w / 2 - lap, 0, w, sl.len + 2 * w)
-  // Верхній край планкою не закриваємо: у двосхилого там гребінь, а в
-  // односхилого — стіна поверху вище, і планка залізла б у неї.
+
+  // Карниз — одна дошка на всю ширину, з напуском на роги.
+  put(0, low * (hl + w / 2 - lap), sl.width + 2 * w, w)
+
+  // Скатні краї: вертикальна дошка не може бути одним нахиленим бруском, тож
+  // набираємо її відрізками — низ виходить рівною прямою вздовж усього скату.
+  const segs = Math.max(2, Math.ceil(sl.len / 0.2))
+  const ds = sl.len / segs
+  for (const side of [-1, 1] as const) {
+    const u = side * (hw + w / 2 - lap)
+    for (let i = 0; i < segs; i++) {
+      const sc = -hl + ds * (i + 0.5)
+      // Глибина по горизонталі: похилий відрізок у плані коротший.
+      put(u, sc, w, ds * Math.abs(cos) + 0.01)
+    }
+  }
 }
+
 
 // Покриття всіх зон даху, згруповане за РІВНЕМ і матеріалом: рівень — щоб
 // покриття виростало разом зі своїм ярусом даху, матеріал — щоб кожен
@@ -249,7 +271,6 @@ export function roofSkin(
   base: RoofMatSpec,
   flatBase: RoofMatSpec,
   perPart: Record<string, RoofMatSpec>,
-  trimColor: string,
   floorH: number,
 ): RoofSkinGroup[] {
   const groups = new Map<string, RoofSkinGroup>()
@@ -267,8 +288,9 @@ export function roofSkin(
     const spec = perPart[part.id] ?? (flat ? flatBase : base)
     const roofY = (part.level + 1) * floorH
     const g = take(`${roofY}|${spec.kind}|${spec.color}`, roofY, spec)
-    const trimSpec: RoofMatSpec = { kind: spec.kind, color: trimColor }
-    const gt = take(`${roofY}|trim|${trimColor}`, roofY, trimSpec, true)
+    // Торець ходить за СВОЄЮ частиною даху: окремий колір на окремій зоні.
+    const trimSpec: RoofMatSpec = { ...spec, color: spec.trim }
+    const gt = take(`${roofY}|trim|${spec.trim}`, roofY, trimSpec, true)
     const above = plan.floors[part.level + 1]?.slab ?? []
 
     for (const sl of slopesOf(part, above, roofY)) {

@@ -38,6 +38,7 @@ import {
 } from '../lib/windows'
 import { parapetEdges, slopeBox, ROOF_LIFT } from '../lib/roof'
 import { roofSkin } from '../lib/roofSkin'
+import { terraceSkin, terraceSurfaces } from '../lib/terraceSkin'
 import { wallFaces, type WallFace } from '../lib/wallFaces'
 import { claddingBoxes, type CladBox, type CladResult, type HeightAt } from '../lib/cladding'
 import { gablePanels, parapetPanels } from '../lib/gableFaces'
@@ -1062,24 +1063,23 @@ export default function HouseShell() {
   const windows = useWindows()
   const roof = useRoof()
   const stepId = STEPS[currentStep].id
+  // Кроки ПІСЛЯ даху: там будинок уже стоїть цілком, з дахом.
+  const lateStep = stepId === 'facade' || stepId === 'roofMat' || stepId === 'terrace' || stepId === 'terraceMat'
   // Коробка видима на «Вікна», «Форма даху» і «Дах» — на кроці форми зони
   // малюються просто поверх неї.
-  const show =
-    stepId === 'windows' ||
-    stepId === 'roofZones' ||
-    stepId === 'roof' ||
-    stepId === 'facade' ||
-    stepId === 'roofMat'
+  const show = stepId === 'windows' || stepId === 'roofZones' || stepId === 'roof' || lateStep
   // Дах уже виріс на своєму кроці — і лишається стояти далі: оздоблення
   // дивляться на цілому будинку, а не на коробці без даху.
-  const roofOpen = stepId === 'roof' || stepId === 'facade' || stepId === 'roofMat'
+  const roofOpen = stepId === 'roof' || lateStep
   // Оздоблення НЕ з'являється раніше свого кроку і не з'являється, доки
   // користувач не клікнув матеріал. Повернувся назад — будинок знову базовий,
   // але сам вибір лишається у сторі й повертається разом із кроком.
   const facadeTouched = useConfigurator((s) => s.facadeTouched)
   const roofMatTouched = useConfigurator((s) => s.roofMatTouched)
-  const showClad = (stepId === 'facade' || stepId === 'roofMat') && facadeTouched
-  const showSkin = stepId === 'roofMat' && roofMatTouched
+  const terraceMatTouched = useConfigurator((s) => s.terraceMatTouched)
+  const showClad = lateStep && facadeTouched
+  const showSkin = (stepId === 'roofMat' || stepId === 'terrace' || stepId === 'terraceMat') && roofMatTouched
+  const showTerrace = stepId === 'terraceMat' && terraceMatTouched
   const selectedRoofPart = useConfigurator((s) => s.selectedRoofPart)
   const windowsMode = useConfigurator((s) => s.windowsMode)
   const selectedWindow = useConfigurator((s) => s.selectedWindow)
@@ -1094,7 +1094,8 @@ export default function HouseShell() {
   const roofMatBase = useConfigurator((s) => s.roofMat)
   const roofFlat = useConfigurator((s) => s.roofFlat)
   const roofMats = useConfigurator((s) => s.roofMats)
-  const roofTrim = useConfigurator((s) => s.roofTrimColor)
+  const terraceZones = useConfigurator((s) => s.terraceZones)
+  const terraceSpecs = useConfigurator((s) => s.terraceMats)
 
   // Підсвітка обраної частини даху й саме покриття — окремі матеріали:
   // фасадний спільний на весь поверх, emissive на ньому вмикати не можна.
@@ -1105,7 +1106,18 @@ export default function HouseShell() {
   const roofMat = useMemo(() => new MeshStandardMaterial({ color: ROOF_COLOR, roughness: 0.75 }), [])
   // Торець даху — фарбований метал того ж кольору, що й торцеві планки.
   const trimMat = useMemo(() => new MeshStandardMaterial({ roughness: 0.38, metalness: 0.65 }), [])
-  trimMat.color.set(roofTrim)
+  trimMat.color.set(roofMatBase.trim)
+  // Покриття тераси: по матеріалу на рівень. Дошка шорстка, камінь і
+  // керамограніт трохи глянцевіші.
+  const terraceMats = useMemo(
+    () => [0, 1].map(() => new MeshStandardMaterial({ roughness: 0.8 })),
+    [],
+  )
+  terraceSpecs.forEach((sp, i) => {
+    if (!terraceMats[i]) return
+    terraceMats[i].color.set(sp.color)
+    terraceMats[i].roughness = sp.kind === 'decking' ? 0.85 : 0.55
+  })
   // Антрацит — лише ПІДКЛАДКА під оздобленням і фронтони, на які воно лягає.
   // Саму коробку стін фарбувати в темне не можна: потемніли б і кімнати.
   const baseMat = useMemo(() => new MeshStandardMaterial({ color: BASE_COLOR, roughness: 0.95 }), [])
@@ -1206,10 +1218,17 @@ export default function HouseShell() {
     return { cladGroups: [...map.values()].filter((g) => g.boxes.length > 0), cladBacking: backing }
   }, [showClad, faces, roof, plan, specs, wallFacades, openings])
 
+  // Покриття тераси. З'являється, як і решта матеріалів, лише на своєму кроці
+  // й лише після того, як його справді обрали.
+  const terraceSkins = useMemo(
+    () => (showTerrace ? terraceSkin(terraceSurfaces(plan, terraceZones, FLOOR_H), terraceSpecs) : []),
+    [showTerrace, plan, terraceZones, terraceSpecs],
+  )
+
   // Покриття даху — теж геометрія, по ярусах (щоб росло разом зі своїм дахом).
   const skins = useMemo(
-    () => (showSkin ? roofSkin(plan, roof, roofMatBase, roofFlat, roofMats, roofTrim, FLOOR_H) : []),
-    [showSkin, plan, roof, roofMatBase, roofFlat, roofMats, roofTrim],
+    () => (showSkin ? roofSkin(plan, roof, roofMatBase, roofFlat, roofMats, FLOOR_H) : []),
+    [showSkin, plan, roof, roofMatBase, roofFlat, roofMats],
   )
 
   // Стіни: простінки + перемички НАД отворами (простінок під підвіконням — окремо,
@@ -1570,6 +1589,14 @@ export default function HouseShell() {
 
       {/* Об'ємне оздоблення фасаду */}
       <Cladding groups={cladGroups} />
+
+      {/* Покриття тераси — така сама об'ємна розкладка, тільки горизонтальна */}
+      {terraceSkins.map((ts) => (
+        <group key={`terr-${ts.key}`}>
+          <Backing boxes={ts.base} material={baseMat} />
+          <Backing boxes={ts.boxes} material={terraceMats[ts.floor]} />
+        </group>
+      ))}
 
       {/* Покриття даху. Спускається ЗВЕРХУ: покриття лягає на схил, а не
           виростає з-під нього. */}

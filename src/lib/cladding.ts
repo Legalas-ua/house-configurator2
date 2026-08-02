@@ -59,8 +59,11 @@ export interface FaceHole {
 // на будові, і зріз читається як рівна діагональ.
 export type HeightAt = (u: number) => number
 
-// Крок дроблення елемента на діагоналі.
-const SLOPE_STEP = 0.08
+// Крок дроблення елемента на діагоналі. Дрібний навмисно: при 80 мм і куті 35°
+// «сходинка» виходила 5–6 см і читалась зубцями. Смуги, що лягли на повну
+// висоту, потім зливаються назад в один елемент — тож дрібний крок нічого не
+// коштує там, де схил елемент не перетинає.
+const SLOPE_STEP = 0.022
 
 export interface CladResult {
   elements: CladBox[]
@@ -162,14 +165,31 @@ export function claddingBoxes(
       put(elements, u, v, du, dv, cladC, t)
       return
     }
+    // Смуги однакової висоти зливаємо назад в одну коробку: інакше суцільна
+    // частина елемента розсипалась би на сотні дрібних, а шва між ними все
+    // одно не видно.
     const steps = Math.max(1, Math.ceil(du / SLOPE_STEP))
+    let runFrom = -1
+    let runH = 0
+    const flush = (until: number) => {
+      if (runFrom < 0) return
+      const su = u + (du * runFrom) / steps
+      const sdu = (du * (until - runFrom)) / steps
+      if (runH > 0.004) put(elements, su, v, sdu, runH, cladC, t)
+      runFrom = -1
+    }
     for (let i = 0; i < steps; i++) {
       const su = u + (du * i) / steps
       const sdu = du / steps
       const lim = Math.min(heightAt(su), heightAt(su + sdu))
       const h = Math.min(top, lim) - v
-      if (h > 0.004) put(elements, su, v, sdu, h, cladC, t)
+      if (runFrom >= 0 && Math.abs(h - runH) > 1e-4) flush(i)
+      if (runFrom < 0) {
+        runFrom = i
+        runH = h
+      }
     }
+    flush(steps)
   }
 
   const rects = freeRects(face.a, face.b, baseY, baseY + height, holes)

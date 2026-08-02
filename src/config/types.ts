@@ -133,6 +133,27 @@ export type RoofMatKind =
 export interface RoofMatSpec {
   kind: RoofMatKind
   color: string
+  // Торцева планка (скатний) / кожух парапету (плоский) — фарбований метал.
+  // Живе в тій самій специфікації, щоб на окремо обраній частині даху
+  // мінявся й він, а не одразу на всьому будинку.
+  trim: string
+}
+
+// ===== Покриття тераси (крок 10) =====
+// Задається окремо для 1-го поверху (зони на землі) і 2-го (кімната-тераса).
+
+export type TerraceMatKind = 'decking' | 'porcelain' | 'stone'
+
+export interface TerraceMatSpec {
+  kind: TerraceMatKind
+  color: string
+  // Терасна дошка
+  boardWidth: number
+  gap: number
+  dir: 'x' | 'z'
+  // Плита / камінь
+  tile: number
+  joint: number
 }
 
 // Звідки береться план:

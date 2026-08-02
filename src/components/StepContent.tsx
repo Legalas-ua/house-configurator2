@@ -3,6 +3,7 @@ import { STEPS } from '../config/steps'
 import { validatePlan } from '../lib/validatePlan'
 import { validateWindows } from '../lib/windows'
 import { validateRoof } from '../lib/roof'
+import { validateTerrace } from '../lib/terrace'
 import { t } from '../locales'
 import BudgetSlider from './fields/BudgetSlider'
 import OptionCards from './fields/OptionCards'
@@ -12,6 +13,8 @@ import RoofField from './fields/RoofField'
 import RoofZonesField from './fields/RoofZonesField'
 import FacadeField from './fields/FacadeField'
 import RoofMaterialField from './fields/RoofMaterialField'
+import TerraceField from './fields/TerraceField'
+import TerraceMaterialField from './fields/TerraceMaterialField'
 import FloorsPicker from './fields/FloorsPicker'
 
 // Рендерить поточний крок за його описом (StepDef) — без знання про конкретику.
@@ -25,6 +28,7 @@ export default function StepContent() {
   const planMode = useConfigurator((s) => s.planMode)
   const windowsMode = useConfigurator((s) => s.windowsMode)
   const roofMode = useConfigurator((s) => s.roofMode)
+  const terraceZones = useConfigurator((s) => s.terraceZones)
   const roof = useRoof()
   const plan = useHousePlan()
   const windows = useWindows()
@@ -35,7 +39,8 @@ export default function StepContent() {
   const blocked =
     (step.id === 'rooms' && planMode === 'custom' && validatePlan(plan).length > 0) ||
     (step.id === 'windows' && windowsMode === 'custom' && validateWindows(plan, windows).length > 0) ||
-    (step.id === 'roofZones' && roofMode === 'custom' && validateRoof(plan, roof).length > 0)
+    (step.id === 'roofZones' && roofMode === 'custom' && validateRoof(plan, roof).length > 0) ||
+    (step.id === 'terrace' && validateTerrace(plan, terraceZones).length > 0)
   // У ручному режимі тип вікон/даху картками не обирають, тож step.isComplete
   // (він дивиться на config) там ніколи не спрацював би — кнопка «Далі»
   // лишалась би сірою назавжди.
@@ -57,6 +62,8 @@ export default function StepContent() {
         {step.kind === 'roof' && <RoofField step={step} />}
         {step.kind === 'facade' && <FacadeField />}
         {step.kind === 'roofMat' && <RoofMaterialField />}
+        {step.kind === 'terrace' && <TerraceField />}
+        {step.kind === 'terraceMat' && <TerraceMaterialField />}
         {step.id === 'shape' && <FloorsPicker />}
       </div>
 

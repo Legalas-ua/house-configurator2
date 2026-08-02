@@ -9,6 +9,7 @@ import Ground from './Ground'
 import PlanView from './PlanView'
 import HouseShell from './HouseShell'
 import RoofView from './RoofView'
+import TerraceView from './TerraceView'
 
 const FOV = 40
 
@@ -93,6 +94,7 @@ export default function SceneRoot() {
       <PlanView />
       <HouseShell />
       <RoofView />
+      <TerraceView />
 
       {/* Поки тягнуть зону — орбіта вимкнена, інакше камера крутилася б разом
           з кімнатою (OrbitControls слухає полотно, а не наші меші). */}

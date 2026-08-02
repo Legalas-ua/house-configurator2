@@ -15,8 +15,6 @@ export default function RoofMaterialField() {
   const setPart = useConfigurator((s) => s.setPartRoofMat)
   const selected = useConfigurator((s) => s.selectedRoofPart)
   const setSelected = useConfigurator((s) => s.setSelectedRoofPart)
-  const trim = useConfigurator((s) => s.roofTrimColor)
-  const setTrim = useConfigurator((s) => s.setRoofTrimColor)
   const texts = t.steps.roofMat
 
   const part = parts.find((p) => p.id === selected)
@@ -105,20 +103,20 @@ export default function RoofMaterialField() {
           <input
             type="color"
             className="facade-color__picker"
-            value={trim}
-            onChange={(e) => setTrim(e.target.value)}
+            value={target.trim}
+            onChange={(e) => patch({ trim: e.target.value })}
             aria-label={texts.fascia}
           />
-          <span className="facade-color__value">{trim.toUpperCase()}</span>
+          <span className="facade-color__value">{target.trim.toUpperCase()}</span>
         </div>
         <div className="facade-swatches">
           {TRIM_SWATCHES.map((c) => (
             <button
               key={c}
               type="button"
-              className={`facade-swatch${trim.toLowerCase() === c ? ' facade-swatch--on' : ''}`}
+              className={`facade-swatch${target.trim.toLowerCase() === c ? ' facade-swatch--on' : ''}`}
               style={{ background: c }}
-              onClick={() => setTrim(c)}
+              onClick={() => patch({ trim: c })}
               aria-label={c}
             />
           ))}
