@@ -64,6 +64,10 @@ export type HeightAt = (u: number) => number
 // висоту, потім зливаються назад в один елемент — тож дрібний крок нічого не
 // коштує там, де схил елемент не перетинає.
 const SLOPE_STEP = 0.022
+// Наскільки елемент заходить ЗА лінію схилу. Точно по лінії лишався
+// волосяний шов: сходинка завжди трохи не добирає. Надлишок ховається під
+// похилою плитою (вона завтовшки 220 мм), тож назовні його не видно.
+const SLOPE_OVER = 0.05
 
 export interface CladResult {
   elements: CladBox[]
@@ -181,7 +185,9 @@ export function claddingBoxes(
     for (let i = 0; i < steps; i++) {
       const su = u + (du * i) / steps
       const sdu = du / steps
-      const lim = Math.min(heightAt(su), heightAt(su + sdu))
+      // Беремо ВИЩИЙ кінець смуги плюс напуск: краще зайти під плиту, ніж
+      // лишити волосяний шов — сходинка завжди трохи не добирає.
+      const lim = Math.max(heightAt(su), heightAt(su + sdu)) + SLOPE_OVER
       const h = Math.min(top, lim) - v
       if (runFrom >= 0 && Math.abs(h - runH) > 1e-4) flush(i)
       if (runFrom < 0) {
@@ -206,7 +212,7 @@ export function claddingBoxes(
         for (let i = 0; i < steps; i++) {
           const su = ua + ((ub - ua) * i) / steps
           const sdu = (ub - ua) / steps
-          const lim = Math.min(heightAt(su), heightAt(su + sdu))
+          const lim = Math.max(heightAt(su), heightAt(su + sdu)) + SLOPE_OVER
           const h = Math.min(vb, lim) - va
           if (h > 0.004) put(elements, su, va, sdu, h, cladC, t)
         }

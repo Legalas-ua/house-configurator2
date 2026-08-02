@@ -44,7 +44,9 @@ export function terraceSurfaces(
         width: r.width + 2 * wallHalf,
         depth: r.depth + 2 * wallHalf,
       }))
-    if (rects.length > 0) out.push({ floor: i, top: i * floorH, t: TERRACE_T_UPPER, rects })
+    // Покриття лягає НА плиту перекриття, а не в неї: рівень підлоги поверху
+    // — це верх плити, тож готовий верх настилу на його товщину вище.
+    if (rects.length > 0) out.push({ floor: i, top: i * floorH + TERRACE_T_UPPER, t: TERRACE_T_UPPER, rects })
   })
   return out
 }
@@ -93,15 +95,16 @@ export function terraceSkin(surfaces: TerraceSurface[], specs: TerraceMatSpec[])
       const u1 = r.x + r.width / 2
       const v0 = r.z - r.depth / 2
       const v1 = r.z + r.depth / 2
-      // Темна основа під покриттям — у зазори видно саме її.
-      // Основа лежить під покриттям і трохи виступає за нього — саме її
-      // видно у зазори між дошками/плитами.
+      // Основа заповнює товщу настилу, не доходячи до верху: саме її видно
+      // у зазори між дошками/плитами. Опускати її НИЖЧЕ настилу не можна —
+      // на поверсі вона потонула б у плиті перекриття.
+      const drop = Math.min(0.008, surf.t / 2)
       base.push({
         x: r.x,
-        y: surf.top - surf.t - TERRACE_BASE / 2 + 0.004,
+        y: surf.top - surf.t / 2 - drop / 2,
         z: r.z,
         dx: r.width,
-        dy: TERRACE_BASE + 0.008,
+        dy: Math.max(0.004, surf.t - drop),
         dz: r.depth,
       })
 

@@ -103,6 +103,35 @@ function layElements(sl: Slope, kind: RoofMatKind, out: SkinBox[], budget: numbe
   const u1 = sl.width / 2
   const s0 = -sl.len / 2
   const s1 = sl.len / 2
+
+  // Елемент, підрізаний ребром ВАЛЬМИ. Ребро йде по діагоналі, тож обрізати
+  // цілий ряд однією шириною не можна — виходили зубці. Елемент, який ребро
+  // перетинає, ділимо на вузькі смуги по падінню й кожну ріжемо своєю
+  // шириною: зріз читається рівною лінією вздовж ребра.
+  const cutToHip = (ea: number, eb: number, sa: number, sb: number) => {
+    const emit = (a: number, b: number, p: number, q: number) => {
+      if (b - a < 0.01 || q - p < 0.005 || out.length >= budget) return
+      place((a + b) / 2, (p + q) / 2, b - a, q - p, L.t, 0)
+    }
+    if (!sl.clipU) {
+      emit(Math.max(ea, u0), Math.min(eb, u1), sa, sb)
+      return
+    }
+    const lo = sl.clipU(sa)
+    const hi = sl.clipU(sb)
+    // Елемент цілком усередині на обох кінцях — різати нічого.
+    if (ea >= Math.max(lo[0], hi[0]) - 1e-6 && eb <= Math.min(lo[1], hi[1]) + 1e-6) {
+      emit(ea, eb, sa, sb)
+      return
+    }
+    const steps = Math.max(1, Math.ceil((sb - sa) / 0.03))
+    for (let i = 0; i < steps; i++) {
+      const p = sa + ((sb - sa) * i) / steps
+      const q = sa + ((sb - sa) * (i + 1)) / steps
+      const [ca, cb] = sl.clipU((p + q) / 2)
+      emit(Math.max(ea, ca), Math.min(eb, cb), p, q)
+    }
+  }
   // На трапецієподібному схилі суцільна «картина» на всю довжину не годиться:
   // її довелося б різати по діагоналі. Тому там, де ширина змінна, ділимо на
   // ряди й кожен обрізаємо окремо — стик між ними на металі не видно.
@@ -117,16 +146,11 @@ function layElements(sl: Slope, kind: RoofMatKind, out: SkinBox[], budget: numbe
     const ds = sb - sa
     if (ds < 0.01) continue
     const off = L.stagger > 0 && r % 2 === 1 ? L.pu * L.stagger : 0
-    void s1
     const cols = Math.ceil((sl.width + off) / L.pu) + 1
-    // Вальма: на цій відстані від карниза схил вужчий за габарит.
-    const [cu0, cu1] = sl.clipU ? sl.clipU(sa + ds / 2) : [u0, u1]
     for (let k = 0; k < cols && out.length < budget; k++) {
-      const ca = Math.max(u0 - off + k * L.pu, cu0)
-      const cb = Math.min(u0 - off + k * L.pu + L.eu, cu1)
-      const du = cb - ca
-      if (du < 0.01) continue
-      place(ca + du / 2, sa + ds / 2, du, ds, L.t, 0)
+      const ea = u0 - off + k * L.pu
+      const eb = ea + L.eu
+      cutToHip(ea, eb, sa, sb)
     }
   }
 
@@ -139,8 +163,9 @@ function layElements(sl: Slope, kind: RoofMatKind, out: SkinBox[], budget: numbe
         place(u, 0, L.rib.w, sl.len, L.rib.h, L.t)
         continue
       }
-      // На вальмі ребро обрізається там, де схил закінчився.
-      const steps = Math.max(2, Math.ceil(sl.len / 0.25))
+      // На вальмі ребро обрізається там, де схил закінчився. Крок дрібний —
+      // інакше кінець фальцу закінчувався б помітною сходинкою.
+      const steps = Math.max(2, Math.ceil(sl.len / 0.06))
       for (let i = 0; i < steps; i++) {
         const sc = -sl.len / 2 + (sl.len * (i + 0.5)) / steps
         const [a, b] = sl.clipU(sc)
