@@ -135,6 +135,10 @@ export function claddingBoxes(
   spec: FacadeSpec,
   heightAt?: HeightAt,
   withBacking = true,
+  // Прив'язка розкладки для панелей: одна на ВЕСЬ будинок (ріг габариту).
+  // Прив'язувати їх до початку кожної грані не можна — грані ріжуться
+  // перегородками, і на кожному поверсі та на фронтоні шви розходились.
+  panelAnchor = 0,
 ): CladResult {
   const t = cladThickness(spec)
   const n = face.horizontal ? face.nz : face.nx
@@ -224,10 +228,12 @@ export function claddingBoxes(
 
     // ---- Підкладка. На фронтоні її не треба: сам клин уже темний ----
     if (withBacking && !heightAt) put(backing, ua, va, ub - ua, vb - va, backC, BACK_OUT + 0.002)
+    void baseY
 
     // ---- Ряди елементів. Прив'язка до СВІТОВОГО нуля по обох осях ----
-    // Панелі рахуємо від НИЗУ грані, решту — від світового нуля.
-    const rowBase = spec.kind === 'panels' ? baseY : 0
+    // Усе рахуємо від СВІТОВОГО нуля: тільки так розкладка лишається суцільною
+    // між поверхами й переходить на фронтон.
+    const rowBase = 0
     const rowFrom = g.pv > 0 ? Math.floor((va - rowBase) / g.pv) : 0
     const rowTo = g.pv > 0 ? Math.ceil((vb - rowBase) / g.pv) : 1
     for (let row = rowFrom; row < rowTo; row++) {
@@ -245,10 +251,9 @@ export function claddingBoxes(
       }
       // Перев'язка: кожен другий ряд зсунуто на пів елемента (для цегли).
       const stagger = spec.kind === 'clinker' && ((row % 2) + 2) % 2 === 1 ? g.pu / 2 : 0
-      // Панелі кладуть ВІД КУТА цілою плитою — обрізок лишається в кінці, а не
-      // з обох боків. Цегла й планка навпаки прив'язані до світового нуля, щоб
-      // візерунок не збивався на стиках граней.
-      const anchor = spec.kind === 'panels' ? face.a + stagger : stagger
+      // Панелі кладуть від РОГУ БУДИНКУ цілою плитою: прив'язка спільна на
+      // весь будинок, тож шви збігаються на всіх поверхах і на фронтоні.
+      const anchor = spec.kind === 'panels' ? panelAnchor + stagger : stagger
       const colFrom = Math.floor((ua - anchor) / g.pu)
       const colTo = Math.ceil((ub - anchor) / g.pu)
       for (let col = colFrom; col < colTo; col++) {

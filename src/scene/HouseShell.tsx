@@ -22,7 +22,6 @@ import { ringContains, unionOutline, type Point, type Ring } from '../lib/outlin
 import {
   bounds,
   fitToWall,
-  neighborOf,
   resolveWindows,
   openSides,
   type DoorSpec,
@@ -40,6 +39,8 @@ import { parapetEdges, slopeBox, ROOF_LIFT } from '../lib/roof'
 import { roofSkin } from '../lib/roofSkin'
 import { terraceSkin, terraceSurfaces, TERRACE_UP_STACK } from '../lib/terraceSkin'
 import { interiorSkin, interiorSurfaces } from '../lib/interiorSkin'
+import { innerWalls, resolveDoors } from '../lib/innerWalls'
+import InnerDoorEditor from './InnerDoorEditor'
 import { wallFaces, type WallFace } from '../lib/wallFaces'
 import { claddingBoxes, type CladBox, type CladResult, type HeightAt } from '../lib/cladding'
 import { gablePanels, parapetPanels } from '../lib/gableFaces'
@@ -1155,7 +1156,7 @@ export default function HouseShell() {
   const roofMatTouched = useConfigurator((s) => s.roofMatTouched)
   const terraceMatTouched = useConfigurator((s) => s.terraceMatTouched)
   const showClad = lateStep && facadeTouched
-  const showSkin = (stepId === 'roofMat' || stepId === 'terrace' || stepId === 'terraceMat') && roofMatTouched
+  const showSkin = lateStep && roofMatTouched
   const showTerrace = (stepId === 'terraceMat' || stepId === 'interior') && terraceMatTouched
   const interiorTouched = useConfigurator((s) => s.interiorTouched)
   const showInterior = stepId === 'interior' && interiorTouched
@@ -1232,6 +1233,19 @@ export default function HouseShell() {
   // її ПО ГРАНЯХ і лише за тим, що на розкладку впливає: тип, розміри елемента
   // й отвори. Колір у ключ навмисно не входить — інакше кожен рух повзунка
   // кольору перебудовував би всю цеглу на будинку.
+  // Ріг габариту будинку — спільна прив'язка розкладки панелей. Одна на весь
+  // будинок, інакше шви на поверхах і на фронтоні не збігаються.
+  const panelAnchor = useMemo<[number, number]>(() => {
+    let x = Infinity
+    let z = Infinity
+    for (const fl of plan.floors)
+      for (const r of fl.slab) {
+        x = Math.min(x, r.x - r.width / 2)
+        z = Math.min(z, r.z - r.depth / 2)
+      }
+    return [Number.isFinite(x) ? x : 0, Number.isFinite(z) ? z : 0]
+  }, [plan])
+
   const cladCache = useRef(new Map<string, CladResult>())
   const { cladGroups, cladBacking } = useMemo(() => {
     const prev = cladCache.current
@@ -1287,9 +1301,10 @@ export default function HouseShell() {
         spec.panelWidth,
         spec.panelHeight,
         holes.map((h) => `${h.a},${h.b},${h.y0},${h.y1}`).join(';'),
+        panelAnchor.join(','),
       ].join('|')
       let res = prev.get(layoutKey)
-      if (!res) res = claddingBoxes(f, baseY, height, holes, spec, heightAt)
+      if (!res) res = claddingBoxes(f, baseY, height, holes, spec, heightAt, true, panelAnchor[f.horizontal ? 0 : 1])
       next.set(layoutKey, res)
 
       const key = `${spec.kind}|${spec.color}|${spec.plankWidth}|${spec.plankGap}|${spec.plankDir}|${spec.panelShape}|${spec.panelWidth}|${spec.panelHeight}`
@@ -1304,13 +1319,22 @@ export default function HouseShell() {
     }
     cladCache.current = next
     return { cladGroups: [...map.values()].filter((g) => g.boxes.length > 0), cladBacking: backing }
-  }, [showClad, faces, roof, plan, specs, wallFacades, openings])
+  }, [showClad, faces, roof, plan, specs, wallFacades, openings, panelAnchor])
 
   // Покриття тераси. З'являється, як і решта матеріалів, лише на своєму кроці
   // й лише після того, як його справді обрали.
   const terraceSkins = useMemo(
     () => (showTerrace ? terraceSkin(terraceSurfaces(plan, terraceZones, FLOOR_H, WALL_T / 2), terraceSpecs) : []),
     [showTerrace, plan, terraceZones, terraceSpecs],
+  )
+
+  // Внутрішні перегородки як дані + отвори, які поставив користувач.
+  const walls2 = useMemo(() => innerWalls(plan), [plan])
+  const innerDoors = useConfigurator((s) => s.innerDoors)
+  const manualDoors = stepId === 'interior'
+  const innerOpen = useMemo(
+    () => (manualDoors ? resolveDoors(walls2, innerDoors, FLOOR_H) : []),
+    [manualDoors, walls2, innerDoors],
   )
 
   // Підлога в кімнатах — та сама об'ємна розкладка, тільки тонша.
@@ -1384,42 +1408,42 @@ export default function HouseShell() {
   const partitions = useMemo(() => {
     const wallB: Box[] = []
     const doorB: Box[] = []
-    const seen = new Set<string>()
-    plan.floors.forEach((fl, idx) => {
-      const baseY = idx * FLOOR_H
-      fl.rooms.forEach((room) => {
-        if (room.type === 'terrace') return
-        const b = bounds(room)
-        const cand: { side: Side; horizontal: boolean; line: number; a: number; b: number }[] = [
-          { side: 'xmax', horizontal: false, line: b.x1, a: b.z0, b: b.z1 },
-          { side: 'xmin', horizontal: false, line: b.x0, a: b.z0, b: b.z1 },
-          { side: 'zmax', horizontal: true, line: b.z1, a: b.x0, b: b.x1 },
-          { side: 'zmin', horizontal: true, line: b.z0, a: b.x0, b: b.x1 },
-        ]
-        for (const sd of cand) {
-          const nb = neighborOf(fl.rooms, room, sd.side, false)
-          if (!nb) continue // зовнішня — не перегородка
-          if (nb.group && nb.group === room.group) continue // одна кімната (майстер тощо)
-          const key = `${idx}-${sd.horizontal ? 'h' : 'v'}-${sd.line.toFixed(2)}-${((sd.a + sd.b) / 2).toFixed(2)}`
-          if (seen.has(key)) continue
-          seen.add(key)
-          const len = sd.b - sd.a
-          if (len < IDOOR_W + 0.4) {
-            pushBox(wallB, sd.horizontal, sd.line, sd.a, sd.b, 0, WALL_H, baseY, PART_T)
-          } else {
-            const mid = (sd.a + sd.b) / 2
-            const ds = mid - IDOOR_W / 2
-            const de = mid + IDOOR_W / 2
-            pushBox(wallB, sd.horizontal, sd.line, sd.a, ds, 0, WALL_H, baseY, PART_T)
-            pushBox(wallB, sd.horizontal, sd.line, de, sd.b, 0, WALL_H, baseY, PART_T)
-            pushBox(wallB, sd.horizontal, sd.line, ds, de, IDOOR_H, WALL_H, baseY, PART_T)
-            pushBox(doorB, sd.horizontal, sd.line, ds, de, 0, IDOOR_H, baseY, IDOOR_D)
-          }
+    // На кроці «Інтер'єр» автоматичні двері зникають: там людина ставить їх
+    // сама. Поза цим кроком лишається колишня поведінка — двері посередині
+    // кожної достатньо довгої перегородки.
+    for (const w of walls2) {
+      const baseY = w.floor * FLOOR_H
+      const len = w.b - w.a
+      if (!manualDoors) {
+        if (len < IDOOR_W + 0.4) {
+          pushBox(wallB, w.horizontal, w.line, w.a, w.b, 0, WALL_H, baseY, PART_T)
+          continue
         }
-      })
-    })
+        const mid = (w.a + w.b) / 2
+        const ds = mid - IDOOR_W / 2
+        const de = mid + IDOOR_W / 2
+        pushBox(wallB, w.horizontal, w.line, w.a, ds, 0, WALL_H, baseY, PART_T)
+        pushBox(wallB, w.horizontal, w.line, de, w.b, 0, WALL_H, baseY, PART_T)
+        pushBox(wallB, w.horizontal, w.line, ds, de, IDOOR_H, WALL_H, baseY, PART_T)
+        pushBox(doorB, w.horizontal, w.line, ds, de, 0, IDOOR_H, baseY, IDOOR_D)
+        continue
+      }
+      // Ручний режим: ріжемо перегородку власними отворами.
+      const mine = innerOpen
+        .filter((d) => d.wallId === w.id)
+        .sort((p, q) => p.a - q.a)
+      let cursor = w.a
+      for (const d of mine) {
+        if (d.a > cursor) pushBox(wallB, w.horizontal, w.line, cursor, d.a, 0, WALL_H, baseY, PART_T)
+        pushBox(wallB, w.horizontal, w.line, d.a, d.b, d.height, WALL_H, baseY, PART_T)
+        // Арка — це той самий отвір, тільки без полотна.
+        if (!d.arch) pushBox(doorB, w.horizontal, w.line, d.a, d.b, 0, d.height, baseY, IDOOR_D)
+        cursor = d.b
+      }
+      pushBox(wallB, w.horizontal, w.line, cursor, w.b, 0, WALL_H, baseY, PART_T)
+    }
     return { wallB, doorB }
-  }, [plan])
+  }, [walls2, innerOpen, manualDoors])
 
   // Перекриття: ВРІВЕНЬ (top на рівні поверху, під ним), а не видавлені вгору.
   // Контур — по ВНУТРІШНІЙ грані стін (віднімаємо смугу стіни), щоб торець
@@ -1731,6 +1755,9 @@ export default function HouseShell() {
           <RoofSkin spec={sg.spec} boxes={sg.boxes} trim={sg.trim} />
         </SkinTier>
       ))}
+
+      {/* Розстановка внутрішніх дверей — лише на кроці «Інтер'єр» */}
+      {manualDoors && <InnerDoorEditor walls={walls2} openings={innerOpen} />}
 
       {/* Вибір стіни під власний матеріал — лише у своєму режимі фасаду */}
       {stepId === 'facade' && facadeMode === 'custom' && (

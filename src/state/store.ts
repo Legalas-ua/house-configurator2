@@ -14,6 +14,7 @@ import type {
 } from '../config/types'
 import { DEFAULT_TERRACE_MAT } from '../config/terraceMaterial'
 import { DEFAULT_INTERIOR } from '../config/interior'
+import type { InnerDoor } from '../lib/innerWalls'
 import { normalizeTerrace, type TerraceZone } from '../lib/terrace'
 import { DEFAULT_FACADE } from '../config/facade'
 import { DEFAULT_FLAT_MAT, DEFAULT_ROOF_MAT } from '../config/roofMaterial'
@@ -160,6 +161,10 @@ interface ConfiguratorState {
   interiorFloor: number
   selectedInteriorRoom: string | null
   interiorTouched: boolean
+  // Внутрішні двері й арки, розставлені вручну на кроці «Інтер'єр».
+  innerDoors: InnerDoor[]
+  selectedInnerWall: string | null
+  selectedInnerDoor: string | null
   selectedRoom: string | null // id кімнати, яку зараз редагують (ручний режим)
   dragging: boolean // тягнуть зону на плані → камеру треба знерухомити
   showGrid: boolean // сітка прив'язки під планом (лише в ручному режимі)
@@ -200,6 +205,9 @@ interface ConfiguratorState {
   setInteriorFloor: (floor: number) => void
   setSelectedInteriorRoom: (key: string | null) => void
   setInterior: (patch: Partial<InteriorSpec>) => void
+  setInnerDoors: (doors: InnerDoor[]) => void
+  setSelectedInnerWall: (id: string | null) => void
+  setSelectedInnerDoor: (id: string | null) => void
   setSelectedRoom: (id: string | null) => void
   setDragging: (on: boolean) => void
   setShowGrid: (on: boolean) => void
@@ -248,6 +256,9 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
   interiorFloor: 0,
   selectedInteriorRoom: null,
   interiorTouched: false,
+  innerDoors: [],
+  selectedInnerWall: null,
+  selectedInnerDoor: null,
   selectedRoom: null,
   dragging: false,
   showGrid: true,
@@ -444,6 +455,10 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
         interiorTouched: true,
       }
     }),
+
+  setInnerDoors: (doors) => set({ innerDoors: doors }),
+  setSelectedInnerWall: (id) => set({ selectedInnerWall: id }),
+  setSelectedInnerDoor: (id) => set({ selectedInnerDoor: id }),
 
   setSelectedRoom: (id) => set({ selectedRoom: id }),
 

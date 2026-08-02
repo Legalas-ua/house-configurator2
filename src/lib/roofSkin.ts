@@ -353,17 +353,24 @@ function fasciaOf(sl: Slope, kind: RoofMatKind, out: SkinBox[], plateT: number) 
   if (sl.noRake) return
   const hRake = plateT + cover + 0.02
   const nRake = cover + 0.004 - hRake / 2
+  // Біля ГРЕБЕНЯ дошка має зайти за нього, інакше між двома схилами лишається
+  // гострий незакритий кут. Подовжуємо лише з боку гребеня — з боку карниза
+  // напуск і далі рівно `w`, щоб нічого не випирало.
+  const ridgeDir = sl.tilt > 0 ? 1 : -1
+  const extra = sl.cap ? hRake * Math.abs(Math.tan(sl.tilt)) + w : w
+  const rakeLen = sl.len + w + extra
+  const shift = (ridgeDir * (extra - w)) / 2
   for (const side of [-1, 1] as const) {
     const u = side * (hw + w / 2 - lap)
-    const ly = cos * nRake
-    const lz = -sin * nRake
+    const ly = shift * sin + cos * nRake
+    const lz = shift * cos - sin * nRake
     out.push({
       x: sl.cx + u * rc + lz * rs,
       y: sl.cy + ly,
       z: sl.cz - u * rs + lz * rc,
       dx: w,
       dy: hRake,
-      dz: sl.len + 2 * w,
+      dz: rakeLen,
       rotY: sl.rotY,
       tilt: sl.tilt,
     })

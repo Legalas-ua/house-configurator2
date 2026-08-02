@@ -8,6 +8,7 @@ import {
   INTERIOR_SWATCHES,
   NO_INTERIOR,
 } from '../../config/interior'
+import { addDoor, doorRange, innerWalls, removeDoor, updateDoor, MAX_IDOOR_W, MIN_IDOOR_W } from '../../lib/innerWalls'
 import { t } from '../../locales'
 
 // Крок «Інтер'єр». Поки що це підлога: на весь поверх або окремо в кімнаті.
@@ -31,6 +32,8 @@ export default function InteriorField() {
 
   return (
     <>
+      <InnerDoors />
+
       {config.floors > 1 && (
         <div className="rooms__group">
           <span className="rooms__group-title">{texts.floor}</span>
@@ -153,6 +156,99 @@ export default function InteriorField() {
         </div>
       )}
     </>
+  )
+}
+
+// Двері та арки у перегородках. Автоматичні двері на цьому кроці зникають —
+// розстановка повністю ручна, як і вікна на фасаді.
+function InnerDoors() {
+  const plan = useHousePlan()
+  const doors = useConfigurator((s) => s.innerDoors)
+  const setDoors = useConfigurator((s) => s.setInnerDoors)
+  const wallId = useConfigurator((s) => s.selectedInnerWall)
+  const doorId = useConfigurator((s) => s.selectedInnerDoor)
+  const setDoorId = useConfigurator((s) => s.setSelectedInnerDoor)
+  const texts = t.steps.interior.doors
+
+  const walls = innerWalls(plan)
+  const wall = walls.find((w) => w.id === wallId)
+  const door = doors.find((d) => d.id === doorId)
+  const range = wall ? doorRange(wall) : null
+  const maxW = range ? Math.min(MAX_IDOOR_W, range.to - range.from) : MAX_IDOOR_W
+
+  const add = (arch: boolean) => {
+    if (!wall) return
+    const d = addDoor(wall, doors, arch)
+    if (!d) return
+    setDoors([...doors, d])
+    setDoorId(d.id)
+  }
+
+  return (
+    <div className="rooms__group">
+      <span className="rooms__group-title">{texts.title}</span>
+      {!wall ? (
+        <p className="rooms__hint">{texts.pickWall}</p>
+      ) : (
+        <>
+          <div className="chips">
+            <button type="button" className="chip" onClick={() => add(false)}>
+              {texts.addDoor}
+            </button>
+            <button type="button" className="chip" onClick={() => add(true)}>
+              {texts.addArch}
+            </button>
+          </div>
+          <p className="rooms__hint">{texts.addHint}</p>
+        </>
+      )}
+
+      {door && (
+        <>
+          <div className="rooms__selected">
+            <span>{door.arch ? texts.arch : texts.door}</span>
+            <button
+              type="button"
+              className="chip"
+              onClick={() => {
+                setDoors(removeDoor(doors, door.id))
+                setDoorId(null)
+              }}
+            >
+              {texts.remove}
+            </button>
+          </div>
+          <Size
+            label={texts.width}
+            value={door.width}
+            range={{ min: MIN_IDOOR_W, max: maxW, step: 0.05 }}
+            onChange={(v) => setDoors(updateDoor(doors, door.id, { width: v }))}
+          />
+          <Size
+            label={texts.height}
+            value={door.height}
+            range={{ min: 1.9, max: 2.9, step: 0.05 }}
+            onChange={(v) => setDoors(updateDoor(doors, door.id, { height: v }))}
+          />
+          <div className="chips">
+            <button
+              type="button"
+              className={`chip${!door.arch ? ' chip--on' : ''}`}
+              onClick={() => setDoors(updateDoor(doors, door.id, { arch: false }))}
+            >
+              {texts.door}
+            </button>
+            <button
+              type="button"
+              className={`chip${door.arch ? ' chip--on' : ''}`}
+              onClick={() => setDoors(updateDoor(doors, door.id, { arch: true }))}
+            >
+              {texts.arch}
+            </button>
+          </div>
+        </>
+      )}
+    </div>
   )
 }
 

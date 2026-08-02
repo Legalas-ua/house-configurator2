@@ -1,7 +1,7 @@
-import { useMemo, useRef } from 'react'
-import { Canvas, useFrame } from '@react-three/fiber'
+import { useEffect, useMemo, useRef } from 'react'
+import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
-import { ACESFilmicToneMapping } from 'three'
+import { ACESFilmicToneMapping, Plane, Vector3 } from 'three'
 import { easing } from 'maath'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import { useConfigurator, useHousePlan } from '../state/store'
@@ -10,6 +10,28 @@ import PlanView from './PlanView'
 import HouseShell from './HouseShell'
 import RoofView from './RoofView'
 import TerraceView from './TerraceView'
+import { STEPS } from '../config/steps'
+
+const FLOOR_H = 3.2
+const CUT_ABOVE = 1.0 // на якій висоті від підлоги ріжемо будинок
+
+// Розріз на кроці «Інтер'єр»: усе, що вище метра від підлоги ОБРАНОГО поверху,
+// відсікаємо. Робимо це площиною відсікання рендерера, а не приховуванням
+// об'єктів: так ріжеться геть усе — стіни, дах, оздоблення, інстансовані
+// цеглини — і жодну гілку сцени не треба про це знати.
+function SectionCut() {
+  const gl = useThree((s) => s.gl)
+  const currentStep = useConfigurator((s) => s.currentStep)
+  const floor = useConfigurator((s) => s.interiorFloor)
+  const on = STEPS[currentStep].id === 'interior'
+  useEffect(() => {
+    gl.clippingPlanes = on ? [new Plane(new Vector3(0, -1, 0), floor * FLOOR_H + CUT_ABOVE)] : []
+    return () => {
+      gl.clippingPlanes = []
+    }
+  }, [gl, on, floor])
+  return null
+}
 
 const FOV = 40
 
@@ -110,6 +132,7 @@ export default function SceneRoot() {
         onStart={() => setTopView(false)}
       />
       <CameraRig controls={controlsRef} />
+      <SectionCut />
     </Canvas>
   )
 }
