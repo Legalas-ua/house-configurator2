@@ -1,5 +1,5 @@
 import type { HousePlan, PlanRect, RoofMatKind, RoofMatSpec } from '../config/types'
-import { parapetEdges, slopeBox, ROOF_LIFT, type RoofPart } from './roof'
+import { parapetEdges, partRects, slopeBox, zoneRise, ROOF_LIFT, type RoofPart } from './roof'
 import { WALL_T } from './windows'
 
 // ============================================================
@@ -188,12 +188,20 @@ function layElements(sl: Slope, kind: RoofMatKind, out: SkinBox[], budget: numbe
 // Схили однієї зони. Мають ТОЧНО збігатися з геометрією HouseShell — інакше
 // покриття «злітає» з даху.
 function slopesOf(part: RoofPart, above: PlanRect[], roofY: number): Slope[] {
+  // Складена зона — просто сума схилів своїх частин.
+  const rects = partRects(part)
+  if (rects.length > 1) return rects.flatMap((r) => slopesOfRect(part, above, roofY, r))
+  return slopesOfRect(part, above, roofY, rects[0])
+}
+
+function slopesOfRect(part: RoofPart, above: PlanRect[], roofY: number, rect: PlanRect): Slope[] {
   // Плоский дах — рулон РІВНО по зоні: звісу в нього не буває, а `slopeBox`
   // додав би його й килим виліз би за парапет.
   if (part.kind === 'flat')
-    return [{ cx: part.x, cy: roofY, cz: part.z, rotY: 0, tilt: 0, width: part.width, len: part.depth }]
+    return [{ cx: rect.x, cy: roofY, cz: rect.z, rotY: 0, tilt: 0, width: rect.width, len: rect.depth }]
 
-  const g = slopeBox(part, above)
+  const zone = zoneRise(part, above)
+  const g = slopeBox(part, above, rect)
   const w = g.x1 - g.x0
   const d = g.z1 - g.z0
   const cx = (g.x0 + g.x1) / 2
@@ -214,7 +222,7 @@ function slopesOf(part: RoofPart, above: PlanRect[], roofY: number): Slope[] {
     // Кожен схил — трапеція (довгі боки) або трикутник (короткі): при
     // підйомі проміжок уздовж гребеня звужується на пройдену в плані відстань.
     const shortSide = Math.min(w, d)
-    const rise = (shortSide / 2) * tan
+    const rise = zone || (shortSide / 2) * tan
     const len = Math.hypot(shortSide / 2, rise)
     // Вальмовий — СУЦІЛЬНЕ тіло, окремої похилої плити в нього немає. Тому
     // покриття лягає рівно на поверхню: жодного зсуву на товщину плити.
@@ -248,7 +256,7 @@ function slopesOf(part: RoofPart, above: PlanRect[], roofY: number): Slope[] {
 
   if (part.kind === 'mono') {
     const run = Math.max(span, 1e-6)
-    const rise = span * tan
+    const rise = zone || span * tan
     // Вертикальна товщина плити — рівно як у monoGeometry.
     const tv = (ROOF_T * Math.hypot(run, rise)) / run
     return [
@@ -267,7 +275,7 @@ function slopesOf(part: RoofPart, above: PlanRect[], roofY: number): Slope[] {
   // Двосхилий: дві площини від карниза до гребеня посередині.
   const half = span / 2
   const run = Math.max(half, 1e-6)
-  const rise = half * tan
+  const rise = zone || half * tan
   // Зі звісом дах — суцільна призма без окремої плити, тож і покриття лягає
   // рівно на схил. Без звісу зверху додано плиту, і покриття піднімається.
   const tv = part.overhang > 0 ? 0 : (ROOF_T * Math.hypot(run, rise)) / run
@@ -498,7 +506,7 @@ export function roofSkin(
 
     // Вальма: чотири діагональні ребра між схилами. Шов на них закриває
     // окремий кожух, покладений ПО ребру — тобто теж під кутом.
-    if (part.kind === 'hip') {
+    if (part.kind === 'hip' && partRects(part).length === 1) {
       const gb = slopeBox(part, above)
       const w = gb.x1 - gb.x0
       const d = gb.z1 - gb.z0

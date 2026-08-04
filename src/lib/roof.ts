@@ -21,6 +21,10 @@ export type RoofKind = 'flat' | 'gable' | 'mono' | 'hip'
 export interface RoofPart extends PlanRect {
   id: string
   level: number // індекс поверху, ПОКРИТТЯ якого це дах
+  // Зона може складатись із КІЛЬКОХ прямокутників — так виходить після
+  // об'єднання сусідніх зон. Тоді x/z/width/depth — це габарит усього набору,
+  // а `rects` — самі частини. Порожнє поле означає одну частину = габарит.
+  rects?: PlanRect[]
   kind: RoofKind
   parapetH: number // висота парапету (плоский)
   parapetT: number // товщина парапету (плоский)
@@ -46,6 +50,25 @@ export const DEFAULTS: Omit<RoofPart, 'id' | 'level' | 'kind' | 'x' | 'z' | 'wid
   overhang: 0.3,
 }
 
+// Частини зони. Одна вона чи складена — далі код працює однаково.
+export const partRects = (p: RoofPart): PlanRect[] =>
+  p.rects && p.rects.length > 0 ? p.rects : [{ x: p.x, z: p.z, width: p.width, depth: p.depth }]
+
+// Габарит набору прямокутників.
+export function rectsBox(rects: PlanRect[]): PlanRect {
+  let x0 = Infinity
+  let x1 = -Infinity
+  let z0 = Infinity
+  let z1 = -Infinity
+  for (const r of rects) {
+    x0 = Math.min(x0, r.x - r.width / 2)
+    x1 = Math.max(x1, r.x + r.width / 2)
+    z0 = Math.min(z0, r.z - r.depth / 2)
+    z1 = Math.max(z1, r.z + r.depth / 2)
+  }
+  return { x: (x0 + x1) / 2, z: (z0 + z1) / 2, width: x1 - x0, depth: z1 - z0 }
+}
+
 const clampStep = (v: number, r: { min: number; max: number; step: number }) =>
   Math.min(r.max, Math.max(r.min, Math.round(v / r.step) * r.step))
 
@@ -56,8 +79,16 @@ export function normalizeRoof(part: RoofPart): RoofPart {
   const depth = Math.max(MIN_SIDE, snap(part.depth))
   const x0 = snap(part.x - part.width / 2)
   const z0 = snap(part.z - part.depth / 2)
+  // Складену зону РУХАЄМО цілком: частини їдуть за габаритом, не розсипаючись.
+  const dx = x0 + width / 2 - part.x
+  const dz = z0 + depth / 2 - part.z
+  const rects =
+    part.rects && part.rects.length > 0
+      ? part.rects.map((r) => ({ ...r, x: snap(r.x + dx - r.width / 2) + r.width / 2, z: snap(r.z + dz - r.depth / 2) + r.depth / 2 }))
+      : undefined
   return {
     ...part,
+    rects,
     x: x0 + width / 2,
     z: z0 + depth / 2,
     width,
@@ -202,15 +233,12 @@ export function roofJunctions(parts: RoofPart[], level: number): RoofJunction[] 
       const zOver = Math.min(p.z1, q.z1) - Math.max(p.z0, q.z0)
       const touchX = Math.min(Math.abs(p.x1 - q.x0), Math.abs(q.x1 - p.x0)) < 0.01
       const touchZ = Math.min(Math.abs(p.z1 - q.z0), Math.abs(q.z1 - p.z0)) < 0.01
-      // Об'єднання можливе ЛИШЕ там, де союз лишається прямокутником: зона
-      // даху прямокутна за визначенням, і з Г-подібного союзу коректного скату
-      // без розрахунку єндов не збудувати. Послаблювати цю умову не можна —
-      // на зсунутих зонах «+» брав спільний габарит і мовчки додавав зайве.
-      const sameZ = Math.abs(p.z0 - q.z0) < 0.01 && Math.abs(p.z1 - q.z1) < 0.01
-      const sameX = Math.abs(p.x0 - q.x0) < 0.01 && Math.abs(p.x1 - q.x1) < 0.01
-      if (sameZ && touchX && zOver > 0.2) {
+      // Об'єднати можна БУДЬ-ЯКІ дві зони, що стикаються помітною ділянкою:
+      // складена зона тримає свої частини окремо (`rects`), тож Г-подібний
+      // союз більше не треба зводити до прямокутника.
+      if (zOver > 0.2 && touchX) {
         out.push({ a: mine[i].id, b: mine[k].id, x: (Math.max(p.x0, q.x0) + Math.min(p.x1, q.x1)) / 2, z: (Math.max(p.z0, q.z0) + Math.min(p.z1, q.z1)) / 2 })
-      } else if (sameX && touchZ && xOver > 0.2) {
+      } else if (xOver > 0.2 && touchZ) {
         out.push({ a: mine[i].id, b: mine[k].id, x: (Math.max(p.x0, q.x0) + Math.min(p.x1, q.x1)) / 2, z: (Math.max(p.z0, q.z0) + Math.min(p.z1, q.z1)) / 2 })
       }
     }
@@ -218,21 +246,23 @@ export function roofJunctions(parts: RoofPart[], level: number): RoofJunction[] 
   return out
 }
 
-// Зливаємо b у a: параметри лишаються від a, габарит стає СПІЛЬНИМ. Якщо
-// зони були зсунуті, спільний габарит захопить і трохи зайвого — це видно
-// одразу, бо перевірка покриття підсвітить вихід за контур.
+// Зливаємо b у a: параметри лишаються від a, а ЧАСТИНИ складаються. Габарит
+// перераховуємо з частин — він потрібен лише для ручок і підпису.
 export function joinRoofParts(parts: RoofPart[], a: string, b: string): RoofPart[] {
   const pa = parts.find((p) => p.id === a)
   const pb = parts.find((p) => p.id === b)
   if (!pa || !pb) return parts
-  const p = box(pa)
-  const q = box(pb)
-  const x0 = Math.min(p.x0, q.x0)
-  const x1 = Math.max(p.x1, q.x1)
-  const z0 = Math.min(p.z0, q.z0)
-  const z1 = Math.max(p.z1, q.z1)
-  const merged = normalizeRoof({ ...pa, x: (x0 + x1) / 2, z: (z0 + z1) / 2, width: x1 - x0, depth: z1 - z0 })
+  const rects = [...partRects(pa), ...partRects(pb)]
+  const merged: RoofPart = { ...pa, rects, ...rectsBox(rects) }
   return parts.filter((r) => r.id !== b).map((r) => (r.id === a ? merged : r))
+}
+
+// Розібрати складену зону назад на окремі частини.
+export function splitRoofPart(parts: RoofPart[], id: string): RoofPart[] {
+  const p = parts.find((r) => r.id === id)
+  if (!p || !p.rects || p.rects.length < 2) return parts
+  const pieces = p.rects.map((r, i) => ({ ...p, rects: undefined, id: `${p.id}~${i}`, ...r }))
+  return parts.flatMap((r) => (r.id === id ? pieces : [r]))
 }
 
 export { GRID as ROOF_GRID }
@@ -268,7 +298,7 @@ export function validateRoof(plan: HousePlan, parts: RoofPart[], overTerrace = f
   for (const level of roofLevels(plan, overTerrace)) {
     const rings = levelOutline(plan, level, overTerrace).filter((r) => !r.hole)
     if (rings.length === 0) continue
-    const zones = parts.filter((p) => p.level === level).map(box)
+    const zones = parts.filter((p) => p.level === level).flatMap((p) => partRects(p).map(box))
     const pts = rings.flatMap((r) => r.pts)
     const xs = axis([...pts.map((p) => p[0]), ...zones.flatMap((z) => [z.x0, z.x1])])
     const zs = axis([...pts.map((p) => p[1]), ...zones.flatMap((z) => [z.z0, z.z1])])
@@ -316,14 +346,34 @@ export interface ParapetEdge {
 }
 
 export function parapetEdges(part: RoofPart, above: PlanRect[]): ParapetEdge[] {
-  const b = box(part)
   const upper = above.map(box)
-  const raw = [
-    { horizontal: true, line: b.z0, min: b.x0, max: b.x1, nx: 0, nz: -1 },
-    { horizontal: true, line: b.z1, min: b.x0, max: b.x1, nx: 0, nz: 1 },
-    { horizontal: false, line: b.x0, min: b.z0, max: b.z1, nx: -1, nz: 0 },
-    { horizontal: false, line: b.x1, min: b.z0, max: b.z1, nx: 1, nz: 0 },
-  ]
+  const rects = partRects(part)
+  // Контур ЗОНИ, а не габариту: після об'єднання зона буває Г-подібною, і
+  // парапет має йти саме по її контуру. Для однієї частини це той самий
+  // прямокутник, тож поведінка не змінюється.
+  const rings = unionOutline(rects)
+  const inside = (x: number, z: number) => {
+    let n = 0
+    for (const r of rings) if (ringContains(r.pts, [x, z])) n++
+    return n % 2 === 1
+  }
+  const raw: { horizontal: boolean; line: number; min: number; max: number; nx: number; nz: number }[] = []
+  for (const { pts } of rings) {
+    for (let i = 0; i < pts.length; i++) {
+      const [x0, z0] = pts[i]
+      const [x1, z1] = pts[(i + 1) % pts.length]
+      const horizontal = Math.abs(z1 - z0) < 1e-4
+      const line = horizontal ? z0 : x0
+      const min = Math.min(horizontal ? x0 : z0, horizontal ? x1 : z1)
+      const max = Math.max(horizontal ? x0 : z0, horizontal ? x1 : z1)
+      if (max - min < 0.05) continue
+      // Зовнішня нормаль — той бік, де зони НЕМАЄ.
+      const mid = (min + max) / 2
+      const probe = horizontal ? [mid, line + 0.2] : [line + 0.2, mid]
+      const sign = inside(probe[0], probe[1]) ? -1 : 1
+      raw.push({ horizontal, line, min, max, nx: horizontal ? 0 : sign, nz: horizontal ? sign : 0 })
+    }
+  }
   return raw.map((e) => {
     // Відрізаємо накриті ділянки ребра, а не пропускаємо ребро цілком.
     const cuts = upper
@@ -391,9 +441,10 @@ export function sideExtend(part: RoofPart, above: PlanRect[]): Record<SideKey, n
   return { xmin: value(pin.xmin), xmax: value(pin.xmax), zmin: value(pin.zmin), zmax: value(pin.zmax) }
 }
 
-// Габарит СКАТУ у світі — рівно те, що будує HouseShell.
-export function slopeBox(part: RoofPart, above: PlanRect[]) {
-  const b = box(part)
+// Габарит СКАТУ у світі — рівно те, що будує HouseShell. `rect` дозволяє взяти
+// окрему ЧАСТИНУ складеної зони; без нього — габарит усієї зони.
+export function slopeBox(part: RoofPart, above: PlanRect[], rect?: PlanRect) {
+  const b = box(rect ?? part)
   const o = sideExtend(part, above)
   return {
     x0: b.x0 - o.xmin,
@@ -401,6 +452,33 @@ export function slopeBox(part: RoofPart, above: PlanRect[]) {
     z0: b.z0 - o.zmin,
     z1: b.z1 + o.zmax,
   }
+}
+
+// Підйом гребеня, СПІЛЬНИЙ на всю зону. Частини складеної зони мають
+// сходитись на одній висоті — інакше «другорядна» частина вріжеться в головну
+// під випадковим кутом. Керує НАЙБІЛЬША частина: вона й є головною.
+export function zoneRise(part: RoofPart, above: PlanRect[]): number {
+  const tan = Math.tan((part.pitch * Math.PI) / 180)
+  let best = 0
+  let area = -1
+  for (const r of partRects(part)) {
+    const a = r.width * r.depth
+    if (a <= area) continue
+    area = a
+    const g = slopeBox(part, above, r)
+    const w = g.x1 - g.x0
+    const d = g.z1 - g.z0
+    if (part.kind === 'mono') {
+      const ridgeAlongZ = part.rotation % 180 === 0 ? d >= w : d < w
+      best = (ridgeAlongZ ? w : d) * tan
+    } else if (part.kind === 'hip') {
+      best = (Math.min(w, d) / 2) * tan
+    } else {
+      const ridgeAlongZ = part.rotation % 180 === 0 ? d >= w : d < w
+      best = ((ridgeAlongZ ? w : d) / 2) * tan
+    }
+  }
+  return best
 }
 
 // Габарит для ПЕРЕВІРКИ колізій. Відрізняється від скату лише притиснутими
@@ -437,6 +515,16 @@ export interface RoofWindowClash {
 // межі зони, дах виходив на пів метра нижчим за справжній — і панель писала
 // «колізій немає», коли низ вікна ще сидів у схилі.
 function roofBottomAt(part: RoofPart, x: number, z: number, above: PlanRect[]): number | null {
+  // Складена зона — беремо найвищий дах серед її частин.
+  const rects = partRects(part)
+  if (rects.length > 1) {
+    let best: number | null = null
+    for (const r of rects) {
+      const v = roofBottomAt({ ...part, rects: undefined, ...r }, x, z, above)
+      if (v != null && (best == null || v > best)) best = v
+    }
+    return best
+  }
   const b = box(part)
   if (part.kind !== 'flat') {
     // Належність перевіряємо ШИРШИМ габаритом, а висоту рахуємо площиною

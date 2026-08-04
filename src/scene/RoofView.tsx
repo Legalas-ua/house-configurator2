@@ -5,7 +5,16 @@ import { BufferGeometry, Float32BufferAttribute } from 'three'
 import { useConfigurator, useHousePlan, useRoof } from '../state/store'
 import { STEPS } from '../config/steps'
 import { MIN_SIDE, snap } from '../lib/editPlan'
-import { joinRoofParts, levelOutline, roofJunctions, roofLevels, updateRoofPart, type RoofPart } from '../lib/roof'
+import {
+  joinRoofParts,
+  levelOutline,
+  partRects,
+  roofJunctions,
+  roofLevels,
+  splitRoofPart,
+  updateRoofPart,
+  type RoofPart,
+} from '../lib/roof'
 import type { PlanRect } from '../config/types'
 import { t } from '../locales'
 
@@ -197,15 +206,16 @@ export default function RoofView() {
       </lineSegments>
       )}
 
-      {mine.map((p) => {
+      {mine.flatMap((p) => {
         // Зона малюється ПЛОЩИНОЮ, а не об'ємом: об'єм перекривав би ручки.
         // На кроці налаштувань та сама площина просто ловить наведення й клік.
+        // Складена зона — по площині на кожну свою частину.
         const dy = (p.level + 1) * FLOOR_H - y
         const hot = hover === p.id
-        return (
+        return partRects(p).map((r, ri) => (
           <mesh
-            key={p.id}
-            position={[p.x, dy + 0.06, p.z]}
+            key={`${p.id}~${ri}`}
+            position={[r.x, dy + 0.06, r.z]}
             rotation={[-Math.PI / 2, 0, 0]}
             onPointerOver={(e) => {
               e.stopPropagation()
@@ -227,7 +237,7 @@ export default function RoofView() {
             // одразу ж знімає щойно зроблений вибір.
             onPointerUp={(e) => e.stopPropagation()}
           >
-            <planeGeometry args={[p.width, p.depth]} />
+            <planeGeometry args={[r.width, r.depth]} />
             <meshBasicMaterial
               color={KIND_COLOR[p.kind]}
               transparent
@@ -236,8 +246,23 @@ export default function RoofView() {
               depthTest={drawing}
             />
           </mesh>
-        )
+        ))
       })}
+
+      {/* «×» на складеній зоні — розібрати її назад на частини */}
+      {drawing && sel && (sel.rects?.length ?? 0) > 1 && (
+        <Html position={[sel.x, 0.5, sel.z]} center zIndexRange={[20, 0]}>
+          <button
+            type="button"
+            className="plan-join plan-join--on"
+            title={t.steps.roof.editor.split}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={() => setCustomRoof(splitRoofPart(parts, sel.id))}
+          >
+            ×
+          </button>
+        </Html>
+      )}
 
       {/* «+» на стику двох зон одного рівня: зливає їх в одну. Показуємо лише
           там, де об'єднання лишиться прямокутником — зона даху інакшою бути

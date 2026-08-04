@@ -40,12 +40,30 @@ export function parapetPanels(part: RoofPart, above: PlanRect[], roofY: number, 
     // Загортання за ріг — те саме правило, що й у стін, інакше на кожному
     // куті парапету лишалась непокрита смуга в пів товщини стіни.
     const grow = horizontal ? WALL_T / 2 + CORNER : WALL_T / 2
+    // Чи стоїть поруч із цією точкою ребра стіна поверху ВИЩЕ. Якщо так — це
+    // не вільний ріг: загортати оздоблення туди не можна, воно лізе в
+    // оздоблення тієї стіни (обидва в одній площині) і мерехтить.
+    const nearUpper = (u: number) =>
+      above.some((r) => {
+        const c = {
+          x0: r.x - r.width / 2,
+          x1: r.x + r.width / 2,
+          z0: r.z - r.depth / 2,
+          z1: r.z + r.depth / 2,
+        }
+        const along = horizontal ? [c.x0, c.x1] : [c.z0, c.z1]
+        const across = horizontal ? [c.z0, c.z1] : [c.x0, c.x1]
+        return (
+          u > along[0] - 0.3 && u < along[1] + 0.3 && e.line > across[0] - 0.3 && e.line < across[1] + 0.3
+        )
+      })
     for (const [a, b] of e.spans) {
-      // Кінець, що впирається у стіну поверху ВИЩЕ (не ріг зони), навпаки
-      // ПІДРІЗАЄМО: оздоблення парапету й оздоблення тієї стіни лежать в
-      // одній площині, і на перекриві вони мерехтіли одне крізь одне.
-      const fa = Math.abs(a - e.min) < 1e-4 ? a - grow : a + CORNER + 0.01
-      const fb = Math.abs(b - e.max) < 1e-4 ? b + grow : b - CORNER - 0.01
+      const freeA = Math.abs(a - e.min) < 1e-4 && !nearUpper(a)
+      const freeB = Math.abs(b - e.max) < 1e-4 && !nearUpper(b)
+      // Вільний ріг — загортаємо за нього; кінець біля стіни поверху вище —
+      // навпаки підрізаємо.
+      const fa = freeA ? a - grow : a + CORNER + 0.01
+      const fb = freeB ? b + grow : b - CORNER - 0.01
       if (fb - fa < 0.1) continue
       out.push({
         face: {

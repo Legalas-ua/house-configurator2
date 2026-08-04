@@ -36,7 +36,7 @@ import {
   type ResolvedWindow,
   type Side,
 } from '../lib/windows'
-import { parapetEdges, slopeBox, ROOF_LIFT } from '../lib/roof'
+import { parapetEdges, partRects, slopeBox, zoneRise, ROOF_LIFT } from '../lib/roof'
 import { roofSkin } from '../lib/roofSkin'
 import { terraceSkin, terraceSurfaces, TERRACE_UP_STACK } from '../lib/terraceSkin'
 import { interiorSkin, interiorSurfaces } from '../lib/interiorSkin'
@@ -176,6 +176,10 @@ interface Box {
   dx: number
   dy: number
   dz: number
+  // Орієнтація стіни: true — тягнеться вздовж X. Ставиться ЯВНО, бо вгадувати
+  // її за пропорціями коробки не можна: короткий простінок буває вужчим за
+  // власну товщину, і здогадка перевертала вісь.
+  h?: boolean
 }
 
 // Вирізати отвори з набору коробок стіни.
@@ -192,14 +196,13 @@ function cutOpenings(boxes: Box[], ops: Opening[]): Box[] {
     for (const o of ops) {
       const next: Box[] = []
       for (const p of pieces) {
-        const horizontal = p.dz < p.dx - 1e-6
-        const vertical = p.dx < p.dz - 1e-6
-        // Кутовий стовп (dx === dz) не ріжемо: він на самому розі, отворів там
-        // не буває, а орієнтації в нього немає.
-        if ((!horizontal && !vertical) || horizontal !== o.horizontal) {
+        // Кутовий стовп орієнтації не має (h === undefined) — його не ріжемо:
+        // він на самому розі, отворів там не буває.
+        if (p.h === undefined || p.h !== o.horizontal) {
           next.push(p)
           continue
         }
+        const horizontal = p.h
         const thick = horizontal ? p.dz : p.dx
         const line = horizontal ? p.z : p.x
         if (Math.abs(line - o.line) > thick / 2 + 0.03) {
@@ -221,8 +224,8 @@ function cutOpenings(boxes: Box[], ops: Opening[]): Box[] {
           if (b - a < 0.004 || d - c < 0.004) return
           next.push(
             horizontal
-              ? { x: (a + b) / 2, y: (c + d) / 2, z: p.z, dx: b - a, dy: d - c, dz: p.dz }
-              : { x: p.x, y: (c + d) / 2, z: (a + b) / 2, dx: p.dx, dy: d - c, dz: b - a },
+              ? { x: (a + b) / 2, y: (c + d) / 2, z: p.z, dx: b - a, dy: d - c, dz: p.dz, h: true }
+              : { x: p.x, y: (c + d) / 2, z: (a + b) / 2, dx: p.dx, dy: d - c, dz: b - a, h: false },
           )
         }
         mk(u0, Math.min(o.a, u1), v0, v1) // ліворуч від отвору
@@ -242,8 +245,8 @@ function pushBox(out: Box[], horizontal: boolean, line: number, u0: number, u1: 
   if (ulen <= 0.001 || vlen <= 0.001) return
   const uc = (u0 + u1) / 2
   const vc = baseY + (v0 + v1) / 2
-  if (horizontal) out.push({ x: uc, y: vc, z: line, dx: ulen, dy: vlen, dz: thick })
-  else out.push({ x: line, y: vc, z: uc, dx: thick, dy: vlen, dz: ulen })
+  if (horizontal) out.push({ x: uc, y: vc, z: line, dx: ulen, dy: vlen, dz: thick, h: true })
+  else out.push({ x: line, y: vc, z: uc, dx: thick, dy: vlen, dz: ulen, h: false })
 }
 
 // Отвір = розв'язана специфікація вікна (lib/windows.ts). key лишаємо як
@@ -1416,29 +1419,13 @@ export default function HouseShell() {
       const ops = openings.filter((o) => o.baseY === baseY)
       const rings = wallOutline(fl)
       for (const e of edgesOf(rings)) {
-        // Отвір вирізаємо за ПЕРЕКРИВОМ із ребром, а не за повним входженням.
-        // Вимога «вікно цілком усередині ребра» лишала стіну суцільною, коли
-        // отвір хоч трохи вилазив за межі сегмента, — і вікно опинялось у
-        // глухій стіні.
-        const eo = ops
-          .filter(
-            (o) =>
-              o.horizontal === e.horizontal &&
-              Math.abs(o.line - e.line) < 0.05 &&
-              Math.min(o.b, e.max) - Math.max(o.a, e.min) > 0.05,
-          )
-          .map((o) => ({ ...o, a: Math.max(o.a, e.min), b: Math.min(o.b, e.max) }))
-          .sort((a, b) => a.a - b.a)
-        // Зовнішня стіна — на ВСЮ висоту поверху (FLOOR_H), щоб закрити край плити
-        // перекриття (не було «прожилок»). Знизу заходить у нижній ярус на
-        // TIER_LAP і тонша за нього — див. коментар про яруси нагорі файлу.
-        let cursor = e.min
-        for (const o of eo) {
-          if (o.a > cursor) pushBox(boxes, e.horizontal, e.line, cursor, o.a, -TIER_LAP, FLOOR_H, baseY, t)
-          pushBox(boxes, e.horizontal, e.line, o.a, o.b, o.top, FLOOR_H, baseY, t)
-          cursor = o.b
-        }
-        pushBox(boxes, e.horizontal, e.line, cursor, e.max, -TIER_LAP, FLOOR_H, baseY, t)
+        // Стіну будуємо СУЦІЛЬНОЮ, а отвори ріже cutOpenings нижче. Два
+        // механізми одночасно тут і були бідою: розкладка простінків залежала
+        // від того, чи збігся отвір із ребром контуру, і на кожному незбігу
+        // вікно лишалось у глухій стіні.
+        // Висота — на ВЕСЬ поверх (FLOOR_H), щоб закрити край плити
+        // перекриття; знизу заходить у нижній ярус на TIER_LAP.
+        pushBox(boxes, e.horizontal, e.line, e.min, e.max, -TIER_LAP, FLOOR_H, baseY, t)
       }
       // Кутові стовпи на кожній вершині контуру — гарантовано з'єднують стіни без
       // дірок. Стовп на 2 мм ТОВЩИЙ за свій простінок: інакше його грані лежать
@@ -1669,11 +1656,17 @@ export default function HouseShell() {
     for (const part of roof) {
       if (part.kind === 'flat') continue
       const roofY = (part.level + 1) * FLOOR_H
+      const above = plan.floors[part.level + 1]?.slab ?? []
+      // Складена зона будується ПО ЧАСТИНАХ, але з ОДНИМ підйомом гребеня:
+      // головна частина задає висоту, другорядні врізаються в неї під прямим
+      // кутом на тій самій відмітці.
+      const zone = zoneRise(part, above)
+      for (const rect of partRects(part)) {
       // Габарит скату зі звісами ПО КОЖНІЙ СТОРОНІ. Сторона, притиснута до
       // стіни поверху вище, звісу не має — інакше, збільшуючи звіс, скат
       // заповзав би всередину кімнати другого поверху. Через це габарит
       // несиметричний, і центр більше не збігається з центром зони.
-      const g = slopeBox(part, plan.floors[part.level + 1]?.slab ?? [])
+      const g = slopeBox(part, above, rect)
       const w = g.x1 - g.x0
       const d = g.z1 - g.z0
       // 0° — гребінь уздовж довшої сторони, 90° — упоперек.
@@ -1686,6 +1679,8 @@ export default function HouseShell() {
       const y = roofY + ROOF_LIFT
       const mono = part.kind === 'mono'
       const rotY = (ridgeAlongZ ? 0 : Math.PI / 2) + (mono && part.rotation >= 180 ? Math.PI : 0)
+      // Кут беремо не з налаштувань, а з ПІДЙОМУ: так усі частини зони
+      // виходять на одну висоту, хоч і мають різні прольоти.
       const tan = Math.tan((part.pitch * Math.PI) / 180)
       if (part.kind === 'hip') {
         // Вальмовий будується в СВІТОВИХ осях (гребінь сам іде вздовж довшої
@@ -1703,12 +1698,12 @@ export default function HouseShell() {
         })
       } else if (mono) {
         // Односхилий: висота на ПОВНИЙ проліт (схил один, а не два).
-        const mh = span * tan
+        const mh = zone || span * tan
         const b = { roofY, partId: part.id, level: part.level, x, y, z, rotY }
         out.push({ ...b, geo: monoGeometry(pw, pd, mh, skirt, true), wallLike: true })
         out.push({ ...b, geo: monoGeometry(pw, pd, mh, skirt, false), wallLike: false })
       } else {
-        const gh = (span / 2) * tan
+        const gh = zone || (span / 2) * tan
         const b = { roofY, partId: part.id, level: part.level, x, y, z, rotY }
         if (part.overhang > 0) {
           // Зі звісом дах нависає над стінами: усе, що видно збоку, — це вже
@@ -1724,6 +1719,7 @@ export default function HouseShell() {
           out.push({ ...b, geo: gableGeometry(pw, pd, gh, skirt), wallLike: true })
           out.push({ ...b, geo: gablePlateGeometry(pw, pd, gh, tv), wallLike: false })
         }
+      }
       }
     }
     return out
