@@ -109,10 +109,12 @@ export const bounds = (r: { x: number; z: number; width: number; depth: number }
 
 const segOverlap = (a0: number, a1: number, b0: number, b1: number) => Math.min(a1, b1) - Math.max(a0, b0) > 0.05
 
-// Сусідня кімната за стороною (або наявність тераси за нею).
-export function neighborOf(rooms: RoomZone[], room: RoomZone, side: Side, wantTerrace: boolean): RoomZone | undefined {
+// УСІ сусіди за стороною. Їх буває кілька: до довгої стіни кімнати з того боку
+// може прилягати дві-три менші. Перегородці треба саме перелік — вона ріжеться
+// по кожному сусідові окремо.
+export function neighborsOf(rooms: RoomZone[], room: RoomZone, side: Side, wantTerrace: boolean): RoomZone[] {
   const b = bounds(room)
-  return rooms.find((r2) => {
+  return rooms.filter((r2) => {
     if (r2 === room) return false
     if (wantTerrace ? r2.type !== 'terrace' : r2.type === 'terrace') return false
     const c = bounds(r2)
@@ -122,6 +124,10 @@ export function neighborOf(rooms: RoomZone[], room: RoomZone, side: Side, wantTe
     return Math.abs(c.z1 - b.z0) < 0.05 && segOverlap(b.x0, b.x1, c.x0, c.x1)
   })
 }
+
+// Сусідня кімната за стороною (або наявність тераси за нею).
+export const neighborOf = (rooms: RoomZone[], room: RoomZone, side: Side, wantTerrace: boolean) =>
+  neighborsOf(rooms, room, side, wantTerrace)[0]
 
 // Стіна ЗОВНІШНЯ, якщо за нею немає іншої кімнати. Тільки на таких можна
 // ставити вікна — на перетині приміщень вікна не буває.

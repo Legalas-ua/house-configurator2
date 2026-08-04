@@ -1,5 +1,5 @@
 import type { HousePlan } from '../config/types'
-import { bounds, neighborOf, type Side } from './windows'
+import { bounds, neighborsOf, type Side } from './windows'
 
 // ============================================================
 // ВНУТРІШНІ перегородки як дані. Раніше вони існували лише всередині
@@ -53,21 +53,30 @@ export function innerWalls(plan: HousePlan): InnerWall[] {
         { side: 'zmin', horizontal: true, line: b.z0, a: b.x0, b: b.x1, rotY: 0 },
       ]
       for (const sd of cand) {
-        const nb = neighborOf(fl.rooms, room, sd.side, false)
-        if (!nb) continue // зовнішня — не перегородка
-        if (nb.group && nb.group === room.group) continue // одна кімната
-        const key = `${idx}-${sd.horizontal ? 'h' : 'v'}-${sd.line.toFixed(2)}-${((sd.a + sd.b) / 2).toFixed(2)}`
-        if (seen.has(key)) continue
-        seen.add(key)
-        out.push({
-          id: key,
-          floor: idx,
-          horizontal: sd.horizontal,
-          line: sd.line,
-          a: sd.a,
-          b: sd.b,
-          rotY: sd.rotY,
-        })
+        // Перегородка йде РІВНО по перекриттю з сусідом, і по кожному сусідові
+        // окремо. Раніше брали першого-ліпшого і будували на ВСЮ сторону
+        // кімнати: якщо сусід коротший, решта смуги лягала в зовнішню стіну —
+        // 100 мм глухої перегородки рівно в отворі вікна, і отвір не
+        // прорізався (`cutOpenings` перегородок не чіпає).
+        for (const nb of neighborsOf(fl.rooms, room, sd.side, false)) {
+          if (nb.group && nb.group === room.group) continue // одна кімната
+          const c = bounds(nb)
+          const a = Math.max(sd.a, sd.horizontal ? c.x0 : c.z0)
+          const b = Math.min(sd.b, sd.horizontal ? c.x1 : c.z1)
+          if (b - a < 0.1) continue
+          const key = `${idx}-${sd.horizontal ? 'h' : 'v'}-${sd.line.toFixed(2)}-${((a + b) / 2).toFixed(2)}`
+          if (seen.has(key)) continue
+          seen.add(key)
+          out.push({
+            id: key,
+            floor: idx,
+            horizontal: sd.horizontal,
+            line: sd.line,
+            a,
+            b,
+            rotY: sd.rotY,
+          })
+        }
       }
     }
   })

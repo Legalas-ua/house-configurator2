@@ -1,5 +1,5 @@
 import type { HousePlan, PlanRect, RoofMatKind, RoofMatSpec } from '../config/types'
-import { parapetEdges, partRects, slopeBox, zoneRise, ROOF_LIFT, type RoofPart } from './roof'
+import { cornerStop, parapetEdges, partRects, slopeBox, zoneRise, ROOF_LIFT, type RoofPart } from './roof'
 import { WALL_T } from './windows'
 
 // ============================================================
@@ -488,10 +488,7 @@ export function roofSkin(
           rotY: 0,
           tilt: 0,
         })
-        // Металевий кожух надівається ЗВЕРХУ на парапет по всьому периметру.
-        capBoxes(part, above, roofY, gt.boxes)
         g.top = Math.max(g.top, roofY + FLAT_T + 0.05)
-        gt.top = Math.max(gt.top, roofY + part.parapetH + CAP_H)
         continue
       }
       layElements(sl, spec.kind, g.boxes, MAX_ELEMENTS)
@@ -502,6 +499,15 @@ export function roofSkin(
       const topY = sl.cy + (sl.len / 2) * Math.abs(Math.sin(sl.tilt)) + 0.2
       g.top = Math.max(g.top, topY)
       gt.top = Math.max(gt.top, topY)
+    }
+
+    // Металевий кожух надівається ЗВЕРХУ на парапет по всьому периметру — ОДИН
+    // на зону. Раніше він стояв усередині циклу по схилах, а в складеної зони
+    // схил на кожну частину: кожух будувався двічі-тричі поспіль, коробка в
+    // коробку. Звідси й брудний стик на розі.
+    if (flat) {
+      capBoxes(part, above, roofY, gt.boxes)
+      gt.top = Math.max(gt.top, roofY + part.parapetH + CAP_H)
     }
 
     // Вальма: чотири діагональні ребра між схилами. Шов на них закриває
@@ -537,19 +543,25 @@ export function roofSkin(
 // Робимо трьома брусками — верхня полиця й дві крапельниці, — щоб вона була
 // саме об'ємною, а не пофарбованою гранню.
 function capBoxes(part: RoofPart, above: PlanRect[], roofY: number, out: SkinBox[]) {
-  for (const e of parapetEdges(part, above)) {
+  const edges = parapetEdges(part, above)
+  for (const e of edges) {
     const t = part.parapetT
     // Та сама вісь, що й у геометрії парапету: зовнішня грань — грань стіни.
     const line = e.line + (e.nx + e.nz) * (WALL_T / 2 - t / 2)
     const y = roofY + part.parapetH
     const w = t + 2 * CAP_OUT
+    // Повний габарит кожуха поперек: полиця плюс крапельниці по краях.
+    const half = w / 2 + 0.01
     for (const [ra, rb] of e.spans) {
-      // На РОЗІ кожух має дійти рівно до ЗОВНІШНЬОГО краю перпендикулярного —
-      // це пів стіни плюс його звис. Раніше тут стояло пів ширини кожуха, і
-      // на кожному куті він виступав на зайві 5 см.
-      const grow = WALL_T / 2 + CAP_OUT
-      const a = Math.abs(ra - e.min) < 1e-4 ? ra - grow : ra
-      const b = Math.abs(rb - e.max) < 1e-4 ? rb + grow : rb
+      // РІГ. Раніше обидва кожухи доходили до зовнішнього краю сусіда й
+      // накривали той самий квадрат — дві полиці в одній площині (мерехтіння),
+      // а крапельниця сусіда все одно лишалась на 10 мм назовні: звідси і
+      // «не з'єднується», і «випирає». Тепер квадрат перетину бере на себе
+      // горизонтальний кожух, а вертикальний рівно до нього відступає.
+      const stop = (u: number) =>
+        Math.abs(u - e.min) < 1e-4 || Math.abs(u - e.max) < 1e-4 ? cornerStop(edges, e, u, t, half) : u
+      const a = stop(ra)
+      const b = stop(rb)
       const len = b - a
       if (len < 0.05) continue
       const mid = (a + b) / 2

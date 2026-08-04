@@ -75,6 +75,10 @@ export function parapetPanels(part: RoofPart, above: PlanRect[], roofY: number, 
           nz: e.nz,
           a: fa,
           b: fb,
+          // Ріг парапету — такий самий ріг: сцена доведе оздоблення до
+          // площини матеріалу сусідньої стінки (див. WallFace.cornerA).
+          cornerA: horizontal && freeA ? a : undefined,
+          cornerB: horizontal && freeB ? b : undefined,
         },
         baseY: roofY,
         height: part.parapetH,

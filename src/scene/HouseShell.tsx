@@ -36,14 +36,14 @@ import {
   type ResolvedWindow,
   type Side,
 } from '../lib/windows'
-import { parapetEdges, partRects, slopeBox, zoneRise, ROOF_LIFT } from '../lib/roof'
+import { cornerStop, parapetEdges, partRects, slopeBox, zoneRise, ROOF_LIFT } from '../lib/roof'
 import { roofSkin } from '../lib/roofSkin'
 import { terraceSkin, terraceSurfaces, TERRACE_UP_STACK } from '../lib/terraceSkin'
 import { interiorSkin, interiorSurfaces } from '../lib/interiorSkin'
 import { innerWalls, resolveDoors } from '../lib/innerWalls'
 import InnerDoorEditor from './InnerDoorEditor'
 import { wallFaces, type WallFace } from '../lib/wallFaces'
-import { claddingBoxes, type CladBox, type CladResult, type HeightAt } from '../lib/cladding'
+import { claddingBoxes, cladOuter, type CladBox, type CladResult, type HeightAt } from '../lib/cladding'
 import { gablePanels, parapetPanels } from '../lib/gableFaces'
 import { useFacadeMaterial } from './facadeMaterial'
 import Cladding, { Backing, type CladGroup } from './Cladding'
@@ -1313,13 +1313,14 @@ export default function HouseShell() {
 
     // Стіни + ФРОНТОНИ над дахом: те, що лишилось стіною, оздоблюється так
     // само, а розкладка зшивається сама — сітка прив'язана до світового нуля.
-    const panels = [
+    const raw = [
       ...faces.map((f) => ({
         face: f,
         baseY: f.floor * FLOOR_H,
         height: FLOOR_H,
         heightAt: undefined as HeightAt | undefined,
         over: undefined as string | undefined,
+        tag: 'wall',
       })),
       ...roof.flatMap((p) => {
         const above = plan.floors[p.level + 1]?.slab ?? []
@@ -1332,12 +1333,57 @@ export default function HouseShell() {
           // стіну, над якою стоять. Інакше, помінявши матеріал стіни під
           // дахом, людина бачила над нею стару розкладку.
           over: faceUnder(g.face, faces),
+          tag: p.id,
         }))
       }),
     ]
+    type Panel = (typeof raw)[number]
+    const specOf = (p: Panel) => wallFacades[p.over ?? p.face.id] ?? specs[p.face.floor] ?? specs[0]
 
-    for (const { face: f, baseY, height, heightAt, over } of panels) {
-      const spec = wallFacades[over ?? f.id] ?? specs[f.floor] ?? specs[0]
+    // РІГ. Оздоблення доводимо до зовнішньої площини МАТЕРІАЛУ перпендикулярної
+    // стіни, а не до її голої грані: різниця в 5 мм — і на кожному розі
+    // вилазила смужка чужого матеріалу (або, навпаки, одне лізло в друге).
+    // Товщину матеріалу знає лише сцена, тож геометрія лишає закладку
+    // (`cornerA/cornerB` — вісь перпендикулярної стіни), а справжній розмір
+    // підставляємо тут.
+    const perpAt = (p: Panel, at: number) =>
+      raw.find(
+        (q) =>
+          q.tag === p.tag &&
+          q.face.horizontal !== p.face.horizontal &&
+          Math.abs(q.baseY - p.baseY) < 0.01 &&
+          Math.abs(q.face.line - at) < 0.01 &&
+          p.face.line > q.face.a - 0.3 &&
+          p.face.line < q.face.b + 0.3,
+      )
+    // out=false — гола грань сусідньої стіни (докуди йде підкладка),
+    // out=true — зовнішня площина її матеріалу (докуди йдуть елементи).
+    const toNeighbour = (p: Panel, at: number, cur: number, out: boolean) => {
+      const q = perpAt(p, at)
+      if (!q) return cur
+      const half = p.face.halfT ?? WALL_T / 2
+      return at + (cur < at ? -1 : 1) * (half + (out ? cladOuter(specOf(q)) : 0))
+    }
+    const panels = raw.map((p) => {
+      const { cornerA, cornerB } = p.face
+      if (cornerA === undefined && cornerB === undefined) return p
+      const at = (c: number | undefined, cur: number, out: boolean) =>
+        c === undefined ? undefined : toNeighbour(p, c, cur, out)
+      return {
+        ...p,
+        face: {
+          ...p.face,
+          a: at(cornerA, p.face.a, true) ?? p.face.a,
+          b: at(cornerB, p.face.b, true) ?? p.face.b,
+          backA: at(cornerA, p.face.a, false),
+          backB: at(cornerB, p.face.b, false),
+        },
+      }
+    })
+
+    for (const p of panels) {
+      const { face: f, baseY, height, heightAt } = p
+      const spec = specOf(p)
       const holes = openings
         .filter(
           (o) =>
@@ -1348,6 +1394,11 @@ export default function HouseShell() {
         .map((o) => ({ a: o.a, b: o.b, y0: o.baseY + o.sill, y1: o.baseY + o.top }))
       const layoutKey = [
         f.id,
+        // Кінці грані більше не випливають з id: на розі їх править матеріал
+        // СУСІДНЬОЇ стіни. Без них у ключі зміна того матеріалу лишалась би в
+        // кеші непоміченою.
+        f.a.toFixed(3),
+        f.b.toFixed(3),
         baseY.toFixed(2),
         height.toFixed(2),
         spec.kind,
@@ -1591,43 +1642,27 @@ export default function HouseShell() {
       if (part.kind !== 'flat') continue
       const roofY = (part.level + 1) * FLOOR_H
       const t = part.parapetT
-      const pt = t + 0.004
       const boxes: Box[] = []
       // Ребра, накриті поверхом ВИЩЕ, парапету не потребують: там уже стоїть
       // зовнішня стіна верхнього поверху, і парапет лише колізив би з нею.
       // Різання ділянок живе в lib/roof.ts — ТИМ САМИМ кодом користується
       // перевірка колізій, тож геометрія і перевірка не можуть розійтись.
-      for (const e of parapetEdges(part, plan.floors[part.level + 1]?.slab ?? [])) {
+      const edges = parapetEdges(part, plan.floors[part.level + 1]?.slab ?? [])
+      for (const e of edges) {
         const { spans } = e
         // Зовнішня грань парапету — рівно грань СТІНИ, а товщина росте
         // ВСЕРЕДИНУ. Інакше парапет випирає за фасад.
         const line = e.line + (e.nx + e.nz) * (WALL_T / 2 - t / 2)
-        // Стовпчик на стику двох граней трохи товщий за смугу (щоб їхні грані
-        // не збігались і не мерехтіли) — але й він росте ВСЕРЕДИНУ, по обох
-        // осях. Раніше він стояв центром на осі стіни, тож на кожному розі
-        // будинку парапет випирав за фасад на пів своєї товщини.
-        const lineP = e.line + (e.nx + e.nz) * (WALL_T / 2 - pt / 2)
-        // Торець на РОЗІ зони теж підтягуємо до грані перпендикулярної стіни.
-        // Кінець, що утворився ВИРІЗОМ (там, де зверху стоїть поверх), — це не
-        // ріг будинку, а звичайний обрив: його лишаємо як є.
+        // Ріг: горизонтальна смуга перекриває квадрат перетину цілком,
+        // вертикальна відступає рівно до неї. Окремих кутових стовпчиків більше
+        // немає — їх ставили ОБИДВІ грані, дві однакові коробки лягали одна в
+        // одну, а їхні зовнішні грані ще й збігались із гранями смуг: саме це
+        // й читалось як сходинка на розі. Кінець, що утворився ВИРІЗОМ (там,
+        // де зверху стоїть поверх), — не ріг, його лишаємо як є.
         const cap = (u: number) =>
-          Math.abs(u - e.min) < 1e-4
-            ? u - WALL_T / 2 + pt / 2
-            : Math.abs(u - e.max) < 1e-4
-              ? u + WALL_T / 2 - pt / 2
-              : u
+          Math.abs(u - e.min) < 1e-4 || Math.abs(u - e.max) < 1e-4 ? cornerStop(edges, e, u, t, t / 2) : u
         for (const [u0, u1] of spans) {
-          pushBox(boxes, e.horizontal, line, u0, u1, -TIER_LAP, part.parapetH, roofY, t)
-          for (const u of [cap(u0), cap(u1)]) {
-            boxes.push({
-              x: e.horizontal ? u : lineP,
-              y: roofY + (part.parapetH - TIER_LAP) / 2,
-              z: e.horizontal ? lineP : u,
-              dx: pt,
-              dy: part.parapetH + TIER_LAP,
-              dz: pt,
-            })
-          }
+          pushBox(boxes, e.horizontal, line, cap(u0), cap(u1), -TIER_LAP, part.parapetH, roofY, t)
         }
       }
       if (boxes.length === 0) continue

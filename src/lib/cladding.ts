@@ -126,6 +126,11 @@ function grid(spec: FacadeSpec): { pu: number; pv: number; eu: number; ev: numbe
 
 export const cladThickness = (spec: FacadeSpec) => (spec.kind === 'plaster' ? PLASTER_T : CLAD_T)
 
+// Наскільки ЗОВНІШНЯ площина готового оздоблення відстоїть від площини стіни.
+// Саме до неї підрізається оздоблення сусідньої стіни на розі: підрізання «до
+// голої грані стіни» лишало смужку чужого матеріалу назовні.
+export const cladOuter = (spec: FacadeSpec) => BACK_OUT + CLAD_GAP + cladThickness(spec)
+
 // Елементи оздоблення однієї грані. baseY/height — прямокутник грані у світі.
 export function claddingBoxes(
   face: WallFace,
@@ -227,7 +232,12 @@ export function claddingBoxes(
     }
 
     // ---- Підкладка. На фронтоні її не треба: сам клин уже темний ----
-    if (withBacking && !heightAt) put(backing, ua, va, ub - ua, vb - va, backC, BACK_OUT + 0.002)
+    if (withBacking && !heightAt) {
+      // На розі підкладка спиняється раніше за елементи (див. WallFace.backA).
+      const ba = Math.max(ua, face.backA ?? ua)
+      const bb = Math.min(ub, face.backB ?? ub)
+      if (bb - ba > 0.004) put(backing, ba, va, bb - ba, vb - va, backC, BACK_OUT + 0.002)
+    }
     void baseY
 
     // ---- Ряди елементів. Прив'язка до СВІТОВОГО нуля по обох осях ----
