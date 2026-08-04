@@ -202,12 +202,15 @@ export function roofJunctions(parts: RoofPart[], level: number): RoofJunction[] 
       const zOver = Math.min(p.z1, q.z1) - Math.max(p.z0, q.z0)
       const touchX = Math.min(Math.abs(p.x1 - q.x0), Math.abs(q.x1 - p.x0)) < 0.01
       const touchZ = Math.min(Math.abs(p.z1 - q.z0), Math.abs(q.z1 - p.z0)) < 0.01
-      // Досить, щоб зони просто СТИКАЛИСЬ помітною ділянкою. Раніше вимагалось
-      // ще й повне збігання по другій осі — і на зсунутих зонах «+» не
-      // з'являвся зовсім, хоч об'єднати їх якраз і треба було.
-      if (zOver > 0.2 && touchX) {
+      // Об'єднання можливе ЛИШЕ там, де союз лишається прямокутником: зона
+      // даху прямокутна за визначенням, і з Г-подібного союзу коректного скату
+      // без розрахунку єндов не збудувати. Послаблювати цю умову не можна —
+      // на зсунутих зонах «+» брав спільний габарит і мовчки додавав зайве.
+      const sameZ = Math.abs(p.z0 - q.z0) < 0.01 && Math.abs(p.z1 - q.z1) < 0.01
+      const sameX = Math.abs(p.x0 - q.x0) < 0.01 && Math.abs(p.x1 - q.x1) < 0.01
+      if (sameZ && touchX && zOver > 0.2) {
         out.push({ a: mine[i].id, b: mine[k].id, x: (Math.max(p.x0, q.x0) + Math.min(p.x1, q.x1)) / 2, z: (Math.max(p.z0, q.z0) + Math.min(p.z1, q.z1)) / 2 })
-      } else if (xOver > 0.2 && touchZ) {
+      } else if (sameX && touchZ && xOver > 0.2) {
         out.push({ a: mine[i].id, b: mine[k].id, x: (Math.max(p.x0, q.x0) + Math.min(p.x1, q.x1)) / 2, z: (Math.max(p.z0, q.z0) + Math.min(p.z1, q.z1)) / 2 })
       }
     }

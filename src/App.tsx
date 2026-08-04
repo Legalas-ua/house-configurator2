@@ -18,6 +18,7 @@ export default function App() {
   const started = useConfigurator((s) => s.started)
   const currentStep = useConfigurator((s) => s.currentStep)
   const setTopView = useConfigurator((s) => s.setTopView)
+  const panelOpen = useConfigurator((s) => s.panelOpen)
 
   if (!started) return <Landing />
 
@@ -35,7 +36,7 @@ export default function App() {
   }
 
   return (
-    <div className="app">
+    <div className={`app${panelOpen ? '' : ' app--narrow'}`}>
       <main className="viewport">
         <SceneRoot />
         <button

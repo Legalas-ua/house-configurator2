@@ -41,8 +41,11 @@ export function parapetPanels(part: RoofPart, above: PlanRect[], roofY: number, 
     // куті парапету лишалась непокрита смуга в пів товщини стіни.
     const grow = horizontal ? WALL_T / 2 + CORNER : WALL_T / 2
     for (const [a, b] of e.spans) {
-      const fa = Math.abs(a - e.min) < 1e-4 ? a - grow : a
-      const fb = Math.abs(b - e.max) < 1e-4 ? b + grow : b
+      // Кінець, що впирається у стіну поверху ВИЩЕ (не ріг зони), навпаки
+      // ПІДРІЗАЄМО: оздоблення парапету й оздоблення тієї стіни лежать в
+      // одній площині, і на перекриві вони мерехтіли одне крізь одне.
+      const fa = Math.abs(a - e.min) < 1e-4 ? a - grow : a + CORNER + 0.01
+      const fb = Math.abs(b - e.max) < 1e-4 ? b + grow : b - CORNER - 0.01
       if (fb - fa < 0.1) continue
       out.push({
         face: {

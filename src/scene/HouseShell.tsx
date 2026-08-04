@@ -177,6 +177,64 @@ interface Box {
   dy: number
   dz: number
 }
+
+// Вирізати отвори з набору коробок стіни.
+//
+// Раніше на це працювала лише розкладка простінків по ребрах контуру — і
+// щоразу, коли вікно з якоїсь причини не збігалося з ребром, воно лишалось у
+// СУЦІЛЬНІЙ стіні. Це страховка, яка від збігів не залежить: беремо кожну
+// коробку й фізично віднімаємо від неї прямокутник отвору. Орієнтацію коробки
+// визначаємо за її ж пропорціями — тонка вісь і є нормаль стіни.
+function cutOpenings(boxes: Box[], ops: Opening[]): Box[] {
+  const out: Box[] = []
+  for (const start of boxes) {
+    let pieces = [start]
+    for (const o of ops) {
+      const next: Box[] = []
+      for (const p of pieces) {
+        const horizontal = p.dz < p.dx - 1e-6
+        const vertical = p.dx < p.dz - 1e-6
+        // Кутовий стовп (dx === dz) не ріжемо: він на самому розі, отворів там
+        // не буває, а орієнтації в нього немає.
+        if ((!horizontal && !vertical) || horizontal !== o.horizontal) {
+          next.push(p)
+          continue
+        }
+        const thick = horizontal ? p.dz : p.dx
+        const line = horizontal ? p.z : p.x
+        if (Math.abs(line - o.line) > thick / 2 + 0.03) {
+          next.push(p)
+          continue
+        }
+        const uc = horizontal ? p.x : p.z
+        const ulen = horizontal ? p.dx : p.dz
+        const u0 = uc - ulen / 2
+        const u1 = uc + ulen / 2
+        const v0 = p.y - p.dy / 2
+        const v1 = p.y + p.dy / 2
+        const top = o.baseY + o.top
+        if (o.b <= u0 + 0.002 || o.a >= u1 - 0.002 || top <= v0 + 0.002) {
+          next.push(p)
+          continue
+        }
+        const mk = (a: number, b: number, c: number, d: number) => {
+          if (b - a < 0.004 || d - c < 0.004) return
+          next.push(
+            horizontal
+              ? { x: (a + b) / 2, y: (c + d) / 2, z: p.z, dx: b - a, dy: d - c, dz: p.dz }
+              : { x: p.x, y: (c + d) / 2, z: (a + b) / 2, dx: p.dx, dy: d - c, dz: b - a },
+          )
+        }
+        mk(u0, Math.min(o.a, u1), v0, v1) // ліворуч від отвору
+        mk(Math.max(o.b, u0), u1, v0, v1) // праворуч
+        mk(Math.max(u0, o.a), Math.min(u1, o.b), top, v1) // перемичка над
+      }
+      pieces = next
+    }
+    out.push(...pieces)
+  }
+  return out
+}
 // Плаский помічник: додати коробку стіни/перегородки вздовж осі (horizontal → по X).
 function pushBox(out: Box[], horizontal: boolean, line: number, u0: number, u1: number, v0: number, v1: number, baseY: number, thick: number) {
   const ulen = u1 - u0
@@ -592,7 +650,6 @@ function RoofTier({ baseY, open, children }: { baseY: number; open: boolean; chi
 // стіни не вийде); дві теракотові ручки на краях міняють ширину. Вертикальні
 // розміри, імпости й двері — у панелі: мишею по фасаду це незручно.
 
-const WIN_HANDLE = 0.22
 
 interface WinDrag {
   id: string
@@ -649,11 +706,6 @@ function alongAxis(
   const ev = v.x * wx + v.y * wy + v.z * wz
   return (b * ev - d) / denom
 }
-
-// Локальна вісь X групи вікна збігається з віссю стіни не на всіх сторонах:
-// повороти на π і π/2 дзеркалять її. Без цього правий повзунок тягнув би ліву
-// грань вікна (і навпаки) на двох сторонах світу з чотирьох.
-const flipped = (side: Side) => side === 'xmax' || side === 'zmin'
 
 // Наскільки виносимо прозорі накладки за грань стіни. Вікно ДАЛІ за стіну —
 // тоді промінь спершу зустрічає вікно, і його можна вибрати; інакше стіна
@@ -1029,18 +1081,9 @@ function WindowEditor({ openings, plan }: { openings: Opening[]; plan: HousePlan
             <span className="plan-size">{t.plan.meters(sel.top - sel.sill)}</span>
           </Html>
 
-          {/* Ручки: 'uStart' завжди тягне ПОЧАТОК вікна вздовж стіни, тож на
-              дзеркальних сторонах вона й малюється з іншого боку. */}
-          {(['uStart', 'uEnd'] as const).map((mode) => {
-            const dir = mode === 'uStart' ? -1 : 1
-            const localX = dir * (flipped(sel.side) ? -1 : 1) * (sel.width / 2)
-            return (
-              <mesh key={mode} position={[localX, 0, 0.08]} onPointerDown={(e) => grab(sel, mode, e)}>
-                <boxGeometry args={[WIN_HANDLE, WIN_HANDLE, WIN_HANDLE]} />
-                <meshStandardMaterial color={HANDLE_COLOR} emissive={HANDLE_COLOR} emissiveIntensity={0.45} />
-              </mesh>
-            )
-          })}
+          {/* Ручок ширини тут навмисно немає. Ширина — точний розмір, і
+              тягати її мишею було незручно й ненадійно: тепер вона задається
+              числом у панелі. Мишею вікно лише РУХАЄТЬСЯ вздовж стіни. */}
 
           {/* Стрілки: переставити ОБРАНІ двері в сусідню вільну секцію. */}
           {door && panels > 1 && (
@@ -1411,6 +1454,8 @@ export default function HouseShell() {
             dy: FLOOR_H + TIER_LAP,
             dz: pt,
           })
+      // Страховка: фізично віднімаємо отвори від готових коробок.
+      perFloor[idx] = cutOpenings(perFloor[idx], ops)
     })
     return perFloor
   }, [plan, openings])

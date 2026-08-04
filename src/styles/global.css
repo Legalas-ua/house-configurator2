@@ -130,9 +130,15 @@ body {
   border-left: 1px solid var(--border);
 }
 
-/* Згорнута панель. Ховаємо ЗСУВОМ, а не display:none — сітка лишається тією
-   самою, і полотно 3D не переінініціалізовується від зміни розміру. */
+/* Згорнута панель. Колонку сітки стягуємо в нуль — інакше на її місці
+   лишався порожній прямокутник, — а саму панель лишаємо на власній ширині й
+   виносимо зсувом за край. */
+.app--narrow {
+  grid-template-columns: 1fr 0;
+}
+
 .panel--closed {
+  width: var(--panel-width);
   transform: translateX(100%);
   pointer-events: none;
 }
@@ -232,8 +238,14 @@ body {
 }
 
 .ministepper__dot:disabled {
-  opacity: 0.45;
-  cursor: default;
+  /* Крок недоступний — це має читатись з першого погляду: раніше 0.45
+     виглядало майже як звичайний, і люди в нього клацали. */
+  opacity: 0.3;
+  border-style: dashed;
+  border-color: var(--border);
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: not-allowed;
 }
 
 /* ===== Кнопка «Вид зверху» ===== */
@@ -922,7 +934,13 @@ body {
   }
 
   /* Панель на телефоні — знизу, тож і згортається ВНИЗ, а не вбік. */
+  .app--narrow {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr 0;
+  }
   .panel--closed {
+    width: auto;
+    height: 56vh;
     transform: translateY(100%);
   }
   .panel-toggle {
