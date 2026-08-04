@@ -7,10 +7,11 @@ import { addRoom, removeRoom } from '../../lib/editPlan'
 import { t } from '../../locales'
 import FloorTabs from './FloorTabs'
 
-// Типи кімнат, які можна додати вручну. Сходів тут немає: вони наскрізні й
-// тягнуть за собою проріз у перекритті. Прихожа — лише на 1-му поверсі
-// (вхід у будинок), тераса — лише на 2-му (вона лягає на дах 1-го).
-const ADDABLE: RoomType[] = ['bedroom', 'bathroom', 'office', 'wardrobe', 'pantry', 'corridor', 'living']
+// Типи кімнат, які можна додати вручну. Сходи теж: у великому будинку може
+// знадобитись другий марш, та й видалені сходи треба чимось повернути.
+// Прихожа — лише на 1-му поверсі (вхід у будинок), тераса — лише на 2-му
+// (вона лягає на дах 1-го).
+const ADDABLE: RoomType[] = ['bedroom', 'bathroom', 'office', 'wardrobe', 'pantry', 'corridor', 'living', 'stairs']
 const addableFor = (floorIdx: number): RoomType[] =>
   floorIdx === 0 ? ['hall', ...ADDABLE] : [...ADDABLE, 'terrace']
 

@@ -130,6 +130,42 @@ body {
   border-left: 1px solid var(--border);
 }
 
+/* Згорнута панель. Ховаємо ЗСУВОМ, а не display:none — сітка лишається тією
+   самою, і полотно 3D не переінініціалізовується від зміни розміру. */
+.panel--closed {
+  transform: translateX(100%);
+  pointer-events: none;
+}
+
+.panel-toggle {
+  position: absolute;
+  top: 50%;
+  right: var(--panel-width);
+  z-index: 5;
+  transform: translateY(-50%);
+  width: 26px;
+  height: 56px;
+  border: 1px solid var(--border);
+  border-right: none;
+  border-radius: 8px 0 0 8px;
+  background: var(--surface);
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  transition: right 0.2s;
+}
+
+.panel-toggle--closed {
+  right: 0;
+}
+
+.panel-toggle:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
 .panel__header {
   padding: 28px 24px 20px;
   border-bottom: 1px solid var(--border);
@@ -883,5 +919,70 @@ body {
   }
   .stage__card {
     padding: 24px 20px;
+  }
+
+  /* Панель на телефоні — знизу, тож і згортається ВНИЗ, а не вбік. */
+  .panel--closed {
+    transform: translateY(100%);
+  }
+  .panel-toggle {
+    top: auto;
+    right: 50%;
+    bottom: calc(100% - 44vh);
+    width: 56px;
+    height: 24px;
+    border: 1px solid var(--border);
+    border-bottom: none;
+    border-radius: 8px 8px 0 0;
+    transform: translateX(50%) rotate(90deg);
+    transform-origin: center;
+    transition: bottom 0.2s;
+  }
+  .panel-toggle--closed {
+    right: 50%;
+    bottom: 0;
+  }
+
+  /* Помилки перекривали пів екрана: обмежуємо висоту і даємо прокрутку. */
+  .plan-issues {
+    top: auto;
+    bottom: 10px;
+    left: 10px;
+    right: 10px;
+    max-height: 30vh;
+    overflow-y: auto;
+    font-size: 12px;
+  }
+
+  /* Дрібніші елементи керування — щоб у стовпчик влазило більше. */
+  .chip {
+    padding: 6px 11px;
+    font-size: 12px;
+  }
+  .counter {
+    padding: 6px 0;
+  }
+  .counter__label,
+  .counter__value {
+    font-size: 12px;
+  }
+  .counter__btn {
+    width: 28px;
+    height: 28px;
+  }
+  .rooms__group-title {
+    font-size: 11px;
+  }
+  .rooms__hint {
+    font-size: 11px;
+  }
+  .facade-swatch,
+  .facade-color__picker {
+    width: 30px;
+    height: 30px;
+  }
+  .btn {
+    padding: 10px 16px;
+    font-size: 14px;
   }
 }

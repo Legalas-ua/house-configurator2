@@ -173,6 +173,7 @@ interface ConfiguratorState {
   topView: boolean // камера летить у вид зверху; обертання мишею вимикає
   viewFloor: number // який поверх РЕДАГУЄМО/активний (1 або 2)
   hideFloor2: boolean // сховати 2-й поверх у 3D (галочка на кроці «Кімнати»)
+  panelOpen: boolean // права панель розгорнута (на телефоні її часто ховають)
   hovered: { name: string; area: number; mx: number; my: number } | null // підказка кімнати
   start: () => void
   setValue: (key: ConfigKey, value: string | number | string[] | null) => void
@@ -214,6 +215,7 @@ interface ConfiguratorState {
   setTopView: (on: boolean) => void
   setViewFloor: (floor: number) => void
   setHideFloor2: (on: boolean) => void
+  setPanelOpen: (on: boolean) => void
   setHovered: (h: ConfiguratorState['hovered']) => void
   nextStep: () => void
   prevStep: () => void
@@ -267,6 +269,7 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
   topView: false,
   viewFloor: 1,
   hideFloor2: false,
+  panelOpen: true,
   hovered: null,
 
   start: () => set({ started: true }),
@@ -281,8 +284,15 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
       // поверх старого відпускаємо. У ручному режимі намальоване не чіпаємо
       // ніколи.
       const roofReset = s.roofMode === 'template' ? { customRoof: null, selectedRoofPart: null } : {}
-      // Якщо будинок став одноповерховим — показуємо 1-й поверх
-      return { config, viewFloor: Math.min(s.viewFloor, config.floors), ...roofReset }
+      // Змінили щось на ранньому кроці — далі пройдене більше не дійсне:
+      // наступні кроки в степері гаснуть, поки не пройдеш їх наново кнопкою
+      // «Далі». Інакше можна було перескочити на дах будинку, якого вже немає.
+      return {
+        config,
+        viewFloor: Math.min(s.viewFloor, config.floors),
+        maxStepReached: Math.min(s.maxStepReached, s.currentStep),
+        ...roofReset,
+      }
     }),
 
   // Ручний режим НЕ починається з порожнечі: заморожуємо поточний обчислений
@@ -314,7 +324,12 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
       }
     }),
 
-  setCustomPlan: (plan) => set({ planMode: 'custom', customPlan: plan }),
+  setCustomPlan: (plan) =>
+    set((s) => ({
+      planMode: 'custom',
+      customPlan: plan,
+      maxStepReached: Math.min(s.maxStepReached, s.currentStep),
+    })),
 
   // Перехід у ручний режим вікон бере готовий набір як стартовий — людина
   // правит наявні вікна, а не розставляє їх з нуля.
@@ -469,6 +484,7 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
   setTopView: (on) => set({ topView: on }),
   setViewFloor: (floor) => set({ viewFloor: floor }),
   setHideFloor2: (on) => set({ hideFloor2: on }),
+  setPanelOpen: (on) => set({ panelOpen: on }),
 
   nextStep: () =>
     set((s) => {

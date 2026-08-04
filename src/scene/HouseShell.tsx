@@ -27,6 +27,7 @@ import {
   type DoorSpec,
   updateWindow,
   wallOf,
+  hasWallAt,
   wallRange,
   freeSlots,
   panelCount,
@@ -1216,8 +1217,18 @@ export default function HouseShell() {
   const ref = useRef<Group>(null)
 
   // Отвори = розв'язані специфікації вікон (готові або власні — вирішує стор).
+  // Показуємо ЛИШЕ ті отвори, під якими справді є стіна. Правила вибору
+  // сторони ми правили не раз, і щоразу вилазив той самий артефакт: вікно в
+  // суцільній стіні. Тепер це неможливо за конструкцією — немає стіни, немає
+  // й вікна, а `validateWindows` покаже, що кімната лишилась без вікна.
   const openings = useMemo<Opening[]>(
-    () => resolveWindows(plan, windows, FLOOR_H).map((w) => ({ ...w, key: w.id })),
+    () =>
+      resolveWindows(plan, windows, FLOOR_H)
+        .filter((w) => {
+          const fl = plan.floors[w.floor]
+          return fl ? hasWallAt(fl, w.horizontal, w.line, w.a, w.b) : false
+        })
+        .map((w) => ({ ...w, key: w.id })),
     [plan, windows],
   )
   const clashHl = openings.find((o) => o.id === selectedWindow)

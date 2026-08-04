@@ -185,6 +185,26 @@ function outlineSpans(fl: FloorPlan, room: RoomZone, side: Side): [number, numbe
   return out
 }
 
+// Чи є на цьому місці СТІНА взагалі. Остання лінія оборони: скільки б разів
+// ми не правили правила вибору сторони, вікно не має малюватись там, де стіни
+// немає — інакше в 3D воно опиняється в суцільній площині, отвір різати нема в
+// чому, і назовні стирчить лише полотно дверей.
+export function hasWallAt(fl: FloorPlan, horizontal: boolean, line: number, a: number, b: number): boolean {
+  for (const { pts } of floorOutline(fl)) {
+    for (let i = 0; i < pts.length; i++) {
+      const [x0, z0] = pts[i]
+      const [x1, z1] = pts[(i + 1) % pts.length]
+      const eHorizontal = Math.abs(z1 - z0) < 1e-4
+      if (eHorizontal !== horizontal) continue
+      if (Math.abs((eHorizontal ? z0 : x0) - line) > 0.05) continue
+      const lo = Math.min(eHorizontal ? x0 : z0, eHorizontal ? x1 : z1)
+      const hi = Math.max(eHorizontal ? x0 : z0, eHorizontal ? x1 : z1)
+      if (Math.min(hi, b) - Math.max(lo, a) > 0.05) return true
+    }
+  }
+  return false
+}
+
 // Перетин двох наборів проміжків.
 function intersectSpans(a: [number, number][], b: [number, number][]): [number, number][] {
   const out: [number, number][] = []

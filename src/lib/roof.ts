@@ -337,8 +337,11 @@ export function parapetEdges(part: RoofPart, above: PlanRect[]): ParapetEdge[] {
     const spans: [number, number][] = []
     let cur = e.min
     for (const [c0, c1] of cuts) {
-      if (c0 > cur + 0.05) spans.push([cur, c0])
-      cur = Math.max(cur, c1)
+      // Виріз — це стіна поверху ВИЩЕ. Її межа задана по ОСІ, тож парапет,
+      // доведений до неї, входив у ту стіну до середини. Відступаємо на пів
+      // товщини: парапет спиняється на ЗОВНІШНІЙ площині стіни.
+      if (c0 - WALL_T / 2 > cur + 0.05) spans.push([cur, c0 - WALL_T / 2])
+      cur = Math.max(cur, c1 + WALL_T / 2)
     }
     if (e.max > cur + 0.05) spans.push([cur, e.max])
     return { ...e, spans }

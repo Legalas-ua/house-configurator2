@@ -14,6 +14,8 @@ export const uk = {
   nav: {
     back: 'Назад',
     next: 'Далі',
+    hidePanel: 'Сховати панель',
+    showPanel: 'Показати панель',
   },
   steps: {
     budget: {
