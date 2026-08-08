@@ -131,6 +131,11 @@ export const cladThickness = (spec: FacadeSpec) => (spec.kind === 'plaster' ? PL
 // голої грані стіни» лишало смужку чужого матеріалу назовні.
 export const cladOuter = (spec: FacadeSpec) => BACK_OUT + CLAD_GAP + cladThickness(spec)
 
+// Найтовще, що може стояти на стіні. Для металевих деталей даху (кожух
+// парапету) матеріал стіни невідомий — вони спиняються по найгіршому випадку:
+// краще волосяний зазор, ніж планка, що входить у стіну.
+export const CLAD_MAX_OUT = BACK_OUT + CLAD_GAP + CLAD_T
+
 // Елементи оздоблення однієї грані. baseY/height — прямокутник грані у світі.
 export function claddingBoxes(
   face: WallFace,

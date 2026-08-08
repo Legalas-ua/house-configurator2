@@ -404,13 +404,14 @@ export function parapetEdges(part: RoofPart, above: PlanRect[]): ParapetEdge[] {
 // Ріг парапету. `u` — кінець грані `e`; шукаємо ПЕРПЕНДИКУЛЯРНУ грань, що
 // стоїть на цій осі, і кажемо, куди дивиться її зовнішня нормаль уздовж нашої
 // грані. Далі з цього рахують, де саме починається/закінчується її смуга.
+// Порожньо, якщо поперечного парапету там НЕМАЄ (грань накрита поверхом вище):
+// тоді це не ріг, а впирання в стіну.
 export function perpNormal(edges: ParapetEdge[], e: ParapetEdge, u: number): number | null {
   const p = edges.find(
     (q) =>
       q.horizontal !== e.horizontal &&
       Math.abs(q.line - u) < 1e-4 &&
-      e.line > q.min - 1e-4 &&
-      e.line < q.max + 1e-4,
+      q.spans.some(([s0, s1]) => e.line > s0 - 1e-4 && e.line < s1 + 1e-4),
   )
   if (!p) return null
   return e.horizontal ? p.nx : p.nz
@@ -424,18 +425,38 @@ export function perpNormal(edges: ParapetEdge[], e: ParapetEdge, u: number): num
 // дальнього краю поперечної смуги), а вертикальна відступає до ближнього.
 // Так стик виходить рівно встик: ані щілини, ані двох коробок в одному місці
 // (саме вони й давали ту сходинку на розі).
+// Ріг у числах: `c` — вісь ПОПЕРЕЧНОЇ смуги в координатах нашої грані, `np` —
+// куди дивиться її зовнішній бік, `dir` — у який бік від грані лежить ріг.
+export interface ParapetCorner {
+  c: number
+  np: number
+  dir: -1 | 1
+}
+export function parapetCorner(
+  edges: ParapetEdge[],
+  e: ParapetEdge,
+  u: number,
+  t: number,
+): ParapetCorner | null {
+  const np = perpNormal(edges, e, u)
+  if (np === null) return null
+  return { c: u + np * (WALL_T / 2 - t / 2), np, dir: Math.abs(u - e.min) < 1e-4 ? -1 : 1 }
+}
+
+// `wallGap` — на скільки ще відступити, якщо на розі стоїть не поперечний
+// парапет, а СТІНА поверху вище: на ній є оздоблення, і деталь, доведена до
+// голої грані, входить просто в нього.
 export function cornerStop(
   edges: ParapetEdge[],
   e: ParapetEdge,
   u: number,
   t: number,
   half: number,
+  wallGap = 0,
 ): number {
-  const np = perpNormal(edges, e, u)
-  if (np === null) return u
-  const c = u + np * (WALL_T / 2 - t / 2)
-  const dir = Math.abs(u - e.min) < 1e-4 ? -1 : 1
-  return c + dir * (e.horizontal ? half : -half)
+  const k = parapetCorner(edges, e, u, t)
+  if (!k) return u - (Math.abs(u - e.min) < 1e-4 ? -1 : 1) * (WALL_T / 2 + wallGap)
+  return k.c + k.dir * (e.horizontal ? half : -half)
 }
 
 // ---- Габарит скату: звіси по кожній стороні окремо ----

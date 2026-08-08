@@ -1346,10 +1346,12 @@ export default function HouseShell() {
     // Товщину матеріалу знає лише сцена, тож геометрія лишає закладку
     // (`cornerA/cornerB` — вісь перпендикулярної стіни), а справжній розмір
     // підставляємо тут.
+    // Сусідню грань шукаємо по ВСІХ панелях цієї відмітки, не лише по своїй
+    // зоні: парапет упирається саме в стіну поверху вище, і підрізати його
+    // треба по ЇЇ матеріалу.
     const perpAt = (p: Panel, at: number) =>
       raw.find(
         (q) =>
-          q.tag === p.tag &&
           q.face.horizontal !== p.face.horizontal &&
           Math.abs(q.baseY - p.baseY) < 0.01 &&
           Math.abs(q.face.line - at) < 0.01 &&

@@ -65,6 +65,12 @@ export function parapetPanels(part: RoofPart, above: PlanRect[], roofY: number, 
       const fa = freeA ? a - grow : a + CORNER + 0.01
       const fb = freeB ? b + grow : b - CORNER - 0.01
       if (fb - fa < 0.1) continue
+      // Вісь стіни поверху ВИЩЕ на «упертому» кінці. `parapetEdges` спиняє
+      // смугу на її голій грані (вісь ∓ пів стіни), а оздоблення тієї стіни
+      // виходить ще далі — і парапет заходив у нього на 5 см: планки лізли
+      // просто в сусідній матеріал. Далі сцена підставить справжню товщину.
+      const upperAxis = (u: number, end: number) =>
+        Math.abs(u - end) < 1e-4 ? u : u + (end === e.min ? -WALL_T / 2 : WALL_T / 2)
       out.push({
         face: {
           id: `${floor}|parapet|${part.id}|${horizontal ? 'h' : 'v'}|${e.line.toFixed(2)}|${fa.toFixed(2)}`,
@@ -76,9 +82,11 @@ export function parapetPanels(part: RoofPart, above: PlanRect[], roofY: number, 
           a: fa,
           b: fb,
           // Ріг парапету — такий самий ріг: сцена доведе оздоблення до
-          // площини матеріалу сусідньої стінки (див. WallFace.cornerA).
-          cornerA: horizontal && freeA ? a : undefined,
-          cornerB: horizontal && freeB ? b : undefined,
+          // площини матеріалу сусідньої стінки (див. WallFace.cornerA). На
+          // ВІЛЬНОМУ розі рогом володіє лише горизонтальна грань; кінець, що
+          // впирається в поверх вище, підрізають обидві.
+          cornerA: freeA ? (horizontal ? a : undefined) : upperAxis(a, e.min),
+          cornerB: freeB ? (horizontal ? b : undefined) : upperAxis(b, e.max),
         },
         baseY: roofY,
         height: part.parapetH,

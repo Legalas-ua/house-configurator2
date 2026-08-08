@@ -1,6 +1,7 @@
 import type { HousePlan, PlanRect, RoofMatKind, RoofMatSpec } from '../config/types'
-import { cornerStop, parapetEdges, partRects, slopeBox, zoneRise, ROOF_LIFT, type RoofPart } from './roof'
+import { cornerStop, parapetCorner, parapetEdges, partRects, slopeBox, zoneRise, ROOF_LIFT, type RoofPart } from './roof'
 import { WALL_T } from './windows'
+import { CLAD_MAX_OUT } from './cladding'
 
 // ============================================================
 // Покрівля як ГЕОМЕТРІЯ. Кожен матеріал — своя розкладка об'ємних елементів на
@@ -51,6 +52,7 @@ const LAYOUT: Record<RoofMatKind, Layout> = {
 export const FASCIA_W = 0.04 // ширина планки вздовж грані
 export const CAP_OUT = 0.035 // звис кожуха за грань парапету
 export const CAP_H = 0.05 // висота кожуха
+const DRIP_T = 0.02 // товщина крапельниці по краю кожуха
 
 // Товщини покрівельних плит з HouseShell — покриття лягає ПОВЕРХ них.
 const ROOF_T = 0.22
@@ -553,28 +555,55 @@ function capBoxes(part: RoofPart, above: PlanRect[], roofY: number, out: SkinBox
     // Повний габарит кожуха поперек: полиця плюс крапельниці по краях.
     const half = w / 2 + 0.01
     for (const [ra, rb] of e.spans) {
-      // РІГ. Раніше обидва кожухи доходили до зовнішнього краю сусіда й
-      // накривали той самий квадрат — дві полиці в одній площині (мерехтіння),
-      // а крапельниця сусіда все одно лишалась на 10 мм назовні: звідси і
-      // «не з'єднується», і «випирає». Тепер квадрат перетину бере на себе
-      // горизонтальний кожух, а вертикальний рівно до нього відступає.
-      const stop = (u: number) =>
-        Math.abs(u - e.min) < 1e-4 || Math.abs(u - e.max) < 1e-4 ? cornerStop(edges, e, u, t, half) : u
-      const a = stop(ra)
-      const b = stop(rb)
-      const len = b - a
-      if (len < 0.05) continue
-      const mid = (a + b) / 2
-      const box = (c: number, yy: number, thick: number, hh: number) =>
+      // РІГ. Кожна деталь стикується по-своєму, і всі три — на одному правилі:
+      // полиця й ЗОВНІШНЯ крапельниця горизонтального кожуха перекривають
+      // квадрат перетину, вертикальний до них відступає; ВНУТРІШНЯ крапельниця
+      // навпаки — там ріг увігнутий, тож перекриває вертикальна. Робити всі три
+      // за міркою полиці не можна: зовнішня крапельниця сусіда лишалась на
+      // 10 мм назовні («не з'єднується»), а внутрішня йшла квадратом наскрізь і
+      // впивалась у парапет.
+      //
+      // Кінець, що впирається в стіну поверху ВИЩЕ (`cornerStop` бачить, що
+      // поперечного парапету там немає): `parapetEdges` спиняє смугу на голій
+      // грані тієї стіни, але на ній ще стоїть оздоблення — і кожух заходив
+      // просто в нього. Відступаємо по найтовщому матеріалу.
+      const shelfEnds: [number, number] = [
+        Math.abs(ra - e.min) < 1e-4 ? cornerStop(edges, e, ra, t, half, CLAD_MAX_OUT) : ra + CLAD_MAX_OUT,
+        Math.abs(rb - e.max) < 1e-4 ? cornerStop(edges, e, rb, t, half, CLAD_MAX_OUT) : rb - CLAD_MAX_OUT,
+      ]
+      // Крапельниця йде по ПЕРИМЕТРУ, тож на розі вона тягнеться до
+      // однойменної крапельниці сусіда — а та лежить із боку його зовнішньої
+      // нормалі (`np`), і це НЕ завжди той бік, з якого прийшла грань. Саме
+      // тому міряти її кінець полицею не можна.
+      const dripEnd = (u: number, end: number, d: -1 | 1, outer: boolean) => {
+        if (Math.abs(u - end) > 1e-4) return u + d * CLAD_MAX_OUT
+        const k = parapetCorner(edges, e, u, t)
+        if (!k) return u - (d === 1 ? -1 : 1) * (WALL_T / 2 + CLAD_MAX_OUT)
+        // Горизонтальна доходить до ДАЛЬНЬОЇ грані сусідньої крапельниці,
+        // вертикальна — до ближньої: стик рівно встик, без напуску.
+        return k.c + (outer ? 1 : -1) * k.np * (e.horizontal ? half : half - DRIP_T)
+      }
+      const box = (c: number, yy: number, thick: number, hh: number, [a, b]: [number, number]) => {
+        const len = b - a
+        if (len < 0.05) return
+        const mid = (a + b) / 2
         out.push(
           e.horizontal
             ? { x: mid, y: yy, z: c, dx: len, dy: hh, dz: thick, rotY: 0, tilt: 0 }
             : { x: c, y: yy, z: mid, dx: thick, dy: hh, dz: len, rotY: 0, tilt: 0 },
         )
+      }
       // Полиця зверху…
-      box(line, y + 0.012, w, 0.024)
+      box(line, y + 0.012, w, 0.024, shelfEnds)
       // …і дві крапельниці по краях.
-      for (const s of [-1, 1] as const) box(line + (s * w) / 2, y - CAP_H / 2 + 0.012, 0.02, CAP_H)
+      const outward = e.horizontal ? e.nz : e.nx
+      for (const s of [-1, 1] as const) {
+        const outer = s === outward
+        box(line + (s * w) / 2, y - CAP_H / 2 + 0.012, DRIP_T, CAP_H, [
+          dripEnd(ra, e.min, 1, outer),
+          dripEnd(rb, e.max, -1, outer),
+        ])
+      }
     }
   }
 }
