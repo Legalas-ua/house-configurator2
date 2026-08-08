@@ -135,6 +135,23 @@ export default function RoofView() {
     return () => window.removeEventListener('pointerup', up)
   }, [drag, setDragging])
 
+  // Рух під час перетягування слухаємо на ВІКНІ й рахуємо самі: ручка або
+  // сусідня зона стоять вище за будь-який меш-«ловець» і перехоплювали промінь
+  // — зона завмирала під курсором, а тоді стрибала. Саме це й було «дьоргання».
+  //
+  // Хук стоїть ДО раннього `return null` — інакше на кроках, де вид неактивний,
+  // хуків менше, і React падає, щойно вид умикається (білий екран).
+  const { gl, camera } = useThree()
+  useEffect(() => {
+    if (!drag) return
+    const onMove = (e: PointerEvent) => {
+      const p = planePoint(e, gl.domElement, camera, DRAG_Y)
+      if (p) setCustomRoof(updateRoofPart(parts, drag.id, dragRect(drag, p.x, p.z)))
+    }
+    window.addEventListener('pointermove', onMove)
+    return () => window.removeEventListener('pointermove', onMove)
+  })
+
   useEffect(() => {
     if (!active) return
     const key = (e: KeyboardEvent) => {
@@ -167,25 +184,6 @@ export default function RoofView() {
     setDragging(true)
     setDrag({ id: part.id, mode, px: e.point.x, pz: e.point.z, rect: { x: part.x, z: part.z, width: part.width, depth: part.depth } })
   }
-
-  const move = (x: number, z: number) => {
-    if (!drag) return
-    setCustomRoof(updateRoofPart(parts, drag.id, dragRect(drag, x, z)))
-  }
-
-  // Рух під час перетягування слухаємо на ВІКНІ й рахуємо самі: ручка або
-  // сусідня зона стоять вище за будь-який меш-«ловець» і перехоплювали промінь
-  // — зона завмирала під курсором, а тоді стрибала. Саме це й було «дьоргання».
-  const { gl, camera } = useThree()
-  useEffect(() => {
-    if (!drag) return
-    const onMove = (e: PointerEvent) => {
-      const p = planePoint(e, gl.domElement, camera, DRAG_Y)
-      if (p) move(p.x, p.z)
-    }
-    window.addEventListener('pointermove', onMove)
-    return () => window.removeEventListener('pointermove', onMove)
-  })
 
   const handles: { mode: DragMode; x: number; z: number }[] = sel && drawing
     ? [
