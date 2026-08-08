@@ -73,9 +73,11 @@ export const uk = {
         overlap: (a: string, b: string) => `${a} і ${b} накладаються одна на одну`,
         gap: (a: string, b: string, gap: number) =>
           `Між «${a}» і «${b}» щілина ${gap.toFixed(1).replace('.0', '')} м — так не будують: або зсуньте впритул, або розведіть далі`,
-        stairsArea: (area: number) =>
-          `Сходи замалі: ${area.toFixed(1).replace('.0', '')} м² замість щонайменше 8 м²`,
+        stairsArea: (area: number, need: number) =>
+          `Сходи замалі: ${area.toFixed(1).replace('.0', '')} м² замість щонайменше ${need} м²`,
         unsupported: (room: string) => `${room} звисає за межі 1-го поверху — під нею немає опори`,
+        tooSmall: (room: string, area: number, area0: number, side0: number) =>
+          `${room} замала: ${area.toFixed(1).replace('.0', '')} м². Потрібно від ${area0} м² і сторона від ${String(side0).replace('.', ',')} м`,
       },
       kitchen: {
         title: 'Кухня',

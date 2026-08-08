@@ -1,4 +1,5 @@
-import type { HousePlan, PlanRect, RoomZone } from '../config/types'
+import type { HousePlan, PlanRect, RoomType, RoomZone } from '../config/types'
+import { roomLimit } from '../config/rooms'
 
 // ============================================================
 // Перевірки ручного планування. Чисті функції: план → список проблем.
@@ -6,7 +7,7 @@ import type { HousePlan, PlanRect, RoomZone } from '../config/types'
 // в ній винні — щоб і на плані, і в панелі показувати одне й те саме.
 // ============================================================
 
-export type IssueKind = 'overlap' | 'gap' | 'stairsArea' | 'unsupported'
+export type IssueKind = 'overlap' | 'gap' | 'stairsArea' | 'unsupported' | 'tooSmall'
 
 export interface PlanIssue {
   kind: IssueKind
@@ -18,7 +19,11 @@ export interface PlanIssue {
 
 // Розрив, менший за це, — майже напевно недогляд, а не задум.
 export const MIN_GAP = 0.5
-export const MIN_STAIRS_AREA = 8
+// Прямий марш 2 × 3 м — це нормальні сходи, і саме такі стоять у КАТАЛОЗІ.
+// Поки тут було 8 м², помилка вилазила одразу при переході «готове -> своє»
+// на кожному двоповерховому плануванні: людина ще нічого не змінила, а її вже
+// не пускають далі.
+export const MIN_STAIRS_AREA = 6
 
 const EPS = 1e-4
 
@@ -101,6 +106,41 @@ export function validatePlan(plan: HousePlan): PlanIssue[] {
         issues.push({ kind: 'stairsArea', floor, rooms: [id(r, i)], rect: { ...r }, value: area })
       }
     })
+
+    // --- Замалі приміщення ---
+    // Рахуємо ПРИМІЩЕННЯМИ, а не прямокутниками: частини з однаковим `group` —
+    // це одна кімната, і в неї сумарна площа. Найменшу СТОРОНУ перевіряємо лише
+    // в цільних кімнат: у складеної вузька частина буває законною (смуга
+    // гардероба вздовж спальні), і чіплятись до неї — марно нервувати людину.
+    const groups = new Map<string, { type: RoomType; ids: string[]; parts: RoomZone[] }>()
+    fl.rooms.forEach((r, i) => {
+      if (r.type === 'stairs') return // у сходів своя перевірка, вище
+      const key = r.group ?? id(r, i)
+      const g = groups.get(key) ?? { type: r.type, ids: [], parts: [] }
+      g.ids.push(id(r, i))
+      g.parts.push(r)
+      groups.set(key, g)
+    })
+    for (const g of groups.values()) {
+      const lim = roomLimit(g.type)
+      const area = g.parts.reduce((s, r) => s + r.width * r.depth, 0)
+      const side = Math.min(...g.parts.map((r) => Math.min(r.width, r.depth)))
+      const small = area < lim.area - EPS || (g.parts.length === 1 && side < lim.side - EPS)
+      if (!small) continue
+      const bx = g.parts.map(box)
+      issues.push({
+        kind: 'tooSmall',
+        floor,
+        rooms: g.ids,
+        rect: rectOf({
+          x0: Math.min(...bx.map((b) => b.x0)),
+          x1: Math.max(...bx.map((b) => b.x1)),
+          z0: Math.min(...bx.map((b) => b.z0)),
+          z1: Math.max(...bx.map((b) => b.z1)),
+        }),
+        value: area,
+      })
+    }
 
     // --- Пари кімнат: накладання і замалі розриви ---
     for (let i = 0; i < fl.rooms.length; i++) {

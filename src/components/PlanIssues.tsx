@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react'
 import { useConfigurator, useHousePlan, useRoof, useWindows } from '../state/store'
 import { STEPS } from '../config/steps'
-import { validatePlan } from '../lib/validatePlan'
+import { validatePlan, MIN_STAIRS_AREA } from '../lib/validatePlan'
+import { roomLimit } from '../config/rooms'
 import { validateWindows } from '../lib/windows'
 import { validateRoof } from '../lib/roof'
 import { t } from '../locales'
@@ -27,6 +28,9 @@ export default function PlanIssues() {
       const room = plan.floors[floor]?.rooms.find((r) => r.id === id)
       return room ? t.plan.roomNames[room.type] : id
     }
+    // Поріг залежить від ТИПУ приміщення, тож беремо його з самої кімнати.
+    const limit = (floor: number, id: string) =>
+      roomLimit(plan.floors[floor]?.rooms.find((r) => r.id === id)?.type ?? 'bedroom')
     return (
       <Card title={texts.title} blocked={texts.blocked}>
         {issues.map((it, i) => (
@@ -37,7 +41,14 @@ export default function PlanIssues() {
                 ? texts.gap(name(it.floor, it.rooms[0]), name(it.floor, it.rooms[1]), it.value ?? 0)
                 : it.kind === 'unsupported'
                   ? texts.unsupported(name(it.floor, it.rooms[0]))
-                  : texts.stairsArea(it.value ?? 0)}
+                  : it.kind === 'tooSmall'
+                    ? texts.tooSmall(
+                        name(it.floor, it.rooms[0]),
+                        it.value ?? 0,
+                        limit(it.floor, it.rooms[0]).area,
+                        limit(it.floor, it.rooms[0]).side,
+                      )
+                    : texts.stairsArea(it.value ?? 0, MIN_STAIRS_AREA)}
           </li>
         ))}
       </Card>
