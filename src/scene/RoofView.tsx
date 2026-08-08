@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Html } from '@react-three/drei'
-import type { ThreeEvent } from '@react-three/fiber'
+import { useThree, type ThreeEvent } from '@react-three/fiber'
 import { BufferGeometry, Float32BufferAttribute } from 'three'
+import { planePoint } from './pointerPlane'
 import { useConfigurator, useHousePlan, useRoof } from '../state/store'
 import { STEPS } from '../config/steps'
 import { MIN_SIDE, snap } from '../lib/editPlan'
@@ -26,6 +27,7 @@ import { t } from '../locales'
 
 const FLOOR_H = 3.2 // крок поверху — як у HouseShell
 const HANDLE = 0.45
+const DRAG_Y = 0.15 // площина, на якій ловимо курсор під час перетягування
 const HANDLE_COLOR = '#d9622b'
 const OUTLINE_COLOR = '#2f6fb8'
 
@@ -171,6 +173,20 @@ export default function RoofView() {
     setCustomRoof(updateRoofPart(parts, drag.id, dragRect(drag, x, z)))
   }
 
+  // Рух під час перетягування слухаємо на ВІКНІ й рахуємо самі: ручка або
+  // сусідня зона стоять вище за будь-який меш-«ловець» і перехоплювали промінь
+  // — зона завмирала під курсором, а тоді стрибала. Саме це й було «дьоргання».
+  const { gl, camera } = useThree()
+  useEffect(() => {
+    if (!drag) return
+    const onMove = (e: PointerEvent) => {
+      const p = planePoint(e, gl.domElement, camera, DRAG_Y)
+      if (p) move(p.x, p.z)
+    }
+    window.addEventListener('pointermove', onMove)
+    return () => window.removeEventListener('pointermove', onMove)
+  })
+
   const handles: { mode: DragMode; x: number; z: number }[] = sel && drawing
     ? [
         { mode: 'xmin', x: sel.x - sel.width / 2, z: sel.z },
@@ -292,19 +308,6 @@ export default function RoofView() {
         </mesh>
       ))}
 
-      {drag && (
-        <mesh
-          rotation={[-Math.PI / 2, 0, 0]}
-          position={[0, 0.15, 0]}
-          onPointerMove={(e) => {
-            e.stopPropagation()
-            move(e.point.x, e.point.z)
-          }}
-        >
-          <planeGeometry args={[200, 200]} />
-          <meshBasicMaterial transparent opacity={0} depthWrite={false} />
-        </mesh>
-      )}
     </group>
   )
 }

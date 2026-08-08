@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useFrame, type ThreeEvent } from '@react-three/fiber'
+import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
 import { Html } from '@react-three/drei'
 import { easing } from 'maath'
 import { BufferGeometry, Float32BufferAttribute, type Mesh, type MeshStandardMaterial } from 'three'
@@ -11,11 +11,13 @@ import type { FloorPlan, PlanRect, RoomType, RoomZone } from '../config/types'
 import { GRID, MIN_SIDE, junctionsOf, snap, toggleJoin, updateRoom, type Junction } from '../lib/editPlan'
 import { badRooms, validatePlan, type PlanIssue } from '../lib/validatePlan'
 import { t } from '../locales'
+import { planePoint } from './pointerPlane'
 
 const GAP = 0.08 // зазор між РІЗНИМИ кімнатами
 const HANDLE_COLOR = '#d9622b' // теракота — ручки мають чітко читатись на зонах
 const ISSUE_COLOR = '#e03131' // місце помилки планування
 const EPS = 0.01
+const PLAN_Y = 0.2 // висота площини, на якій ловимо курсор під час перетягування
 // ---- Правила анімації (діють для ВСІХ кімнат — теперішніх і майбутніх) ----
 // Рух і зміна розміру завжди ПЛАВНІ (нічого не «перескакує»): позицією та
 // масштабом володіє лише useFrame, а НЕ реактивні пропси three.js — інакше
@@ -296,32 +298,6 @@ function Handles({
   )
 }
 
-// Невидима площина, що ловить рух курсора під час перетягування: рахувати
-// координати по самій кімнаті не можна — вона їде з-під курсора.
-function DragPlane({
-  onMove,
-  onDrop,
-}: {
-  onMove: (x: number, z: number) => void
-  onDrop: () => void
-}) {
-  return (
-    <mesh
-      rotation={[-Math.PI / 2, 0, 0]}
-      position={[0, 0.2, 0]}
-      onPointerMove={(e) => {
-        e.stopPropagation()
-        onMove(e.point.x, e.point.z)
-      }}
-      onPointerUp={onDrop}
-      onPointerLeave={onDrop}
-    >
-      <planeGeometry args={[200, 200]} />
-      <meshBasicMaterial transparent opacity={0} depthWrite={false} />
-    </mesh>
-  )
-}
-
 // ---- Плита фундаменту: плавно росте/змінює розмір ----
 // delay > 0 (при видаленні) — плита витримує паузу, поки кімнати зникнуть/
 // зменшаться, і лише потім стискається. При додаванні delay=0 → росте одразу.
@@ -583,6 +559,19 @@ function PlanFloor({
     setCustomPlan(updateRoom(plan, floorIdx, drag.id, dragRect(drag, x, z)))
   }
 
+  // Рух під час перетягування слухаємо на ВІКНІ й рахуємо самі: миша може
+  // вийти за полотно чи наїхати на сусідню зону, а тягнути має однаково.
+  const { gl, camera } = useThree()
+  useEffect(() => {
+    if (!drag) return
+    const move = (e: PointerEvent) => {
+      const p = planePoint(e, gl.domElement, camera, yOffset + PLAN_Y)
+      if (p) moveDrag(p.x, p.z)
+    }
+    window.addEventListener('pointermove', move)
+    return () => window.removeEventListener('pointermove', move)
+  })
+
   // Коли поверх стає неактивним — скидаємо підсвітку (щоб не «застрягала»)
   useEffect(() => {
     if (!active) setHoverKey(null)
@@ -736,7 +725,6 @@ function PlanFloor({
 
       {/* Місця помилок планування */}
       {editable && active && floorIssues.map((it, i) => <IssueMark key={`issue-${i}`} rect={it.rect} />)}
-      {drag && <DragPlane onMove={moveDrag} onDrop={endDrag} />}
     </group>
   )
 }
