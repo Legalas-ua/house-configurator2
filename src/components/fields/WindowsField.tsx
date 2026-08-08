@@ -17,6 +17,7 @@ import {
   type Side,
 } from '../../lib/windows'
 import { t } from '../../locales'
+import NumberValue from '../NumberValue'
 import OptionCards from './OptionCards'
 
 // Крок «Вікна». Готовий варіант — ті самі картки типу (звичайні/панорамні).
@@ -291,7 +292,14 @@ function Stepper({
         <button type="button" className="counter__btn" onClick={() => move(-1)} aria-label={`${label}: менше`}>
           −
         </button>
-        <span className="counter__value">{shown}</span>
+        {/* Ширину вікна інакше й не задати: повзунки прибрано. */}
+        <NumberValue
+          label={label}
+          value={value}
+          text={shown}
+          raw={auto && value < 0 ? '' : undefined}
+          onChange={onChange}
+        />
         <button type="button" className="counter__btn" onClick={() => move(1)} aria-label={`${label}: більше`}>
           +
         </button>

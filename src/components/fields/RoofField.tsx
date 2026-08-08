@@ -14,6 +14,7 @@ import {
 } from '../../lib/roof'
 import { resolveWindows, updateWindow, removeWindow, WIN_TOP, MIN_WIN_W } from '../../lib/windows'
 import { t } from '../../locales'
+import NumberValue from '../NumberValue'
 import OptionCards from './OptionCards'
 
 const KINDS: RoofKind[] = ['flat', 'gable', 'mono', 'hip']
@@ -142,9 +143,12 @@ function RoofEditorPanel() {
                     >
                       −
                     </button>
-                    <span className="counter__value">
-                      {part.overhang <= 0 ? texts.noOverhang : `${part.overhang.toFixed(1)} м`}
-                    </span>
+                    <NumberValue
+                      label={texts.overhang}
+                      value={part.overhang}
+                      text={part.overhang <= 0 ? texts.noOverhang : `${part.overhang.toFixed(1)} м`}
+                      onChange={(v) => patch({ overhang: v <= 0 ? 0 : Math.min(Math.max(v, OVERHANG.min), OVERHANG.max) })}
+                    />
                     <button
                       type="button"
                       className="counter__btn"
@@ -213,7 +217,12 @@ function Range({
         >
           −
         </button>
-        <span className="counter__value">{shown}</span>
+        <NumberValue
+          label={label}
+          value={value}
+          text={shown}
+          onChange={(v) => onChange(Math.min(Math.max(v, range.min), range.max))}
+        />
         <button
           type="button"
           className="counter__btn"

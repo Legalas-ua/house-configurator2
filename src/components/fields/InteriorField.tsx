@@ -10,6 +10,7 @@ import {
 } from '../../config/interior'
 import { addDoor, doorRange, innerWalls, removeDoor, updateDoor, MAX_IDOOR_W, MIN_IDOOR_W } from '../../lib/innerWalls'
 import { t } from '../../locales'
+import NumberValue from '../NumberValue'
 
 // Крок «Інтер'єр». Поки що це підлога: на весь поверх або окремо в кімнаті.
 // Кімнати вибираємо списком, а не кліком у 3D: зсередини будинку в них не
@@ -282,7 +283,13 @@ function Size({
         >
           −
         </button>
-        <span className="counter__value">{t.steps.interior.mm(value)}</span>
+        <NumberValue
+          label={label}
+          value={value}
+          text={t.steps.interior.mm(value)}
+          scale={0.001}
+          onChange={(v) => onChange(Math.min(Math.max(v, range.min), range.max))}
+        />
         <button
           type="button"
           className="counter__btn"

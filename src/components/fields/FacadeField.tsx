@@ -10,6 +10,7 @@ import {
 } from '../../config/facade'
 import { wallFaces } from '../../lib/wallFaces'
 import { t } from '../../locales'
+import NumberValue from '../NumberValue'
 
 // Крок «Оздоблення фасаду».
 //
@@ -259,7 +260,13 @@ export function Size({
         >
           −
         </button>
-        <span className="counter__value">{t.steps.facade.mm(value)}</span>
+        <NumberValue
+          label={label}
+          value={value}
+          text={t.steps.facade.mm(value)}
+          scale={0.001}
+          onChange={(v) => onChange(Math.min(Math.max(v, range.min), range.max))}
+        />
         <button
           type="button"
           className="counter__btn"

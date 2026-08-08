@@ -10,6 +10,7 @@ import {
 } from '../../config/terraceMaterial'
 import { hasUpperTerrace } from '../../lib/terraceSkin'
 import { t } from '../../locales'
+import NumberValue from '../NumberValue'
 
 // Крок «Покриття тераси». Рівнів два: тераса на землі (зони попереднього
 // кроку) і тераса 2-го поверху (кімната типу «тераса»). Якщо якогось із них
@@ -155,7 +156,13 @@ function Size({
         >
           −
         </button>
-        <span className="counter__value">{t.steps.terraceMat.mm(value)}</span>
+        <NumberValue
+          label={label}
+          value={value}
+          text={t.steps.terraceMat.mm(value)}
+          scale={0.001}
+          onChange={(v) => onChange(Math.min(Math.max(v, range.min), range.max))}
+        />
         <button
           type="button"
           className="counter__btn"

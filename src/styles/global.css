@@ -561,11 +561,30 @@ body {
   cursor: default;
 }
 
+/* Значення лічильника — це ПОЛЕ ВВОДУ (клацнув і набрав), але поки в нього не
+   зайшли, воно має читатись просто як підпис: без рамки й тла. */
 .counter__value {
+  width: 82px;
   min-width: 22px;
+  padding: 4px 2px;
+  border: 1.5px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
   text-align: center;
   font-size: 16px;
   font-weight: 700;
+}
+
+.counter__value:hover {
+  border-color: var(--border);
+}
+
+.counter__value:focus {
+  border-color: var(--accent);
+  background: var(--surface);
+  outline: none;
 }
 
 .rooms__group-title {
@@ -983,6 +1002,9 @@ body {
   .counter__label,
   .counter__value {
     font-size: 12px;
+  }
+  .counter__value {
+    width: 64px;
   }
   .counter__btn {
     width: 28px;

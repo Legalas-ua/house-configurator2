@@ -5,6 +5,7 @@ import { availableBedrooms, supportedExtras } from '../../config/layouts'
 import { floor2Limits } from '../../lib/lshape'
 import { addRoom, removeRoom } from '../../lib/editPlan'
 import { t } from '../../locales'
+import NumberValue from '../NumberValue'
 import FloorTabs from './FloorTabs'
 
 // Типи кімнат, які можна додати вручну. Сходи теж: у великому будинку може
@@ -226,7 +227,12 @@ function Counter({
         >
           −
         </button>
-        <span className="counter__value">{value}</span>
+        <NumberValue
+          label={label}
+          value={value}
+          text={String(value)}
+          onChange={(v) => onChange(Math.max(limits.min, Math.min(limits.max, Math.round(v))))}
+        />
         <button
           type="button"
           className="counter__btn"
