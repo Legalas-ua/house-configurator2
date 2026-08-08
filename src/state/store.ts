@@ -9,13 +9,14 @@ import type {
   PlanMode,
   PlanRect,
   RoofMatSpec,
+  RoomZone,
   TerraceMatSpec,
   InteriorSpec,
 } from '../config/types'
 import { DEFAULT_TERRACE_MAT } from '../config/terraceMaterial'
 import { DEFAULT_INTERIOR } from '../config/interior'
 import type { InnerDoor } from '../lib/innerWalls'
-import { normalizeTerrace, type TerraceZone } from '../lib/terrace'
+import { normalizeTerrace, validateTerrace, type TerraceZone } from '../lib/terrace'
 import { DEFAULT_FACADE } from '../config/facade'
 import { DEFAULT_FLAT_MAT, DEFAULT_ROOF_MAT } from '../config/roofMaterial'
 import { DEFAULT_CONFIG, STEPS } from '../config/steps'
@@ -105,6 +106,25 @@ const planReset = (index: number) => ({
   ...(index < WINDOWS_STEP ? { windowsMode: 'template' as const, customWindows: null } : {}),
 })
 
+// ---- Скасування правок ----
+// Знімаємо рівно ті зрізи, які редагують мишею й клавішами. Конфігурація
+// (кроки-картки) сюди не входить: там вибір і так видно, а каскадне скидання
+// відкотити знімком не можна.
+export const UNDO_DEPTH = 3
+
+interface EditSnapshot {
+  customPlan: HousePlan | null
+  customWindows: WindowSpec[] | null
+  customRoof: RoofPart[] | null
+  terraceZones: TerraceZone[]
+  innerDoors: InnerDoor[]
+}
+
+export type Clip =
+  | { kind: 'room'; floor: number; zone: RoomZone }
+  | { kind: 'roof'; part: RoofPart }
+  | { kind: 'terrace'; zone: TerraceZone }
+
 interface ConfiguratorState {
   started: boolean // false = стартовий екран
   config: HouseConfig
@@ -138,15 +158,13 @@ interface ConfiguratorState {
   facadeMode: PlanMode
   wallFacades: Record<string, FacadeSpec>
   selectedFacadeWall: string | null
-  // Оздоблення НЕ з'являється саме собою: доки користувач не клікнув матеріал,
-  // будинок стоїть у базовому вигляді. І показуємо його лише на своєму кроці
-  // та далі — повернувшись назад, людина бачить будинок таким, яким він був на
-  // тому кроці, але сам вибір зберігається й повертається разом із кроком.
-  facadeTouched: boolean
   // Покрівля: типовий матеріал (скатний і плоский окремо) + винятки на зони.
   roofMat: RoofMatSpec
   roofFlat: RoofMatSpec
   roofMats: Record<string, RoofMatSpec>
+  // Матеріали показуємо з їхнього кроку й далі (див. HouseShell). Цей прапорець
+  // — єдиний виняток: обрану покрівлю лишаємо видимою і якщо відкотитись на
+  // «Фасад», крок перед нею.
   roofMatTouched: boolean
   // Тераса 1-го поверху: зони на землі (крок «Тераса»).
   terraceZones: TerraceZone[]
@@ -154,18 +172,22 @@ interface ConfiguratorState {
   // Покриття тераси по поверхах: 0 — зони на землі, 1 — кімната-тераса.
   terraceMats: TerraceMatSpec[]
   terraceFloor: number
-  terraceMatTouched: boolean
   // Інтер'єр: підлога на поверх + винятки на кімнати (ключ `поверх|id`).
   interiorFloors: InteriorSpec[]
   roomFloorMats: Record<string, InteriorSpec>
   interiorFloor: number
   selectedInteriorRoom: string | null
-  interiorTouched: boolean
   // Внутрішні двері й арки, розставлені вручну на кроці «Інтер'єр».
   innerDoors: InnerDoor[]
   selectedInnerWall: string | null
   selectedInnerDoor: string | null
   selectedRoom: string | null // id кімнати, яку зараз редагують (ручний режим)
+  // Скасування правок (Ctrl+Z). Глибина навмисно мала: знімок — це весь набір
+  // зон, планів і вікон, тримати їх десятками означає роздути пам'ять.
+  history: EditSnapshot[]
+  // Скопійована зона (Ctrl+C). Одна на всі кроки: вставляється лише туди, звідки
+  // взята, — тип зберігаємо разом із даними.
+  clipboard: Clip | null
   dragging: boolean // тягнуть зону на плані → камеру треба знерухомити
   showGrid: boolean // сітка прив'язки під планом (лише в ручному режимі)
   currentStep: number // індекс у STEPS
@@ -211,6 +233,8 @@ interface ConfiguratorState {
   setSelectedInnerDoor: (id: string | null) => void
   setSelectedRoom: (id: string | null) => void
   setDragging: (on: boolean) => void
+  undo: () => void
+  setClipboard: (c: Clip | null) => void
   setShowGrid: (on: boolean) => void
   setTopView: (on: boolean) => void
   setViewFloor: (floor: number) => void
@@ -221,6 +245,20 @@ interface ConfiguratorState {
   prevStep: () => void
   goToStep: (index: number) => void
 }
+
+const snapshot = (s: ConfiguratorState): EditSnapshot => ({
+  customPlan: s.customPlan,
+  customWindows: s.customWindows,
+  customRoof: s.customRoof,
+  terraceZones: s.terraceZones,
+  innerDoors: s.innerDoors,
+})
+
+// Запам'ятати стан ПЕРЕД правкою. Під час перетягування знімок робиться один
+// раз — на початку (`setDragging`): інакше кожен кадр миші з'їдав би всю
+// історію, і Ctrl+Z відкочував би на пів сантиметра.
+const remember = (s: ConfiguratorState) =>
+  s.dragging ? {} : { history: [...s.history, snapshot(s)].slice(-UNDO_DEPTH) }
 
 export const useConfigurator = create<ConfiguratorState>((set) => ({
   started: false,
@@ -243,7 +281,6 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
   facadeMode: 'template',
   wallFacades: {},
   selectedFacadeWall: null,
-  facadeTouched: false,
   roofMat: { ...DEFAULT_ROOF_MAT },
   roofFlat: { ...DEFAULT_FLAT_MAT },
   roofMats: {},
@@ -252,16 +289,16 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
   selectedTerrace: null,
   terraceMats: [{ ...DEFAULT_TERRACE_MAT }, { ...DEFAULT_TERRACE_MAT }],
   terraceFloor: 0,
-  terraceMatTouched: false,
   interiorFloors: [{ ...DEFAULT_INTERIOR }, { ...DEFAULT_INTERIOR }],
   roomFloorMats: {},
   interiorFloor: 0,
   selectedInteriorRoom: null,
-  interiorTouched: false,
   innerDoors: [],
   selectedInnerWall: null,
   selectedInnerDoor: null,
   selectedRoom: null,
+  history: [],
+  clipboard: null,
   dragging: false,
   showGrid: true,
   currentStep: 0,
@@ -326,6 +363,7 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
 
   setCustomPlan: (plan) =>
     set((s) => ({
+      ...remember(s),
       planMode: 'custom',
       customPlan: plan,
       maxStepReached: Math.min(s.maxStepReached, s.currentStep),
@@ -345,7 +383,7 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
       }
     }),
 
-  setCustomWindows: (specs) => set({ windowsMode: 'custom', customWindows: specs }),
+  setCustomWindows: (specs) => set((s) => ({ ...remember(s), windowsMode: 'custom', customWindows: specs })),
 
   setSelectedWindow: (id) => set({ selectedWindow: id }),
 
@@ -371,7 +409,7 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
   // картка задає базовий набір зон, а правки лягають поверх нього в
   // `customRoof`. Якби це перемикало режим на 'custom', перша ж правка ховала
   // б картки — і повернутись до базового варіанту стало б нічим.
-  setCustomRoof: (parts) => set({ customRoof: parts }),
+  setCustomRoof: (parts) => set((s) => ({ ...remember(s), customRoof: parts })),
 
   setSelectedRoofPart: (id) => set({ selectedRoofPart: id }),
 
@@ -384,7 +422,6 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
   setFacade: (floor, patch) =>
     set((s) => ({
       facades: s.facades.map((f, i) => (i === floor ? { ...f, ...patch } : f)),
-      facadeTouched: true,
     })),
 
   setFacadeFloor: (floor) => set({ facadeFloor: floor }),
@@ -405,7 +442,6 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
   setWallFacade: (id, patch, base) =>
     set((s) => ({
       wallFacades: { ...s.wallFacades, [id]: { ...base, ...s.wallFacades[id], ...patch } },
-      facadeTouched: true,
     })),
 
   setSelectedFacadeWall: (id) => set({ selectedFacadeWall: id }),
@@ -435,12 +471,12 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
     })),
 
 
-  setTerraceZones: (zones) => set({ terraceZones: zones }),
+  setTerraceZones: (zones) => set((s) => ({ ...remember(s), terraceZones: zones })),
 
   addTerraceZone: (zone) =>
     set((s) => {
       const id = `terr-${Date.now().toString(36)}`
-      return { terraceZones: [...s.terraceZones, { id, ...normalizeTerrace(zone) }], selectedTerrace: id }
+      return { ...remember(s), terraceZones: [...s.terraceZones, { id, ...normalizeTerrace(zone) }], selectedTerrace: id }
     }),
 
   setSelectedTerrace: (id) => set({ selectedTerrace: id }),
@@ -448,7 +484,6 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
   setTerraceMat: (floor, patch) =>
     set((s) => ({
       terraceMats: s.terraceMats.map((m, i) => (i === floor ? { ...m, ...patch } : m)),
-      terraceMatTouched: true,
     })),
 
   setTerraceFloor: (floor) => set({ terraceFloor: floor }),
@@ -463,21 +498,41 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
       const key = s.selectedInteriorRoom
       if (key) {
         const base = s.roomFloorMats[key] ?? s.interiorFloors[s.interiorFloor] ?? s.interiorFloors[0]
-        return { roomFloorMats: { ...s.roomFloorMats, [key]: { ...base, ...patch } }, interiorTouched: true }
+        return { roomFloorMats: { ...s.roomFloorMats, [key]: { ...base, ...patch } } }
       }
       return {
         interiorFloors: s.interiorFloors.map((f, i) => (i === s.interiorFloor ? { ...f, ...patch } : f)),
-        interiorTouched: true,
       }
     }),
 
-  setInnerDoors: (doors) => set({ innerDoors: doors }),
+  setInnerDoors: (doors) => set((s) => ({ ...remember(s), innerDoors: doors })),
   setSelectedInnerWall: (id) => set({ selectedInnerWall: id }),
   setSelectedInnerDoor: (id) => set({ selectedInnerDoor: id }),
 
   setSelectedRoom: (id) => set({ selectedRoom: id }),
 
-  setDragging: (on) => set({ dragging: on }),
+  // Початок перетягування — саме та мить, коли треба зняти знімок для Ctrl+Z:
+  // далі до кінця тягання історія не чіпається.
+  setDragging: (on) => set((s) => (on ? { ...remember(s), dragging: true } : { dragging: false })),
+
+  undo: () =>
+    set((s) => {
+      const prev = s.history[s.history.length - 1]
+      if (!prev) return s
+      return {
+        ...prev,
+        history: s.history.slice(0, -1),
+        // Обране могло зникнути разом із правкою — знімаємо вибір, щоб панель
+        // не показувала зону, якої вже немає.
+        selectedRoom: null,
+        selectedWindow: null,
+        selectedRoofPart: null,
+        selectedTerrace: null,
+        selectedInnerDoor: null,
+      }
+    }),
+
+  setClipboard: (c) => set({ clipboard: c }),
 
   setShowGrid: (on) => set({ showGrid: on }),
 
@@ -499,6 +554,10 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
       if (s.currentStep === WINDOWS_STEP && s.customWindows) {
         const plan = s.customPlan ?? generateHousePlan(s.config)
         if (validateWindows(plan, s.customWindows).length > 0) return s
+      }
+      if (stepId === 'terrace' && s.terraceZones.length > 0) {
+        const plan = s.customPlan ?? generateHousePlan(s.config)
+        if (validateTerrace(plan, s.terraceZones).length > 0) return s
       }
       const next = Math.min(s.currentStep + 1, STEPS.length - 1)
       return { currentStep: next, maxStepReached: Math.max(s.maxStepReached, next) }

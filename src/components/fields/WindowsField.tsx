@@ -241,6 +241,7 @@ function WindowEditorPanel() {
                 <p className="rooms__hint">{texts.doorSlotHint}</p>
               </>
             )}
+            <p className="rooms__hint">{t.keys.hintNoCopy}</p>
           </>
         )}
       </div>

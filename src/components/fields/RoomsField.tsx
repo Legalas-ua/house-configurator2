@@ -198,6 +198,7 @@ function RoomEditor() {
           <p className="rooms__hint">{texts.none}</p>
         )}
         {selected && <p className="rooms__hint">{texts.joinHint}</p>}
+        <p className="rooms__hint">{t.keys.hint}</p>
       </div>
     </>
   )

@@ -64,15 +64,17 @@ export default function TerraceField() {
             </button>
           </div>
         )}
+        <p className="rooms__hint">{t.keys.hint}</p>
       </div>
 
       {issues.length > 0 && (
         <div className="rooms__group rooms__group--warn">
           <span className="rooms__group-title">{texts.issues.title}</span>
           <ul className="plan-issues__list">
-            {issues.map((it, i) => (
-              <li key={i} className="plan-issues__item">
-                {texts.issues[it.kind]}
+            {/* Одну й ту саму біду на трьох зонах пишемо один раз. */}
+            {[...new Set(issues.map((it) => texts.issues[it.kind]))].map((msg) => (
+              <li key={msg} className="plan-issues__item">
+                {msg}
               </li>
             ))}
           </ul>

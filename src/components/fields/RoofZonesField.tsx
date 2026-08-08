@@ -103,6 +103,7 @@ export default function RoofZonesField() {
                 </button>
               </div>
             )}
+            <p className="rooms__hint">{t.keys.hint}</p>
           </div>
         </>
       )}

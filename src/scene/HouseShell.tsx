@@ -17,7 +17,7 @@ import {
   type Mesh,
 } from 'three'
 import { useConfigurator, useHousePlan, useRoof, useWindows } from '../state/store'
-import { STEPS } from '../config/steps'
+import { STEPS, type StepId } from '../config/steps'
 import { ringContains, unionOutline, type Point, type Ring } from '../lib/outline'
 import {
   bounds,
@@ -1196,17 +1196,18 @@ export default function HouseShell() {
   // Дах уже виріс на своєму кроці — і лишається стояти далі: оздоблення
   // дивляться на цілому будинку, а не на коробці без даху.
   const roofOpen = stepId === 'roof' || lateStep
-  // Оздоблення НЕ з'являється раніше свого кроку і не з'являється, доки
-  // користувач не клікнув матеріал. Повернувся назад — будинок знову базовий,
-  // але сам вибір лишається у сторі й повертається разом із кроком.
-  const facadeTouched = useConfigurator((s) => s.facadeTouched)
+  // Оздоблення НЕ з'являється раніше свого кроку — але НА своєму кроці воно вже
+  // видиме, з типовим матеріалом. Раніше чекали першого кліку: у панелі перша
+  // картка вже підсвічена, а будинок стоїть базовий — виглядало як несправність.
+  // Повернувся назад — будинок знову такий, яким був на тому кроці; сам вибір
+  // лишається у сторі й повертається разом із кроком.
   const roofMatTouched = useConfigurator((s) => s.roofMatTouched)
-  const terraceMatTouched = useConfigurator((s) => s.terraceMatTouched)
-  const showClad = lateStep && facadeTouched
-  const showSkin = lateStep && roofMatTouched
-  const showTerrace = (stepId === 'terraceMat' || stepId === 'interior') && terraceMatTouched
-  const interiorTouched = useConfigurator((s) => s.interiorTouched)
-  const showInterior = stepId === 'interior' && interiorTouched
+  const reached = (id: StepId) => currentStep >= STEPS.findIndex((s) => s.id === id)
+  const showClad = lateStep
+  // Покрівлю, вже обрану вручну, лишаємо видимою і якщо відкотитись на «Фасад».
+  const showSkin = lateStep && (roofMatTouched || reached('roofMat'))
+  const showTerrace = reached('terraceMat')
+  const showInterior = stepId === 'interior'
   const selectedRoofPart = useConfigurator((s) => s.selectedRoofPart)
   const windowsMode = useConfigurator((s) => s.windowsMode)
   const selectedWindow = useConfigurator((s) => s.selectedWindow)

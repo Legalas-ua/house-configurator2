@@ -98,7 +98,7 @@ export function addTerrace(plan: HousePlan, zones: TerraceZone[]): { zones: Terr
 
 export interface TerraceIssue {
   id: string
-  kind: 'inside' | 'detached'
+  kind: 'inside' | 'detached' | 'overlap'
 }
 
 export function validateTerrace(plan: HousePlan, zones: TerraceZone[]): TerraceIssue[] {
@@ -131,6 +131,15 @@ export function validateTerrace(plan: HousePlan, zones: TerraceZone[]): TerraceI
   }
   for (const z of zones) {
     if (!linked.has(z.id) && !inside.has(z.id)) out.push({ id: z.id, kind: 'detached' })
+  }
+
+  // 3. Зони налазять одна на одну. Дотик гранями — норма (з нього й збирають
+  // Г-подібну терасу), а от спільна ПЛОЩА означає подвійний настил: у грошах
+  // це подвійна ціна, у 3D — дві дошки в одній площині.
+  for (let i = 0; i < zones.length; i++) {
+    for (let j = i + 1; j < zones.length; j++) {
+      if (overlapArea(zones[i], zones[j]) > 0.02) out.push({ id: zones[i].id, kind: 'overlap' })
+    }
   }
   return out
 }

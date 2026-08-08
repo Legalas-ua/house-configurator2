@@ -1,4 +1,5 @@
 import { useConfigurator } from './state/store'
+import useEditorKeys from './state/useEditorKeys'
 import { STEPS } from './config/steps'
 import { t } from './locales'
 import Landing from './components/Landing'
@@ -19,6 +20,8 @@ export default function App() {
   const currentStep = useConfigurator((s) => s.currentStep)
   const setTopView = useConfigurator((s) => s.setTopView)
   const panelOpen = useConfigurator((s) => s.panelOpen)
+  // Delete, стрілки, Ctrl+Z / Ctrl+C / Ctrl+V — один обробник на всі кроки.
+  useEditorKeys()
 
   if (!started) return <Landing />
 
