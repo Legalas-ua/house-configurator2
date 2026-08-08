@@ -21,6 +21,7 @@ export default function RoofZonesField() {
   const setOverTerrace = useConfigurator((s) => s.setRoofOverTerrace)
   const setRoofLevel = useConfigurator((s) => s.setRoofLevel)
   const texts = t.steps.roof
+  const undoSteps = useConfigurator((s) => s.history.length)
 
   const levels = roofLevels(plan, overTerrace)
   const level = levels.includes(roofLevel) ? roofLevel : (levels[0] ?? 0)
@@ -103,7 +104,7 @@ export default function RoofZonesField() {
                 </button>
               </div>
             )}
-            <p className="rooms__hint">{t.keys.hint}</p>
+            <p className="rooms__hint">{t.keys.hint(undoSteps)}</p>
           </div>
         </>
       )}

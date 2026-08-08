@@ -1,6 +1,6 @@
 import type { HousePlan, PlanRect } from '../config/types'
 import { GRID, MIN_SIDE, snap } from './editPlan'
-import { ringContains, unionOutline } from './outline'
+import { outlineRects, ringContains, unionOutline } from './outline'
 import { WALL_T } from './windows'
 
 // ============================================================
@@ -158,12 +158,18 @@ function levelBox(plan: HousePlan, level: number, overTerrace = false): PlanRect
   return { x: (x0 + x1) / 2, z: (z0 + z1) / 2, width: x1 - x0, depth: z1 - z0 }
 }
 
-// Готовий варіант: одна зона на весь відкритий габарит кожного рівня.
+// Готовий варіант: одна зона на кожен рівень — але СКЛАДЕНА, точно по контуру
+// відкритого покриття. Раніше сюди йшов габаритний прямокутник, і на
+// Г-подібному покритті дах накривав і виріз, і терасу: парапет ішов просто в
+// повітрі, без стіни під собою.
 export function generateRoof(plan: HousePlan, kind: RoofKind, overTerrace = false): RoofPart[] {
   return roofLevels(plan, overTerrace).flatMap((level) => {
-    const box = levelBox(plan, level, overTerrace)
-    if (!box) return []
-    return [normalizeRoof({ id: `roof-${level}`, level, kind, ...box, ...DEFAULTS })]
+    const rects = outlineRects(levelOutline(plan, level, overTerrace))
+    if (rects.length === 0) return []
+    const box = rectsBox(rects)
+    // Один прямокутник — це проста зона; `rects` їй ні до чого.
+    const parts = rects.length > 1 ? { rects } : {}
+    return [normalizeRoof({ id: `roof-${level}`, level, kind, ...box, ...parts, ...DEFAULTS })]
   })
 }
 

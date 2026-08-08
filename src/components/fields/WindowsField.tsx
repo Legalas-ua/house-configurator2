@@ -70,6 +70,7 @@ function WindowEditorPanel() {
   const setSelectedDoor = useConfigurator((s) => s.setSelectedDoor)
   const setSelectedWall = useConfigurator((s) => s.setSelectedWall)
   const texts = t.steps.windows.editor
+  const undoSteps = useConfigurator((s) => s.history.length)
 
   const spec = windows.find((w) => w.id === selectedWindow)
   // Ключ стіни несе свій поверх — редагуємо всі поверхи разом.
@@ -256,7 +257,7 @@ function WindowEditorPanel() {
                 <p className="rooms__hint">{texts.doorSlotHint}</p>
               </>
             )}
-            <p className="rooms__hint">{t.keys.hintNoCopy}</p>
+            <p className="rooms__hint">{t.keys.hintNoCopy(undoSteps)}</p>
           </>
         )}
       </div>

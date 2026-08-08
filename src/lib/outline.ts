@@ -162,6 +162,64 @@ export function unionOutline(rects: PlanRect[], subtract: PlanRect[] = []): Ring
   return rings
 }
 
+// Контур -> набір ПРЯМОКУТНИКІВ, що покривають рівно його площу.
+//
+// Потрібно там, де фігура має бути прямокутною за визначенням, а сама площа —
+// ні: готовий дах над Г-подібним покриттям. Габаритний прямокутник туди не
+// годиться — він накриває і виріз, і терасу, і парапет повисає в повітрі.
+//
+// Ріжемо нерівномірною сіткою з координат самих ребер (комірок мало — рівно
+// стільки, скільки зламів контуру), лишаємо зайняті комірки й жадібно склеюємо
+// їх у широкі смуги, а смуги — вниз. Для Г-подібного це рівно два прямокутники.
+export function outlineRects(rings: Ring[]): PlanRect[] {
+  const uniq = (vs: number[]) => {
+    const out: number[] = []
+    for (const v of [...vs].sort((a, b) => a - b)) if (!out.length || v - out[out.length - 1] > EPS) out.push(v)
+    return out
+  }
+  const xs = uniq(rings.flatMap((r) => r.pts.map((p) => p[0])))
+  const zs = uniq(rings.flatMap((r) => r.pts.map((p) => p[1])))
+  if (xs.length < 2 || zs.length < 2) return []
+
+  // Кільця вкладені (виріз усередині контуру), тож усередині = непарна
+  // кількість кілець, що містять точку.
+  const nx = xs.length - 1
+  const nz = zs.length - 1
+  const on: boolean[][] = []
+  for (let i = 0; i < nx; i++) {
+    on[i] = []
+    for (let j = 0; j < nz; j++) {
+      const p: Point = [(xs[i] + xs[i + 1]) / 2, (zs[j] + zs[j + 1]) / 2]
+      on[i][j] = rings.filter((r) => ringContains(r.pts, p)).length % 2 === 1
+    }
+  }
+
+  const out: PlanRect[] = []
+  const used: boolean[][] = on.map((col) => col.map(() => false))
+  for (let j = 0; j < nz; j++) {
+    for (let i = 0; i < nx; i++) {
+      if (!on[i][j] || used[i][j]) continue
+      let i2 = i
+      while (i2 + 1 < nx && on[i2 + 1][j] && !used[i2 + 1][j]) i2++
+      let j2 = j
+      while (j2 + 1 < nz) {
+        let full = true
+        for (let k = i; k <= i2 && full; k++) full = on[k][j2 + 1] && !used[k][j2 + 1]
+        if (!full) break
+        j2++
+      }
+      for (let k = i; k <= i2; k++) for (let m = j; m <= j2; m++) used[k][m] = true
+      out.push({
+        x: (xs[i] + xs[i2 + 1]) / 2,
+        z: (zs[j] + zs[j2 + 1]) / 2,
+        width: xs[i2 + 1] - xs[i],
+        depth: zs[j2 + 1] - zs[j],
+      })
+    }
+  }
+  return out
+}
+
 // Чи лежить точка всередині кільця (промінь уздовж +x).
 export function ringContains(pts: Point[], p: Point): boolean {
   let inside = false

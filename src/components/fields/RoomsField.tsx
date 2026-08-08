@@ -152,6 +152,7 @@ function RoomEditor() {
   const selectedRoom = useConfigurator((s) => s.selectedRoom)
   const setSelectedRoom = useConfigurator((s) => s.setSelectedRoom)
   const texts = t.steps.rooms.editor
+  const undoSteps = useConfigurator((s) => s.history.length)
 
   const floorIdx = Math.min(viewFloor, plan.floors.length) - 1
   const floor = plan.floors[floorIdx]
@@ -198,7 +199,7 @@ function RoomEditor() {
           <p className="rooms__hint">{texts.none}</p>
         )}
         {selected && <p className="rooms__hint">{texts.joinHint}</p>}
-        <p className="rooms__hint">{t.keys.hint}</p>
+        <p className="rooms__hint">{t.keys.hint(undoSteps)}</p>
       </div>
     </>
   )

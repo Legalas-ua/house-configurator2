@@ -13,6 +13,7 @@ export default function TerraceField() {
   const showGrid = useConfigurator((s) => s.showGrid)
   const setShowGrid = useConfigurator((s) => s.setShowGrid)
   const texts = t.steps.terrace
+  const undoSteps = useConfigurator((s) => s.history.length)
 
   const zone = zones.find((z) => z.id === selected)
   const issues = validateTerrace(plan, zones)
@@ -64,7 +65,7 @@ export default function TerraceField() {
             </button>
           </div>
         )}
-        <p className="rooms__hint">{t.keys.hint}</p>
+        <p className="rooms__hint">{t.keys.hint(undoSteps)}</p>
       </div>
 
       {issues.length > 0 && (
