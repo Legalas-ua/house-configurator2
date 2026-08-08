@@ -128,6 +128,10 @@ body {
   min-height: 0; /* дозволяє панелі стискатись, а не розпирати рядок сітки */
   background: var(--surface);
   border-left: 1px solid var(--border);
+  /* Панель ЇДЕ за край, а не зникає ривком. Анімуємо саме transform: колонку
+     сітки чіпати не можна — від зміни ширини полотно 3D переміряється щокадру,
+     і камера смикається. */
+  transition: transform 0.32s cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 /* Згорнута панель. Колонку сітки стягуємо в нуль — інакше на її місці
@@ -160,7 +164,11 @@ body {
   font-size: 18px;
   line-height: 1;
   cursor: pointer;
-  transition: right 0.2s;
+  /* Кнопка їде рівно з панеллю — те саме сповільнення. */
+  transition:
+    right 0.32s cubic-bezier(0.32, 0.72, 0, 1),
+    color 0.15s,
+    border-color 0.15s;
 }
 
 .panel-toggle--closed {

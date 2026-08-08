@@ -167,10 +167,20 @@ export function generateRoof(plan: HousePlan, kind: RoofKind, overTerrace = fals
   return roofLevels(plan, overTerrace).flatMap((level) => {
     const rects = outlineRects(levelOutline(plan, level, overTerrace))
     if (rects.length === 0) return []
-    const box = rectsBox(rects)
-    // Один прямокутник — це проста зона; `rects` їй ні до чого.
-    const parts = rects.length > 1 ? { rects } : {}
-    return [normalizeRoof({ id: `roof-${level}`, level, kind, ...box, ...parts, ...DEFAULTS })]
+    // ПЛОСКИЙ — одна складена зона: парапет обійде весь контур одним кільцем.
+    if (kind === 'flat') {
+      const box = rectsBox(rects)
+      const parts = rects.length > 1 ? { rects } : {}
+      return [normalizeRoof({ id: `roof-${level}`, level, kind, ...box, ...parts, ...DEFAULTS })]
+    }
+    // СКАТНИЙ — ОКРЕМА зона на кожне крило. Габаритом накривати не можна: у
+    // Г-подібного будинку габарит рівня 0 накриває й другий поверх, і дах іде
+    // просто крізь нього. Складеною зоною теж не можна: у неї гребінь спільний
+    // на всі частини, і маленьке крило отримує підйом великого — скат
+    // виїжджає за свої стіни (це й було видно на скріншоті).
+    return rects.map((r, i) =>
+      normalizeRoof({ id: `roof-${level}${i ? `-${i}` : ''}`, level, kind, ...r, ...DEFAULTS }),
+    )
   })
 }
 

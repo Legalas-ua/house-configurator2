@@ -312,7 +312,15 @@ export interface RoofSkinGroup {
 // Перпендикулярна смуга при будь-якому куті лишала торець плити відкритим:
 // торець плити вертикальний, а смуга нахилена. Уздовж скату вертикальну
 // дошку набираємо короткими відрізками, і її нижня грань іде рівною лінією.
-function fasciaOf(sl: Slope, kind: RoofMatKind, out: SkinBox[], plateT: number) {
+function fasciaOf(
+  sl: Slope,
+  kind: RoofMatKind,
+  out: SkinBox[],
+  plateT: number,
+  // Чи впирається ця точка в стіну поверху ВИЩЕ. Планку там не ставимо: схил
+  // уже підрізаний до грані тієї стіни, і планка лізла просто в її оздоблення.
+  atWall: (x: number, z: number) => boolean = () => false,
+) {
   const cover = LAYOUT[kind].t + (LAYOUT[kind].rib?.h ?? 0)
   const cos = Math.cos(sl.tilt)
   const sin = Math.sin(sl.tilt)
@@ -353,9 +361,33 @@ function fasciaOf(sl: Slope, kind: RoofMatKind, out: SkinBox[], plateT: number) 
   const hl = sl.len / 2
   const low = sl.tilt > 0 ? -1 : 1 // де нижній край схилу вздовж s
 
+  // Ділянки планки, ВІЛЬНІ від стіни поверху вище. Різати доводиться саме
+  // ділянками: грань буває притиснута до стіни лише частиною, і викидати всю
+  // планку так само неправильно, як лишати її в цеглі.
+  const freeRuns = (a: number, b: number, world: (t: number) => { x: number; z: number }) => {
+    const steps = Math.max(2, Math.ceil((b - a) / 0.15))
+    const runs: [number, number][] = []
+    let from: number | null = null
+    for (let i = 0; i <= steps; i++) {
+      const t = a + ((b - a) * i) / steps
+      const p = world(t)
+      const free = !atWall(p.x, p.z)
+      if (free && from === null) from = t
+      if (!free && from !== null) {
+        runs.push([from, t])
+        from = null
+      }
+    }
+    if (from !== null) runs.push([from, b])
+    return runs.filter(([p, q]) => q - p > 0.05)
+  }
+
   // КАРНИЗ. Торець плити тут вертикальний, тож і дошка вертикальна — при
   // будь-якому куті вона закриває всю товщину пирога.
-  put(0, low * (hl + w / 2 - lap), sl.width + 2 * w, w)
+  const eaveS = low * (hl + w / 2 - lap)
+  for (const [a, b] of freeRuns(-hw - w, hw + w, (u) => at(u, eaveS))) {
+    put((a + b) / 2, eaveS, b - a, w)
+  }
 
   // СКАТНІ КРАЇ. Тут навпаки: торець плити йде ПАРАЛЕЛЬНО схилу, тож дошка
   // теж нахилена — одним суцільним бруском. Набирати її вертикальними
@@ -363,27 +395,31 @@ function fasciaOf(sl: Slope, kind: RoofMatKind, out: SkinBox[], plateT: number) 
   if (sl.noRake) return
   const hRake = plateT + cover + 0.02
   const nRake = cover + 0.004 - hRake / 2
-  // Біля ГРЕБЕНЯ дошка має зайти за нього, інакше між двома схилами лишається
-  // гострий незакритий кут. Подовжуємо лише з боку гребеня — з боку карниза
-  // напуск і далі рівно `w`, щоб нічого не випирало.
+  // Дошка доходить рівно ДО ГРЕБЕНЯ і не далі. Раніше вона заходила за нього
+  // на висоту пирога — але за гребенем площина цього схилу йде ВГОРУ над
+  // сусіднім, тож обидві дошки вилітали в повітря й перехрещувались (той самий
+  // «хрест» на зламі). Кут між ними накриває кожух гребеня, розширений на
+  // товщину самих дощок.
   const ridgeDir = sl.tilt > 0 ? 1 : -1
-  const extra = sl.cap ? hRake * Math.abs(Math.tan(sl.tilt)) + w : w
-  const rakeLen = sl.len + w + extra
-  const shift = (ridgeDir * (extra - w)) / 2
   for (const side of [-1, 1] as const) {
     const u = side * (hw + w / 2 - lap)
-    const ly = shift * sin + cos * nRake
-    const lz = shift * cos - sin * nRake
-    out.push({
-      x: sl.cx + u * rc + lz * rs,
-      y: sl.cy + ly,
-      z: sl.cz - u * rs + lz * rc,
-      dx: w,
-      dy: hRake,
-      dz: rakeLen,
-      rotY: sl.rotY,
-      tilt: sl.tilt,
-    })
+    const s0 = ridgeDir > 0 ? -hl - w : -hl
+    const s1 = ridgeDir > 0 ? hl : hl + w
+    for (const [a, b] of freeRuns(s0, s1, (s) => at(u, s))) {
+      const sc = (a + b) / 2
+      const ly = sc * sin + cos * nRake
+      const lz = sc * cos - sin * nRake
+      out.push({
+        x: sl.cx + u * rc + lz * rs,
+        y: sl.cy + ly,
+        z: sl.cz - u * rs + lz * rc,
+        dx: w,
+        dy: hRake,
+        dz: b - a,
+        rotY: sl.rotY,
+        tilt: sl.tilt,
+      })
+    }
   }
 }
 
@@ -406,11 +442,14 @@ function ridgeCap(sl: Slope, kind: RoofMatKind, out: SkinBox[]) {
   const n = cover + 0.012
   const ly = s * sin + cos * n
   const lz = s * cos - sin * n
+  // Там, де є скатні дошки, кожух виходить і на них: інакше на самій маківці
+  // фронтону лишається відкритий гострий кут між двома дошками.
+  const overRake = sl.noRake ? 0 : 2 * (FASCIA_W + 0.01)
   out.push({
     x: sl.cx + lz * rs,
     y: sl.cy + ly,
     z: sl.cz + lz * rc,
-    dx: sl.cap,
+    dx: sl.cap + overRake,
     dy: 0.028,
     dz: CAP_D,
     rotY: sl.rotY,
@@ -477,6 +516,18 @@ export function roofSkin(
     const trimSpec: RoofMatSpec = { ...spec, color: spec.trim }
     const gt = take(`${roofY}|trim|${spec.trim}`, roofY, trimSpec, true)
     const above = plan.floors[part.level + 1]?.slab ?? []
+    // Точка впирається в стіну, що йде ВИЩЕ за цей дах? Схил там уже підрізаний
+    // до її зовнішньої грані, а на грані ще стоїть оздоблення — планка,
+    // поставлена «як завжди», йшла просто в цеглу. Вищою буває і стіна поверху
+    // вище, і фронтон СУСІДНЬОЇ зони даху: на стику двох крил планка одного
+    // впирається в торець другого.
+    const blockers = [...above, ...parts.filter((o) => o.level === part.level && o.id !== part.id).flatMap(partRects)]
+    const atWall = (x: number, z: number) =>
+      blockers.some(
+        (r) =>
+          Math.abs(x - r.x) < r.width / 2 + WALL_T / 2 + CLAD_MAX_OUT + 0.05 &&
+          Math.abs(z - r.z) < r.depth / 2 + WALL_T / 2 + CLAD_MAX_OUT + 0.05,
+      )
 
     for (const sl of slopesOf(part, above, roofY)) {
       if (flat) {
@@ -494,7 +545,7 @@ export function roofSkin(
         continue
       }
       layElements(sl, spec.kind, g.boxes, MAX_ELEMENTS)
-      fasciaOf(sl, spec.kind, gt.boxes, ROOF_T)
+      fasciaOf(sl, spec.kind, gt.boxes, ROOF_T, atWall)
       // Між схилами на гребені лишається щілина — накриваємо кожухом.
       if (part.kind !== 'mono') ridgeCap(sl, spec.kind, gt.boxes)
       // Найвища точка — щоб поява йшла зверху вниз, а не знизу вгору.
@@ -532,6 +583,9 @@ export function roofSkin(
         [gb.x0, gb.z1],
       ]
       for (const [cx2, cz2] of corners) {
+        // Ребро, що впирається в стіну (сусідня зона чи поверх вище), не
+        // ставимо: воно йде просто в її оздоблення.
+        if (atWall(cx2, cz2)) continue
         // Ближчий кінець гребеня — до нього й іде ребро з цього рогу.
         const i = Math.hypot(cx2 - rx[0], cz2 - rz[0]) <= Math.hypot(cx2 - rx[1], cz2 - rz[1]) ? 0 : 1
         hipCap([cx2, y0, cz2], [rx[i], yr, rz[i]], roofSkinHeight(spec.kind) + 0.012, gt.boxes)
