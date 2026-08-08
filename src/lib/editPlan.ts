@@ -1,5 +1,6 @@
 import type { HousePlan, PlanRect, RoomType, RoomZone } from '../config/types'
 import { GROUND_HALF } from '../config/plan'
+import { freeSpot, overlaps } from './place'
 
 // ============================================================
 // Ручне редагування планування: чисті операції над HousePlan.
@@ -179,24 +180,34 @@ export function toggleJoin(plan: HousePlan, floorIdx: number, idA: string, idB: 
 
 // Нова кімната стає праворуч від наявних, впритул — щоб одразу була частиною
 // будинку, а не висіла окремим островом.
+// `near` — кімната, від якої відштовхуватись (зазвичай обрана). Нова стає
+// ВПРИТУЛ до неї збоку; якщо там зайнято — шукаємо найближче вільне місце.
 export function addRoom(
   plan: HousePlan,
   floorIdx: number,
   type: RoomType,
+  near?: PlanRect,
 ): { plan: HousePlan; id: string } {
   const fl = plan.floors[floorIdx]
   const id = `custom-${type}-${Date.now().toString(36)}`
   const width = 3
   const depth = 4
-  let x = 0
-  let z = 0
-  if (fl && fl.rooms.length > 0) {
-    const right = Math.max(...fl.rooms.map((r) => r.x + r.width / 2))
-    const zs = fl.rooms.map((r) => r.z)
-    x = right + width / 2
-    z = snap(zs.reduce((s, v) => s + v, 0) / zs.length)
+  const rooms = fl?.rooms ?? []
+  // Якір: обрана кімната, інакше крайня права — до неї й прибудовуємо.
+  const anchor = near ?? (rooms.length ? rooms.reduce((a, r) => (r.x + r.width / 2 > a.x + a.width / 2 ? r : a)) : null)
+  const start = anchor
+    ? normalize({ x: anchor.x + anchor.width / 2 + width / 2, z: anchor.z + anchor.depth / 2 - depth / 2, width, depth })
+    : normalize({ x: 0, z: 0, width, depth })
+  // Кімната не має з'являтись уже з помилкою: шукаємо місце, вільне від інших.
+  // Перевіряємо саме ПРИВ'ЯЗАНИЙ прямокутник: `normalize` ще й затискає його в
+  // межі ділянки, і кандидат, що вилетів за край, повертався б назад — на
+  // сусідів.
+  const fits = (r: PlanRect) => {
+    const n = normalize(r)
+    return !rooms.some((o) => overlaps(n, o))
   }
-  const room: RoomZone = { id, type, ...normalize({ x, z, width, depth }) }
+  const spot = freeSpot(start, [], fits) ?? start
+  const room: RoomZone = { id, type, ...normalize(spot) }
   return {
     plan: recompute(plan.floors.map((f, i) => (i !== floorIdx ? f : { ...f, rooms: [...f.rooms, room] }))),
     id,

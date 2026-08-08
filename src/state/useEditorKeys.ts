@@ -8,6 +8,7 @@ import { normalizeTerrace, removeTerrace, type TerraceZone } from '../lib/terrac
 import { removeWindow, updateWindow, wallOf, wallRange, WIN_GRID, WIN_TOP, type Side } from '../lib/windows'
 import { innerWalls, removeDoor, fitDoor } from '../lib/innerWalls'
 import type { PlanRect } from '../config/types'
+import { freeSpot } from '../lib/place'
 
 // ============================================================
 // Клавіатура редактора: Delete, стрілки, Ctrl+Z, Ctrl+C / Ctrl+V.
@@ -36,32 +37,14 @@ const WIN_STEP_Y = 0.1 // крок вікна по висоті
 // поворот на 90°: для стіни, оберненої на +z, це +x; для оберненої на −z — −x.
 const outwardDir = (side: Side): 1 | -1 => (side === 'zmax' || side === 'xmin' ? 1 : -1)
 
-// Прямокутники перетинаються по ПЛОЩІ (дотик гранями не рахується).
-const hits = (a: PlanRect, b: PlanRect) =>
-  Math.min(a.x + a.width / 2, b.x + b.width / 2) - Math.max(a.x - a.width / 2, b.x - b.width / 2) > 0.01 &&
-  Math.min(a.z + a.depth / 2, b.z + b.depth / 2) - Math.max(a.z - a.depth / 2, b.z - b.depth / 2) > 0.01
-
-// Місце для вставленої копії: ПОРУЧ із оригіналом, але не поверх сусідів.
-// Пробуємо чотири боки, відсуваючись усе далі, — так копія лягає впритул, а не
-// в випадкове місце й не точно на оригінал.
-function freeSpot(rect: PlanRect, others: PlanRect[]): PlanRect {
-  for (let ring = 1; ring <= 8; ring++) {
-    for (const [dx, dz] of [
-      [1, 0],
-      [0, 1],
-      [-1, 0],
-      [0, -1],
-    ] as const) {
-      const spot = {
-        ...rect,
-        x: rect.x + dx * ring * rect.width,
-        z: rect.z + dz * ring * rect.depth,
-      }
-      if (!others.some((o) => hits(spot, o))) return spot
-    }
+// Копія лягає ПОРУЧ із оригіналом і не поверх сусідів — тим самим правилом,
+// що й кнопки «додати» (lib/place.ts).
+const pasteSpot = (rect: PlanRect, others: PlanRect[]): PlanRect =>
+  freeSpot({ ...rect, x: rect.x + rect.width, z: rect.z }, others) ?? {
+    ...rect,
+    x: rect.x + rect.width,
+    z: rect.z + rect.depth,
   }
-  return { ...rect, x: rect.x + rect.width, z: rect.z + rect.depth }
-}
 
 // Сама обробка — окремою функцією, а не всередині ефекту: так її можна
 // прогнати без браузера.
@@ -103,7 +86,7 @@ export function editorKey(e: KeyboardEvent) {
       const clip = s.clipboard
       if (clip?.kind !== 'room') return
       e.preventDefault()
-      const spot = freeSpot(clip.zone, rooms)
+      const spot = pasteSpot(clip.zone, rooms)
       const added = addRoom(plan, floorIdx, clip.zone.type)
       s.setCustomPlan(updateRoom(added.plan, floorIdx, added.id, spot))
       s.setSelectedRoom(added.id)
@@ -139,7 +122,7 @@ export function editorKey(e: KeyboardEvent) {
       if (clip?.kind !== 'roof') return
       e.preventDefault()
       const src = clip.part
-      const spot = freeSpot(
+      const spot = pasteSpot(
         src,
         parts.filter((p) => p.level === src.level),
       )
@@ -181,7 +164,7 @@ export function editorKey(e: KeyboardEvent) {
       const id = `terr-${Date.now().toString(36)}`
       const copyZone: TerraceZone = {
         id,
-        ...normalizeTerrace(freeSpot(clip.zone, zones)),
+        ...normalizeTerrace(pasteSpot(clip.zone, zones)),
       }
       s.setTerraceZones([...zones, copyZone])
       s.setSelectedTerrace(id)

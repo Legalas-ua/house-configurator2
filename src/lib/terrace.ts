@@ -1,6 +1,7 @@
 import type { HousePlan, PlanRect } from '../config/types'
 import { GRID, MIN_SIDE, snap } from './editPlan'
 import { unionOutline } from './outline'
+import { overlaps } from './place'
 
 // ============================================================
 // Тераса 1-го поверху як ЗОНИ на землі. Малюється так само, як зони планування
@@ -71,6 +72,11 @@ export function updateTerrace(zones: TerraceZone[], id: string, patch: Partial<P
 export const removeTerrace = (zones: TerraceZone[], id: string) => zones.filter((z) => z.id !== id)
 
 // Нова зона — притулена до будинку ЗЗОВНІ, збоку від уже наявних.
+//
+// Перебираємо сторони будинку й позиції вздовж них, поки не знайдемо місце,
+// де зона нікого не перетинає й таки ТОРКАЄТЬСЯ будинку (або іншої зони).
+// Раніше вона просто ставилась праворуч від крайньої — і з'являлась то
+// поверх сусідки, то збоку від будинку, тобто одразу з помилкою.
 export function addTerrace(plan: HousePlan, zones: TerraceZone[]): { zones: TerraceZone[]; id: string } | null {
   const foot = houseFootprint(plan)
   if (foot.length === 0) return null
@@ -87,11 +93,34 @@ export function addTerrace(plan: HousePlan, zones: TerraceZone[]): { zones: Terr
   }
   const depth = 3
   const width = Math.max(MIN_SIDE, snap(Math.min(6, maxX - minX)))
-  // Праворуч від уже поставлених — щоб нова не лягла точно на стару.
-  const right = zones.length ? Math.max(...zones.map((z) => z.x + z.width / 2)) : minX
+  const busy = [...foot, ...zones]
+  const good = (r: PlanRect) =>
+    !busy.some((o) => overlaps(r, o)) && busy.some((o) => touches(r, o)) && !foot.some((f) => overlapArea(r, f) > 0.02)
+
+  // Сторони по колу: перед будинком, за ним, праворуч, ліворуч.
+  const sides: PlanRect[] = [
+    { x: minX + width / 2, z: maxZ + depth / 2, width, depth },
+    { x: minX + width / 2, z: minZ - depth / 2, width, depth },
+    { x: maxX + depth / 2, z: minZ + width / 2, width: depth, depth: width },
+    { x: minX - depth / 2, z: minZ + width / 2, width: depth, depth: width },
+  ]
+  const zone = (() => {
+    for (const side of sides) {
+      const alongX = side.width >= side.depth
+      const span = alongX ? maxX - minX : maxZ - minZ
+      const steps = Math.max(1, Math.round(span / GRID))
+      for (let i = 0; i <= steps; i++) {
+        const cand = alongX
+          ? { ...side, x: side.x + i * GRID }
+          : { ...side, z: side.z + i * GRID }
+        const r = normalizeTerrace(cand)
+        if (good(r)) return r
+      }
+    }
+    return normalizeTerrace(sides[0])
+  })()
   const id = `terr-${Date.now().toString(36)}`
-  const zone: TerraceZone = { id, ...normalizeTerrace({ x: right + width / 2, z: maxZ + depth / 2, width, depth }) }
-  return { zones: [...zones, zone], id }
+  return { zones: [...zones, { id, ...zone }], id }
 }
 
 // ---- Перевірка ----

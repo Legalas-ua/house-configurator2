@@ -1,6 +1,7 @@
 import type { HousePlan, PlanRect } from '../config/types'
 import { GRID, MIN_SIDE, snap } from './editPlan'
 import { outlineRects, ringContains, unionOutline } from './outline'
+import { freeSpot } from './place'
 import { WALL_T } from './windows'
 
 // ============================================================
@@ -197,22 +198,38 @@ export function addRoofPart(
 ): { parts: RoofPart[]; id: string } | null {
   const box = levelBox(plan, level, overTerrace)
   if (!box) return null
-  const mine = parts.filter((p) => p.level === level)
+  const mine = parts.filter((p) => p.level === level).flatMap(partRects)
   const width = Math.max(MIN_SIDE, Math.min(4, box.width))
   const depth = Math.max(MIN_SIDE, Math.min(4, box.depth))
   // Ставимо праворуч від наявних зон рівня, щоб нова не лягла точно на стару.
   const right = mine.length ? Math.max(...mine.map((p) => p.x + p.width / 2)) : box.x - box.width / 2
+  const start = { x: right + width / 2, z: box.z, width, depth }
+  // Нова зона не має з'являтись уже з помилкою: шукаємо місце, де вона нікого
+  // не перетинає й лежить НА ПОКРИТТІ, а не поза ним.
+  const rings = levelOutline(plan, level, overTerrace)
+  // Зона має лежати на покритті ЦІЛКОМ. Перевіряємо не кутами, а сіткою: кут
+  // може потрапити в контур, а середина сторони — вже ні (Г-подібне покриття).
+  const onRoof = (r: PlanRect) => {
+    for (let x = r.x - r.width / 2 + GRID / 2; x < r.x + r.width / 2; x += GRID) {
+      for (let z = r.z - r.depth / 2 + GRID / 2; z < r.z + r.depth / 2; z += GRID) {
+        if (rings.filter((g) => ringContains(g.pts, [x, z])).length % 2 === 0) return false
+      }
+    }
+    return true
+  }
+  // Якщо цілої зони нікуди покласти — пробуємо меншу, аж до 1 × 1 м. Краще
+  // маленька зона в вільному куті, ніж велика внахлест і з помилкою; а коли
+  // покриття зайняте геть усе, зона не додається зовсім.
+  let spot: PlanRect | null = null
+  for (const k of [1, 0.75, 0.5, 0.35, 0.25]) {
+    const w = Math.max(MIN_SIDE, snap(width * k))
+    const d = Math.max(MIN_SIDE, snap(depth * k))
+    spot = freeSpot({ ...start, width: w, depth: d }, mine, onRoof)
+    if (spot) break
+  }
+  if (!spot) return null
   const id = `roof-${level}-${Date.now().toString(36)}`
-  const part = normalizeRoof({
-    id,
-    level,
-    kind,
-    x: right + width / 2,
-    z: box.z,
-    width,
-    depth,
-    ...DEFAULTS,
-  })
+  const part = normalizeRoof({ id, level, kind, ...spot, ...DEFAULTS })
   return { parts: [...parts, part], id }
 }
 

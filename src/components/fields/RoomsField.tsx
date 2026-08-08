@@ -158,8 +158,10 @@ function RoomEditor() {
   const floor = plan.floors[floorIdx]
   const selected = floor?.rooms.find((r) => r.id === selectedRoom)
 
+  // Нова кімната прибудовується до ОБРАНОЇ (а якщо нічого не обрано — до
+  // крайньої), і не лягає на сусідів.
   const add = (type: RoomType) => {
-    const next = addRoom(plan, floorIdx, type)
+    const next = addRoom(plan, floorIdx, type, selected)
     setCustomPlan(next.plan)
     setSelectedRoom(next.id)
   }
