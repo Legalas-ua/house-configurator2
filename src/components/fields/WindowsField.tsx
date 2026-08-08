@@ -14,6 +14,8 @@ import {
   MAX_PER_WALL,
   MIN_WIN_W,
   WIN_TOP,
+  wallOf,
+  wallRange,
   type Side,
 } from '../../lib/windows'
 import { t } from '../../locales'
@@ -84,6 +86,15 @@ function WindowEditorPanel() {
 
   const panels = spec ? panelCount(spec.mullions, spec.width) : 1
   const maxDoor = spec ? Math.max(MIN_DOOR_W, spec.width - MIN_DOOR_W * (spec.doors.length - 1)) : DOOR_LEAF
+  // Скільки вікно взагалі може бути завширшки на СВОЇЙ стіні. Без цього
+  // введене з клавіатури «10 м» лягало у спец як 10: у 3D його підрізала стіна,
+  // а в полі так і лишалось 10 — виглядало, ніби ввід не спрацював.
+  const specRoom = spec ? roomOf(plan, spec.floor, spec.roomId) : undefined
+  const maxWidth = specRoom
+    ? (({ from, to }) => Math.max(MIN_WIN_W, to - from))(
+        wallRange(wallOf(specRoom, spec!.side, plan.floors[spec!.floor])),
+      )
+    : MIN_WIN_W
 
   return (
     <>
@@ -162,7 +173,7 @@ function WindowEditorPanel() {
               value={spec.width}
               suffix=" м"
               stepSize={SIZE_STEP}
-              onChange={(v) => patch({ width: Math.max(MIN_WIN_W, v) })}
+              onChange={(v) => patch({ width: Math.max(MIN_WIN_W, Math.min(v, maxWidth)) })}
             />
             <Stepper
               label={texts.sill}
@@ -197,12 +208,16 @@ function WindowEditorPanel() {
               value={spec.doors.length}
               stepSize={1}
               onChange={(n) => {
-                const want = Math.max(0, Math.min(n, Math.min(maxDoors(spec.width), panels)))
+                const want = Math.max(0, Math.min(Math.round(n), maxDoors(spec.width), panels))
                 if (want === spec.doors.length) return
-                const next =
-                  want > spec.doors.length
-                    ? [...spec.doors, { width: DOOR_LEAF, slot: freeSlots(spec)[0] ?? 0 }]
-                    : spec.doors.slice(0, want)
+                // Додаємо СТІЛЬКИ, скільки бракує. Раніше тут завжди
+                // додавались одні двері — з кнопкою «+» це збігалось, а
+                // введене з клавіатури «3» давало одні двері.
+                let next = spec.doors.slice(0, want)
+                while (next.length < want) {
+                  const free = freeSlots({ ...spec, doors: next })
+                  next = [...next, { width: DOOR_LEAF, slot: free[0] ?? next.length }]
+                }
                 patch({ doors: next })
                 setSelectedDoor(next.length ? Math.min(selectedDoor ?? 0, next.length - 1) : null)
               }}
