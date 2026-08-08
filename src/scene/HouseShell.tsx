@@ -1739,7 +1739,10 @@ export default function HouseShell() {
         const mh = zone || span * tan
         const b = { roofY, partId: part.id, level: part.level, x, y, z, rotY }
         out.push({ ...b, geo: monoGeometry(pw, pd, mh, skirt, true), wallLike: true })
-        out.push({ ...b, geo: monoGeometry(pw, pd, mh, skirt, false), wallLike: false })
+        // Похила плита — це ТОРЕЦЬ даху, а не покрівля: там, де планка не
+        // закриває його (наприклад біля стіни), має світитись метал торця, а не
+        // світлий колір стін. Саме той «порожній трикутник» на стику.
+        out.push({ ...b, geo: monoGeometry(pw, pd, mh, skirt, false), wallLike: false, edge: true })
       } else {
         const gh = zone || (span / 2) * tan
         const b = { roofY, partId: part.id, level: part.level, x, y, z, rotY }
@@ -1755,7 +1758,7 @@ export default function HouseShell() {
           const run = Math.max(pw / 2, 1e-6)
           const tv = (ROOF_T * Math.hypot(run, gh)) / run
           out.push({ ...b, geo: gableGeometry(pw, pd, gh, skirt), wallLike: true })
-          out.push({ ...b, geo: gablePlateGeometry(pw, pd, gh, tv), wallLike: false })
+          out.push({ ...b, geo: gablePlateGeometry(pw, pd, gh, tv), wallLike: false, edge: true })
         }
       }
       }

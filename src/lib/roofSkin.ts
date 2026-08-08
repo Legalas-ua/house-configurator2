@@ -54,6 +54,16 @@ export const CAP_OUT = 0.035 // звис кожуха за грань парап
 export const CAP_H = 0.05 // висота кожуха
 const DRIP_T = 0.02 // товщина крапельниці по краю кожуха
 
+// Стіна, що йде ВИЩЕ за дах: межі вже розсунуті на пів стіни та її оздоблення,
+// тож планка, підрізана рівно по цьому прямокутнику, спиняється саме на
+// видимій поверхні стіни — не раніше й не пізніше.
+export interface Blocker {
+  x0: number
+  x1: number
+  z0: number
+  z1: number
+}
+
 // Товщини покрівельних плит з HouseShell — покриття лягає ПОВЕРХ них.
 const ROOF_T = 0.22
 const FLAT_T = 0.02 // плоский дах: рулон, без розкладки
@@ -317,9 +327,9 @@ function fasciaOf(
   kind: RoofMatKind,
   out: SkinBox[],
   plateT: number,
-  // Чи впирається ця точка в стіну поверху ВИЩЕ. Планку там не ставимо: схил
-  // уже підрізаний до грані тієї стіни, і планка лізла просто в її оздоблення.
-  atWall: (x: number, z: number) => boolean = () => false,
+  // Стіни, що йдуть ВИЩЕ за цей дах, уже розширені на своє оздоблення. Планка
+  // ріжеться рівно по них: далі вона входила б просто в цеглу.
+  blockers: Blocker[] = [],
 ) {
   const cover = LAYOUT[kind].t + (LAYOUT[kind].rib?.h ?? 0)
   const cos = Math.cos(sl.tilt)
@@ -361,25 +371,47 @@ function fasciaOf(
   const hl = sl.len / 2
   const low = sl.tilt > 0 ? -1 : 1 // де нижній край схилу вздовж s
 
-  // Ділянки планки, ВІЛЬНІ від стіни поверху вище. Різати доводиться саме
-  // ділянками: грань буває притиснута до стіни лише частиною, і викидати всю
-  // планку так само неправильно, як лишати її в цеглі.
+  // Ділянки планки, ВІЛЬНІ від стіни. Різати доводиться саме ділянками: грань
+  // буває притиснута до стіни лише частиною, і викидати всю планку так само
+  // неправильно, як лишати її в цеглі.
+  //
+  // Рахуємо ТОЧНО, а не вибіркою з кроком: блокери — прямокутники по осях, а
+  // планка йде по прямій, тож перетин — це відрізок параметрів. З вибіркою
+  // планка то не доходила до стіни, то заходила в неї — залежно від того, куди
+  // випала точка.
   const freeRuns = (a: number, b: number, world: (t: number) => { x: number; z: number }) => {
-    const steps = Math.max(2, Math.ceil((b - a) / 0.15))
-    const runs: [number, number][] = []
-    let from: number | null = null
-    for (let i = 0; i <= steps; i++) {
-      const t = a + ((b - a) * i) / steps
-      const p = world(t)
-      const free = !atWall(p.x, p.z)
-      if (free && from === null) from = t
-      if (!free && from !== null) {
-        runs.push([from, t])
-        from = null
+    const p0 = world(a)
+    const p1 = world(b)
+    const dx = p1.x - p0.x
+    const dz = p1.z - p0.z
+    // Проміжки параметра u ∈ [0,1], де планка всередині блокера.
+    const busy: [number, number][] = []
+    for (const r of blockers) {
+      // Плита по осі: або вся пряма всередині смуги, або відрізок [lo, hi].
+      const slab = (p: number, d: number, lo: number, hi: number): [number, number] | null => {
+        if (Math.abs(d) < 1e-9) return p > lo && p < hi ? [0, 1] : null
+        const t0 = (lo - p) / d
+        const t1 = (hi - p) / d
+        return [Math.min(t0, t1), Math.max(t0, t1)]
       }
+      const sx = slab(p0.x, dx, r.x0, r.x1)
+      const sz = slab(p0.z, dz, r.z0, r.z1)
+      if (!sx || !sz) continue
+      const lo = Math.max(0, sx[0], sz[0])
+      const hi = Math.min(1, sx[1], sz[1])
+      if (hi > lo) busy.push([lo, hi])
     }
-    if (from !== null) runs.push([from, b])
-    return runs.filter(([p, q]) => q - p > 0.05)
+    busy.sort((p, q) => p[0] - q[0])
+    const runs: [number, number][] = []
+    let cur = 0
+    for (const [p, q] of busy) {
+      if (p > cur) runs.push([cur, p])
+      cur = Math.max(cur, q)
+    }
+    if (cur < 1) runs.push([cur, 1])
+    return runs
+      .map(([p, q]) => [a + p * (b - a), a + q * (b - a)] as [number, number])
+      .filter(([p, q]) => q - p > 0.03)
   }
 
   // КАРНИЗ. Торець плити тут вертикальний, тож і дошка вертикальна — при
@@ -521,13 +553,19 @@ export function roofSkin(
     // поставлена «як завжди», йшла просто в цеглу. Вищою буває і стіна поверху
     // вище, і фронтон СУСІДНЬОЇ зони даху: на стику двох крил планка одного
     // впирається в торець другого.
-    const blockers = [...above, ...parts.filter((o) => o.level === part.level && o.id !== part.id).flatMap(partRects)]
+    // Межі стіни = вісь плюс пів товщини й оздоблення: рівно видима поверхня.
+    const out = WALL_T / 2 + CLAD_MAX_OUT
+    const blockers: Blocker[] = [
+      ...above,
+      ...parts.filter((o) => o.level === part.level && o.id !== part.id).flatMap(partRects),
+    ].map((r) => ({
+      x0: r.x - r.width / 2 - out,
+      x1: r.x + r.width / 2 + out,
+      z0: r.z - r.depth / 2 - out,
+      z1: r.z + r.depth / 2 + out,
+    }))
     const atWall = (x: number, z: number) =>
-      blockers.some(
-        (r) =>
-          Math.abs(x - r.x) < r.width / 2 + WALL_T / 2 + CLAD_MAX_OUT + 0.05 &&
-          Math.abs(z - r.z) < r.depth / 2 + WALL_T / 2 + CLAD_MAX_OUT + 0.05,
-      )
+      blockers.some((r) => x > r.x0 && x < r.x1 && z > r.z0 && z < r.z1)
 
     for (const sl of slopesOf(part, above, roofY)) {
       if (flat) {
@@ -545,7 +583,7 @@ export function roofSkin(
         continue
       }
       layElements(sl, spec.kind, g.boxes, MAX_ELEMENTS)
-      fasciaOf(sl, spec.kind, gt.boxes, ROOF_T, atWall)
+      fasciaOf(sl, spec.kind, gt.boxes, ROOF_T, blockers)
       // Між схилами на гребені лишається щілина — накриваємо кожухом.
       if (part.kind !== 'mono') ridgeCap(sl, spec.kind, gt.boxes)
       // Найвища точка — щоб поява йшла зверху вниз, а не знизу вгору.
