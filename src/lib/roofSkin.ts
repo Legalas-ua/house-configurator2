@@ -1,5 +1,15 @@
 import type { HousePlan, PlanRect, RoofMatKind, RoofMatSpec } from '../config/types'
-import { cornerStop, parapetCorner, parapetEdges, partRects, slopeBox, zoneRise, ROOF_LIFT, type RoofPart } from './roof'
+import {
+  cornerStop,
+  parapetCorner,
+  parapetEdges,
+  partRects,
+  slopeBox,
+  zoneRise,
+  ROOF_LIFT,
+  type RoofPart,
+  type SideKey,
+} from './roof'
 import { WALL_T } from './windows'
 import { CLAD_MAX_OUT } from './cladding'
 
@@ -53,6 +63,9 @@ export const FASCIA_W = 0.04 // ширина планки вздовж гран�
 export const CAP_OUT = 0.035 // звис кожуха за грань парапету
 export const CAP_H = 0.05 // висота кожуха
 const DRIP_T = 0.02 // товщина крапельниці по краю кожуха
+// Жолоб єндови: ширина по обидва боки від лінії стику й підйом над карнизом.
+const VALLEY_W = 0.36
+const VALLEY_UP = 0.075
 
 // Стіна, що йде ВИЩЕ за дах: межі вже розсунуті на пів стіни та її оздоблення,
 // тож планка, підрізана рівно по цьому прямокутнику, спиняється саме на
@@ -199,21 +212,27 @@ function layElements(sl: Slope, kind: RoofMatKind, out: SkinBox[], budget: numbe
 
 // Схили однієї зони. Мають ТОЧНО збігатися з геометрією HouseShell — інакше
 // покриття «злітає» з даху.
-function slopesOf(part: RoofPart, above: PlanRect[], roofY: number): Slope[] {
+function slopesOf(part: RoofPart, above: PlanRect[], roofY: number, siblings: PlanRect[]): Slope[] {
   // Складена зона — просто сума схилів своїх частин.
   const rects = partRects(part)
-  if (rects.length > 1) return rects.flatMap((r) => slopesOfRect(part, above, roofY, r))
-  return slopesOfRect(part, above, roofY, rects[0])
+  if (rects.length > 1) return rects.flatMap((r) => slopesOfRect(part, above, roofY, r, siblings))
+  return slopesOfRect(part, above, roofY, rects[0], siblings)
 }
 
-function slopesOfRect(part: RoofPart, above: PlanRect[], roofY: number, rect: PlanRect): Slope[] {
+function slopesOfRect(
+  part: RoofPart,
+  above: PlanRect[],
+  roofY: number,
+  rect: PlanRect,
+  siblings: PlanRect[],
+): Slope[] {
   // Плоский дах — рулон РІВНО по зоні: звісу в нього не буває, а `slopeBox`
   // додав би його й килим виліз би за парапет.
   if (part.kind === 'flat')
     return [{ cx: rect.x, cy: roofY, cz: rect.z, rotY: 0, tilt: 0, width: rect.width, len: rect.depth }]
 
-  const zone = zoneRise(part, above)
-  const g = slopeBox(part, above, rect)
+  const zone = zoneRise(part, above, siblings)
+  const g = slopeBox(part, above, rect, siblings)
   const w = g.x1 - g.x0
   const d = g.z1 - g.z0
   const cx = (g.x0 + g.x1) / 2
@@ -561,10 +580,9 @@ export function roofSkin(
     // впирається в торець другого.
     // Межі стіни = вісь плюс пів товщини й оздоблення: рівно видима поверхня.
     const out = WALL_T / 2 + CLAD_MAX_OUT
-    const blockers: Blocker[] = [
-      ...above,
-      ...parts.filter((o) => o.level === part.level && o.id !== part.id).flatMap(partRects),
-    ].map((r) => ({
+    // Сусідні зони того ж рівня: до них скат доходить упритул, без звісу.
+    const siblings = parts.filter((o) => o.level === part.level && o.id !== part.id).flatMap(partRects)
+    const blockers: Blocker[] = [...above, ...siblings].map((r) => ({
       x0: r.x - r.width / 2 - out,
       x1: r.x + r.width / 2 + out,
       z0: r.z - r.depth / 2 - out,
@@ -573,7 +591,7 @@ export function roofSkin(
     const atWall = (x: number, z: number) =>
       blockers.some((r) => x > r.x0 && x < r.x1 && z > r.z0 && z < r.z1)
 
-    for (const sl of slopesOf(part, above, roofY)) {
+    for (const sl of slopesOf(part, above, roofY, siblings)) {
       if (flat) {
         g.boxes.push({
           x: sl.cx,
@@ -610,7 +628,7 @@ export function roofSkin(
     // Вальма: чотири діагональні ребра між схилами. Шов на них закриває
     // окремий кожух, покладений ПО ребру — тобто теж під кутом.
     if (part.kind === 'hip' && partRects(part).length === 1) {
-      const gb = slopeBox(part, above)
+      const gb = slopeBox(part, above, undefined, siblings)
       const w = gb.x1 - gb.x0
       const d = gb.z1 - gb.z0
       const shortSide = Math.min(w, d)
@@ -636,7 +654,118 @@ export function roofSkin(
       }
     }
   }
+
+  // ЄНДОВИ. Два сусідні скати, що сходяться КАРНИЗАМИ, утворюють жолоб — саме
+  // в нього збігає вода. Схили тепер доходять до спільної лінії впритул
+  // (`zoneSides` у lib/roof.ts), і лишається закрити сам шов планкою.
+  //
+  // Беремо лише той випадок, який справді читається як єндова: обидві грані —
+  // карнизи (тобто перпендикулярні своєму гребеню) і обидва скати на одному
+  // рівні. Якщо навпроти фронтон — це вже примикання до стіни, і там працює
+  // підрізання планок, а не жолоб.
+  for (const g of valleys(parts, floorH)) {
+    const spec = perPart[g.partId] ?? base
+    const gt = take(`${g.roofY}|trim|${spec.trim}`, g.roofY, { ...spec, color: spec.trim }, true)
+    gt.boxes.push(g.box)
+    gt.top = Math.max(gt.top, g.box.y + 0.2)
+  }
   return [...groups.values()].filter((g) => g.boxes.length > 0)
+}
+
+// Чи є ця сторона зони КАРНИЗОМ (схил падає до неї), а не фронтоном.
+function isEaveSide(part: RoofPart, rect: PlanRect, side: SideKey): boolean {
+  if (part.kind === 'flat') return false
+  if (part.kind === 'hip') return true // вальма падає на всі чотири боки
+  const ridgeAlongZ = part.rotation % 180 === 0 ? rect.depth >= rect.width : rect.depth < rect.width
+  const eaveX = ridgeAlongZ // гребінь уздовж Z -> схили падають по X
+  const alongX = side === 'xmin' || side === 'xmax'
+  if (part.kind === 'mono') {
+    // В односхилого карниз ОДИН — з протилежного від підйому боку.
+    const low: SideKey = ridgeAlongZ
+      ? part.rotation >= 180
+        ? 'xmax'
+        : 'xmin'
+      : part.rotation >= 180
+        ? 'zmax'
+        : 'zmin'
+    return side === low
+  }
+  return alongX === eaveX
+}
+
+// Планки єндов для всіх пар сусідніх зон.
+function valleys(parts: RoofPart[], floorH: number): { partId: string; roofY: number; box: SkinBox }[] {
+  const out: { partId: string; roofY: number; box: SkinBox }[] = []
+  const b = (r: PlanRect) => ({
+    x0: r.x - r.width / 2,
+    x1: r.x + r.width / 2,
+    z0: r.z - r.depth / 2,
+    z1: r.z + r.depth / 2,
+  })
+  for (let i = 0; i < parts.length; i++) {
+    for (let j = i + 1; j < parts.length; j++) {
+      const A = parts[i]
+      const B = parts[j]
+      if (A.level !== B.level || A.kind === 'flat' || B.kind === 'flat') continue
+      const roofY = (A.level + 1) * floorH
+      for (const ra of partRects(A)) {
+        for (const rb of partRects(B)) {
+          const p = b(ra)
+          const q = b(rb)
+          const xOver = Math.min(p.x1, q.x1) - Math.max(p.x0, q.x0)
+          const zOver = Math.min(p.z1, q.z1) - Math.max(p.z0, q.z0)
+          // Спільна лінія: по одній осі дотик, по другій — перекриття.
+          let line: number
+          let horizontal: boolean
+          let sideA: SideKey
+          let sideB: SideKey
+          if (zOver > 0.5 && Math.abs(q.x0 - p.x1) < 0.01) {
+            line = p.x1
+            horizontal = false
+            sideA = 'xmax'
+            sideB = 'xmin'
+          } else if (zOver > 0.5 && Math.abs(p.x0 - q.x1) < 0.01) {
+            line = p.x0
+            horizontal = false
+            sideA = 'xmin'
+            sideB = 'xmax'
+          } else if (xOver > 0.5 && Math.abs(q.z0 - p.z1) < 0.01) {
+            line = p.z1
+            horizontal = true
+            sideA = 'zmax'
+            sideB = 'zmin'
+          } else if (xOver > 0.5 && Math.abs(p.z0 - q.z1) < 0.01) {
+            line = p.z0
+            horizontal = true
+            sideA = 'zmin'
+            sideB = 'zmax'
+          } else continue
+          if (!isEaveSide(A, ra, sideA) || !isEaveSide(B, rb, sideB)) continue
+          // Довжина жолоба — спільна ділянка граней.
+          const lo = horizontal ? Math.max(p.x0, q.x0) : Math.max(p.z0, q.z0)
+          const hi = horizontal ? Math.min(p.x1, q.x1) : Math.min(p.z1, q.z1)
+          if (hi - lo < 0.5) continue
+          const mid = (lo + hi) / 2
+          out.push({
+            partId: A.id,
+            roofY,
+            box: {
+              x: horizontal ? mid : line,
+              // Обидва карнизи на одній відмітці — жолоб лягає рівно на неї.
+              y: roofY + ROOF_LIFT + VALLEY_UP,
+              z: horizontal ? line : mid,
+              dx: horizontal ? hi - lo : VALLEY_W,
+              dy: 0.03,
+              dz: horizontal ? VALLEY_W : hi - lo,
+              rotY: 0,
+              tilt: 0,
+            },
+          })
+        }
+      }
+    }
+  }
+  return out
 }
 
 // Кожух парапету: П-подібна накривка поверх стінки, зі звисом на обидва боки.

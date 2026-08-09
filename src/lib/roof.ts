@@ -526,17 +526,47 @@ export function pinnedSides(part: RoofPart, above: PlanRect[]): Record<SideKey, 
 //                      і скат прошивав ту стіну наскрізь — до її середини й
 //                      далі в кімнату. Мінус 2 мм лишаємо як напуск, щоб на
 //                      стику не світилась волосяна щілина.
-export function sideExtend(part: RoofPart, above: PlanRect[]): Record<SideKey, number> {
+// Сторони, до яких ВПРИТУЛ стоїть сусідня зона даху того ж рівня. Звісу там
+// бути не може: два скати мусять зійтися рівно на спільній лінії. Інакше вони
+// налазять один на одного на два звіси (0,7 м) — саме це й читалось як брудний
+// стик замість єндови.
+export function zoneSides(part: RoofPart, siblings: PlanRect[]): Record<SideKey, boolean> {
+  const out: Record<SideKey, boolean> = { xmin: false, xmax: false, zmin: false, zmax: false }
+  const b = box(part)
+  for (const s of siblings) {
+    const c = box(s)
+    const xOver = Math.min(b.x1, c.x1) - Math.max(b.x0, c.x0)
+    const zOver = Math.min(b.z1, c.z1) - Math.max(b.z0, c.z0)
+    if (zOver > 0.5) {
+      if (Math.abs(c.x1 - b.x0) < 0.01) out.xmin = true
+      if (Math.abs(c.x0 - b.x1) < 0.01) out.xmax = true
+    }
+    if (xOver > 0.5) {
+      if (Math.abs(c.z1 - b.z0) < 0.01) out.zmin = true
+      if (Math.abs(c.z0 - b.z1) < 0.01) out.zmax = true
+    }
+  }
+  return out
+}
+
+export function sideExtend(part: RoofPart, above: PlanRect[], siblings: PlanRect[] = []): Record<SideKey, number> {
   const pin = pinnedSides(part, above)
-  const value = (p: boolean) => (p ? -(WALL_T / 2 - 0.002) : EAVE_BASE + part.overhang)
-  return { xmin: value(pin.xmin), xmax: value(pin.xmax), zmin: value(pin.zmin), zmax: value(pin.zmax) }
+  const nb = zoneSides(part, siblings)
+  const value = (p: boolean, n: boolean) => (p ? -(WALL_T / 2 - 0.002) : n ? 0 : EAVE_BASE + part.overhang)
+  return {
+    xmin: value(pin.xmin, nb.xmin),
+    xmax: value(pin.xmax, nb.xmax),
+    zmin: value(pin.zmin, nb.zmin),
+    zmax: value(pin.zmax, nb.zmax),
+  }
 }
 
 // Габарит СКАТУ у світі — рівно те, що будує HouseShell. `rect` дозволяє взяти
-// окрему ЧАСТИНУ складеної зони; без нього — габарит усієї зони.
-export function slopeBox(part: RoofPart, above: PlanRect[], rect?: PlanRect) {
+// окрему ЧАСТИНУ складеної зони; без нього — габарит усієї зони. `siblings` —
+// сусідні зони того ж рівня: до них скат доходить упритул, без звісу.
+export function slopeBox(part: RoofPart, above: PlanRect[], rect?: PlanRect, siblings: PlanRect[] = []) {
   const b = box(rect ?? part)
-  const o = sideExtend(part, above)
+  const o = sideExtend(part, above, siblings)
   return {
     x0: b.x0 - o.xmin,
     x1: b.x1 + o.xmax,
@@ -548,7 +578,7 @@ export function slopeBox(part: RoofPart, above: PlanRect[], rect?: PlanRect) {
 // Підйом гребеня, СПІЛЬНИЙ на всю зону. Частини складеної зони мають
 // сходитись на одній висоті — інакше «другорядна» частина вріжеться в головну
 // під випадковим кутом. Керує НАЙБІЛЬША частина: вона й є головною.
-export function zoneRise(part: RoofPart, above: PlanRect[]): number {
+export function zoneRise(part: RoofPart, above: PlanRect[], siblings: PlanRect[] = []): number {
   const tan = Math.tan((part.pitch * Math.PI) / 180)
   let best = 0
   let area = -1
@@ -556,7 +586,7 @@ export function zoneRise(part: RoofPart, above: PlanRect[]): number {
     const a = r.width * r.depth
     if (a <= area) continue
     area = a
-    const g = slopeBox(part, above, r)
+    const g = slopeBox(part, above, r, siblings)
     const w = g.x1 - g.x0
     const d = g.z1 - g.z0
     if (part.kind === 'mono') {

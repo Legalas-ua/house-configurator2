@@ -96,14 +96,20 @@ export function parapetPanels(part: RoofPart, above: PlanRect[], roofY: number, 
   return out
 }
 
-export function gablePanels(part: RoofPart, above: PlanRect[], roofY: number, floor: number): GablePanel[] {
+export function gablePanels(
+  part: RoofPart,
+  above: PlanRect[],
+  roofY: number,
+  floor: number,
+  siblings: PlanRect[] = [],
+): GablePanel[] {
   // У вальмового фронтонів немає взагалі — схили сходяться з усіх боків.
   if (part.kind === 'flat' || part.kind === 'hip') return []
   // Двосхилий ЗІ ЗВІСОМ — суцільна призма даху, стіни там немає (див.
   // HouseShell: wallLike лише за overhang === 0).
   if (part.kind === 'gable' && part.overhang > 0) return []
 
-  const g = slopeBox(part, above)
+  const g = slopeBox(part, above, undefined, siblings)
   const w = g.x1 - g.x0
   const d = g.z1 - g.z0
   const ridgeAlongZ = part.rotation % 180 === 0 ? d >= w : d < w

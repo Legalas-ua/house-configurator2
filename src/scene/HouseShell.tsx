@@ -1328,7 +1328,8 @@ export default function HouseShell() {
         const y = (p.level + 1) * FLOOR_H
         // Фронтони скатного і стінки парапету плоского — усе це так само
         // зовнішні стіни, тільки вище покриття.
-        return [...gablePanels(p, above, y, p.level), ...parapetPanels(p, above, y, p.level)].map((g) => ({
+        const sibs = roof.filter((o) => o.level === p.level && o.id !== p.id).flatMap(partRects)
+        return [...gablePanels(p, above, y, p.level, sibs), ...parapetPanels(p, above, y, p.level)].map((g) => ({
           ...g,
           // Матеріал фронтон/парапет НЕ обирають окремо: вони продовжують ту
           // стіну, над якою стоять. Інакше, помінявши матеріал стіни під
@@ -1695,16 +1696,20 @@ export default function HouseShell() {
       if (part.kind === 'flat') continue
       const roofY = (part.level + 1) * FLOOR_H
       const above = plan.floors[part.level + 1]?.slab ?? []
+      // Сусідні зони того ж рівня: до них скат доходить УПРИТУЛ, без звісу —
+      // інакше два крила налазять одне на одне на два звіси, і замість єндови
+      // виходить каша з двох карнизів.
+      const sibs = roof.filter((o) => o.level === part.level && o.id !== part.id).flatMap(partRects)
       // Складена зона будується ПО ЧАСТИНАХ, але з ОДНИМ підйомом гребеня:
       // головна частина задає висоту, другорядні врізаються в неї під прямим
       // кутом на тій самій відмітці.
-      const zone = zoneRise(part, above)
+      const zone = zoneRise(part, above, sibs)
       for (const rect of partRects(part)) {
       // Габарит скату зі звісами ПО КОЖНІЙ СТОРОНІ. Сторона, притиснута до
       // стіни поверху вище, звісу не має — інакше, збільшуючи звіс, скат
       // заповзав би всередину кімнати другого поверху. Через це габарит
       // несиметричний, і центр більше не збігається з центром зони.
-      const g = slopeBox(part, above, rect)
+      const g = slopeBox(part, above, rect, sibs)
       const w = g.x1 - g.x0
       const d = g.z1 - g.z0
       // 0° — гребінь уздовж довшої сторони, 90° — упоперек.
