@@ -580,6 +580,16 @@ export function slopeBox(part: RoofPart, above: PlanRect[], rect?: PlanRect, sib
 // під випадковим кутом. Керує НАЙБІЛЬША частина: вона й є головною.
 export function zoneRise(part: RoofPart, above: PlanRect[], siblings: PlanRect[] = []): number {
   const tan = Math.tan((part.pitch * Math.PI) / 180)
+  // ОДНОСХИЛИЙ — одна площина на всю зону, тож і проліт беремо по ЗОНІ, а не
+  // по найбільшій частині. Інакше нахил площини не збігається з кутом даху, і
+  // покриття (воно рахує кут) відривається від геометрії (вона рахує підйом).
+  if (part.kind === 'mono') {
+    const g = slopeBox(part, above, undefined, siblings)
+    const w = g.x1 - g.x0
+    const d = g.z1 - g.z0
+    const ridgeAlongZ = part.rotation % 180 === 0 ? d >= w : d < w
+    return (ridgeAlongZ ? w : d) * tan
+  }
   let best = 0
   let area = -1
   for (const r of partRects(part)) {
@@ -589,10 +599,7 @@ export function zoneRise(part: RoofPart, above: PlanRect[], siblings: PlanRect[]
     const g = slopeBox(part, above, r, siblings)
     const w = g.x1 - g.x0
     const d = g.z1 - g.z0
-    if (part.kind === 'mono') {
-      const ridgeAlongZ = part.rotation % 180 === 0 ? d >= w : d < w
-      best = (ridgeAlongZ ? w : d) * tan
-    } else if (part.kind === 'hip') {
+    if (part.kind === 'hip') {
       best = (Math.min(w, d) / 2) * tan
     } else {
       const ridgeAlongZ = part.rotation % 180 === 0 ? d >= w : d < w

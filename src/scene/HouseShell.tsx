@@ -402,21 +402,34 @@ function hipGeometry(width: number, depth: number, pitch: number, skirt: number)
 // Односхилий дах — НЕ трикутник у розрізі: це похила плита завтовшки ROOF_T,
 // а під нею стіни доростають до неї (клин у кольорі стіни). fill=true віддає
 // цей клин, fill=false — саму плиту.
-function monoGeometry(width: number, depth: number, height: number, skirt: number, fill: boolean): ExtrudeGeometry {
+// Односхилий: клин від висоти h0 (лівий край) до h1 (правий).
+//
+// Два числа, а не одне, — щоб СКЛАДЕНА зона лишалась ОДНИМ дахом. Кожна її
+// частина відрізає свій шматок від СПІЛЬНОЇ площини, і сусідні шматки
+// сходяться рівно там, де стикаються прямокутники. Коли частина одна,
+// h0 = 0 і виходить рівно те, що було.
+function monoGeometry(
+  width: number,
+  depth: number,
+  h0: number,
+  h1: number,
+  skirt: number,
+  fill: boolean,
+): ExtrudeGeometry {
   const s = new Shape()
   // Вертикальна товщина плити більша за ROOF_T рівно настільки, наскільки
   // вона нахилена, — тоді ПЕРПЕНДИКУЛЯРНА товщина виходить рівно ROOF_T.
-  const tv = ROOF_T * Math.hypot(width, height) / Math.max(width, 1e-6)
+  const tv = (ROOF_T * Math.hypot(width, h1 - h0)) / Math.max(width, 1e-6)
   if (fill) {
     s.moveTo(-width / 2, -skirt)
     s.lineTo(width / 2, -skirt)
-    s.lineTo(width / 2, height)
-    s.lineTo(-width / 2, 0)
+    s.lineTo(width / 2, h1)
+    s.lineTo(-width / 2, h0)
   } else {
-    s.moveTo(-width / 2, 0)
-    s.lineTo(width / 2, height)
-    s.lineTo(width / 2, height + tv)
-    s.lineTo(-width / 2, tv)
+    s.moveTo(-width / 2, h0)
+    s.lineTo(width / 2, h1)
+    s.lineTo(width / 2, h1 + tv)
+    s.lineTo(-width / 2, h0 + tv)
   }
   s.closePath()
   const g = new ExtrudeGeometry(s, { depth, bevelEnabled: false })
@@ -1704,6 +1717,12 @@ export default function HouseShell() {
       // головна частина задає висоту, другорядні врізаються в неї під прямим
       // кутом на тій самій відмітці.
       const zone = zoneRise(part, above, sibs)
+      // Габарит УСІЄЇ зони — по ньому будується спільна площина односхилого.
+      const gz = slopeBox(part, above, undefined, sibs)
+      // Напрям гребеня беремо теж по зоні, а не по окремій частині: інакше
+      // частини складеної зони дивилися б у різні боки.
+      const zoneRidgeAlongZ =
+        part.rotation % 180 === 0 ? gz.z1 - gz.z0 >= gz.x1 - gz.x0 : gz.z1 - gz.z0 < gz.x1 - gz.x0
       for (const rect of partRects(part)) {
       // Габарит скату зі звісами ПО КОЖНІЙ СТОРОНІ. Сторона, притиснута до
       // стіни поверху вище, звісу не має — інакше, збільшуючи звіс, скат
@@ -1713,7 +1732,7 @@ export default function HouseShell() {
       const w = g.x1 - g.x0
       const d = g.z1 - g.z0
       // 0° — гребінь уздовж довшої сторони, 90° — упоперек.
-      const ridgeAlongZ = part.rotation % 180 === 0 ? d >= w : d < w
+      const ridgeAlongZ = part.kind === 'mono' ? zoneRidgeAlongZ : part.rotation % 180 === 0 ? d >= w : d < w
       const span = ridgeAlongZ ? w : d
       const skirt = ROOF_LIFT + TIER_LAP
       const [pw, pd] = ridgeAlongZ ? [w, d] : [d, w]
@@ -1740,14 +1759,29 @@ export default function HouseShell() {
           wallLike: false,
         })
       } else if (mono) {
-        // Односхилий: висота на ПОВНИЙ проліт (схил один, а не два).
-        const mh = zone || span * tan
+        // Односхилий — ОДНА площина на всю зону, а кожна частина відрізає від
+        // неї свій шматок. Раніше кожна частина була самостійним скатом «від
+        // нуля до повної висоти», і складена зона розпадалась на два дахи
+        // замість одного, підрізаного по контуру.
+        const zoneSpan = Math.max(zoneRidgeAlongZ ? gz.x1 - gz.x0 : gz.z1 - gz.z0, 1e-6)
+        const zoneH = zone || zoneSpan * tan
+        // Низький край зони: 0/90° — схил падає до меншої координати, 180/270°
+        // — до більшої.
+        const [F0, F1] = zoneRidgeAlongZ ? [gz.x0, gz.x1] : [gz.z0, gz.z1]
+        const [f0, f1] = zoneRidgeAlongZ ? [g.x0, g.x1] : [g.z0, g.z1]
+        // Куди дивиться ВИСОКИЙ край. Локальна вісь X геометрії при повороті на
+        // 90° лягає на −Z, тож для падіння вздовж Z умова дзеркальна — саме
+        // так це рахує й покриття (roofSkin).
+        const highAtMax = zoneRidgeAlongZ ? part.rotation < 180 : part.rotation >= 180
+        const at = (f: number) => (Math.abs(f - (highAtMax ? F0 : F1)) / zoneSpan) * zoneH
+        // Локальна вісь X дивиться за світовою, поки поворот менший за 180°.
+        const [h0, h1] = highAtMax ? [at(f0), at(f1)] : [at(f1), at(f0)]
         const b = { roofY, partId: part.id, level: part.level, x, y, z, rotY }
-        out.push({ ...b, geo: monoGeometry(pw, pd, mh, skirt, true), wallLike: true })
+        out.push({ ...b, geo: monoGeometry(pw, pd, h0, h1, skirt, true), wallLike: true })
         // Похила плита — це ТОРЕЦЬ даху, а не покрівля: там, де планка не
         // закриває його (наприклад біля стіни), має світитись метал торця, а не
         // світлий колір стін. Саме той «порожній трикутник» на стику.
-        out.push({ ...b, geo: monoGeometry(pw, pd, mh, skirt, false), wallLike: false, edge: true })
+        out.push({ ...b, geo: monoGeometry(pw, pd, h0, h1, skirt, false), wallLike: false, edge: true })
       } else {
         const gh = zone || (span / 2) * tan
         const b = { roofY, partId: part.id, level: part.level, x, y, z, rotY }

@@ -4,6 +4,7 @@ import {
   parapetCorner,
   parapetEdges,
   partRects,
+  rectsBox,
   slopeBox,
   zoneRise,
   ROOF_LIFT,
@@ -210,13 +211,61 @@ function layElements(sl: Slope, kind: RoofMatKind, out: SkinBox[], budget: numbe
   }
 }
 
+
+// Обмеження вздовж гребеня на відстані `s` по падінню — там, де під схилом
+// справді є частини зони. Відображення (u, s) -> світ лінійне, тож достатньо
+// однієї опорної точки й напрямку.
+function clipToRects(
+  rects: PlanRect[],
+  ridgeAlongZ: boolean,
+  tilt: number,
+  rotY: number,
+  cx: number,
+  cz: number,
+): (s: number) => [number, number] {
+  const cos = Math.cos(tilt)
+  const rc = Math.cos(rotY)
+  const rs = Math.sin(rotY)
+  return (s: number) => {
+    const lz = s * cos
+    const x0 = cx + lz * rs
+    const z0 = cz + lz * rc
+    // Координата ПАДІННЯ в цій точці й напрямок осі гребеня.
+    const fall = ridgeAlongZ ? x0 : z0
+    const r0 = ridgeAlongZ ? z0 : x0
+    const k = ridgeAlongZ ? -rs : rc
+    let lo = Infinity
+    let hi = -Infinity
+    for (const r of rects) {
+      const fa = ridgeAlongZ ? r.x - r.width / 2 : r.z - r.depth / 2
+      const fb = ridgeAlongZ ? r.x + r.width / 2 : r.z + r.depth / 2
+      if (fall < fa - 0.01 || fall > fb + 0.01) continue
+      lo = Math.min(lo, ridgeAlongZ ? r.z - r.depth / 2 : r.x - r.width / 2)
+      hi = Math.max(hi, ridgeAlongZ ? r.z + r.depth / 2 : r.x + r.width / 2)
+    }
+    if (lo === Infinity || Math.abs(k) < 1e-9) return [0, 0]
+    const a = (lo - r0) / k
+    const b = (hi - r0) / k
+    return [Math.min(a, b), Math.max(a, b)]
+  }
+}
+
 // Схили однієї зони. Мають ТОЧНО збігатися з геометрією HouseShell — інакше
 // покриття «злітає» з даху.
 function slopesOf(part: RoofPart, above: PlanRect[], roofY: number, siblings: PlanRect[]): Slope[] {
-  // Складена зона — просто сума схилів своїх частин.
   const rects = partRects(part)
-  if (rects.length > 1) return rects.flatMap((r) => slopesOfRect(part, above, roofY, r, siblings))
-  return slopesOfRect(part, above, roofY, rects[0], siblings)
+  if (rects.length <= 1) return slopesOfRect(part, above, roofY, rects[0], siblings)
+  // ОДНОСХИЛИЙ — одна площина на всю зону, підрізана по її контуру. Розкладка
+  // по частинах давала два окремі скати замість одного даху складної форми.
+  if (part.kind === 'mono') {
+    const boxes = rects.map((r) => {
+      const b = slopeBox(part, above, r, siblings)
+      return { x: (b.x0 + b.x1) / 2, z: (b.z0 + b.z1) / 2, width: b.x1 - b.x0, depth: b.z1 - b.z0 }
+    })
+    return slopesOfRect(part, above, roofY, rectsBox(rects), siblings, boxes)
+  }
+  // Решта типів поки лишається сумою схилів своїх частин.
+  return rects.flatMap((r) => slopesOfRect(part, above, roofY, r, siblings))
 }
 
 function slopesOfRect(
@@ -225,6 +274,8 @@ function slopesOfRect(
   roofY: number,
   rect: PlanRect,
   siblings: PlanRect[],
+  // Складена зона: сюди йдуть ЇЇ частини, і покриття підрізається по них.
+  clipRects?: PlanRect[],
 ): Slope[] {
   // Плоский дах — рулон РІВНО по зоні: звісу в нього не буває, а `slopeBox`
   // додав би його й килим виліз би за парапет.
@@ -290,15 +341,19 @@ function slopesOfRect(
     const rise = zone || span * tan
     // Вертикальна товщина плити — рівно як у monoGeometry.
     const tv = (ROOF_T * Math.hypot(run, rise)) / run
+    const cy = roofY + ROOF_LIFT + rise / 2 + tv
     return [
       {
         cx,
-        cy: roofY + ROOF_LIFT + rise / 2 + tv,
+        cy,
         cz,
         rotY,
         tilt: ang,
         width: across,
         len: Math.hypot(span, rise),
+        // Підрізання по контуру складеної зони: на кожній відстані по падінню
+        // беремо ту смугу вздовж гребеня, де частини зони справді є.
+        clipU: clipRects && clipToRects(clipRects, ridgeAlongZ, ang, rotY, cx, cz),
       },
     ]
   }
