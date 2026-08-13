@@ -1,7 +1,7 @@
 import type { PlanRect } from '../config/types'
 import type { HeightAt } from './cladding'
 import { parapetEdges, partRects, roofSkeleton, slopeBox, ROOF_LIFT, type RoofPart } from './roof'
-import { edgeProfile, facePoint, planRise } from './roofSkeleton'
+import { edgeProfile, facePoint, insideBoxes, planRise } from './roofSkeleton'
 import { WALL_T } from './windows'
 import type { WallFace } from './wallFaces'
 
@@ -120,6 +120,12 @@ export function gablePanels(
     const sk = roofSkeleton(part, above, siblings)
     const out: GablePanel[] = []
     for (const e of sk.edges) {
+      // Ріг ВЛАСНЕ рогом є лише там, де стіна повертає (90°). На увігнутому
+      // куті (270°) вона йде далі, і загортати оздоблення нікуди.
+      const turns = (u: number, dir: 1 | -1) => {
+        const [x, z] = facePoint(e, u + dir * 0.01, 0.01)
+        return !insideBoxes(sk.boxes, x, z)
+      }
       const face: WallFace = {
         id: `${floor}|gable|${part.id}|${e.horizontal ? 'h' : 'v'}|${e.line.toFixed(2)}|${e.a.toFixed(2)}`,
         floor,
@@ -130,6 +136,12 @@ export function gablePanels(
         a: e.a,
         b: e.b,
         halfT: 0,
+        // Те саме правило, що й у стін: рогом володіє ГОРИЗОНТАЛЬНА грань і
+        // загортається за нього, вертикальна поступається. Без цього на кожному
+        // розі фронтону лишалась смуга голої основи завширшки з матеріал
+        // сусідньої грані.
+        cornerA: e.horizontal && turns(e.a, -1) ? e.a : undefined,
+        cornerB: e.horizontal && turns(e.b, 1) ? e.b : undefined,
       }
       // Карниз — сама лише вузька грань клина під схилом.
       if (e.rising) {
@@ -175,6 +187,12 @@ export function gablePanels(
 
   const out: GablePanel[] = []
   const id = (tag: string) => `${floor}|gable|${part.id}|${tag}`
+  // Ріг простої зони завжди вільний і завжди на 90°, тож рогом володіє
+  // ГОРИЗОНТАЛЬНА грань — те саме правило, що й у стін. Без цього на кожному
+  // розі лишалась смуга голої основи завширшки з матеріал сусідньої грані:
+  // саме те, на що Lev показував на односхилому зі звісом.
+  const corners = (horizontal: boolean, a: number, b: number) =>
+    horizontal ? { cornerA: a, cornerB: b } : {}
 
   // Два ТОРЦІ — площини, перпендикулярні гребеню.
   for (const side of [-1, 1] as const) {
@@ -190,6 +208,7 @@ export function gablePanels(
         a: f0,
         b: f1,
         halfT: 0,
+        ...corners(ridgeAlongZ, f0, f1),
       },
       baseY: roofY,
       height,
@@ -211,6 +230,7 @@ export function gablePanels(
       a: r0,
       b: r1,
       halfT: 0,
+      ...corners(!ridgeAlongZ, r0, r1),
     },
     baseY: roofY,
     height: ROOF_LIFT,
@@ -235,6 +255,7 @@ export function gablePanels(
         a: r0,
         b: r1,
         halfT: 0,
+        ...corners(!ridgeAlongZ, r0, r1),
       },
       baseY: roofY,
       height,
