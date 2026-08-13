@@ -145,7 +145,12 @@ export default function RoofView() {
   useEffect(() => {
     if (!drag) return
     const onMove = (e: PointerEvent) => {
-      const p = planePoint(e, gl.domElement, camera, DRAG_Y)
+      // Ловимо курсор на площині САМОЇ зони, а не над землею. Зона лежить на
+      // висоті свого поверху; якщо перетинати промінь із нижчою площиною, та
+      // точка через перспективу відходить далі — і зона бігла за курсором
+      // помітно швидше, ніж він рухався.
+      const lv = parts.find((p) => p.id === drag.id)?.level ?? 0
+      const p = planePoint(e, gl.domElement, camera, (lv + 1) * FLOOR_H + DRAG_Y)
       if (p) setCustomRoof(updateRoofPart(parts, drag.id, dragRect(drag, p.x, p.z)))
     }
     window.addEventListener('pointermove', onMove)

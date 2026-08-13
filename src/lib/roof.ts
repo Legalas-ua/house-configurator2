@@ -536,18 +536,26 @@ export function pinnedSides(part: RoofPart, above: PlanRect[]): Record<SideKey, 
 // бути не може: два скати мусять зійтися рівно на спільній лінії. Інакше вони
 // налазять один на одного на два звіси (0,7 м) — саме це й читалось як брудний
 // стик замість єндови.
+//
+// Сусід мусить закривати грань МАЙЖЕ ЦІЛКОМ. Раніше досить було торкнутись
+// півметром — і вся грань лишалась без звісу, зокрема та її частина, де сусіда
+// й близько немає: дах спинявся на осі стіни й не доходив до її зовнішньої
+// площини. Прямокутна геометрія не вміє «звіс на половині грані», тож із двох
+// зол вибираємо менше: торкання частиною — це вже не спільна лінія, а
+// звичайний вільний край зі звісом.
 export function zoneSides(part: RoofPart, siblings: PlanRect[]): Record<SideKey, boolean> {
   const out: Record<SideKey, boolean> = { xmin: false, xmax: false, zmin: false, zmax: false }
   const b = box(part)
+  const full = { x: b.x1 - b.x0, z: b.z1 - b.z0 }
   for (const s of siblings) {
     const c = box(s)
     const xOver = Math.min(b.x1, c.x1) - Math.max(b.x0, c.x0)
     const zOver = Math.min(b.z1, c.z1) - Math.max(b.z0, c.z0)
-    if (zOver > 0.5) {
+    if (zOver > full.z * 0.85) {
       if (Math.abs(c.x1 - b.x0) < 0.01) out.xmin = true
       if (Math.abs(c.x0 - b.x1) < 0.01) out.xmax = true
     }
-    if (xOver > 0.5) {
+    if (xOver > full.x * 0.85) {
       if (Math.abs(c.z1 - b.z0) < 0.01) out.zmin = true
       if (Math.abs(c.z0 - b.z1) < 0.01) out.zmax = true
     }

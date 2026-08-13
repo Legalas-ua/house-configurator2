@@ -554,7 +554,13 @@ function fasciaOf(
   const eaveOut = low * (hl + w - lap) // зовнішня грань дошки — вона не рухається
   const eaveDeep = w + hRake * Math.abs(sin)
   const eaveS = eaveOut - low * (eaveDeep / 2)
-  for (const [a, b] of freeRuns(-hw - w, hw + w, (u) => at(u, eaveS))) {
+  // СКЛАДЕНА зона: планка є лише там, де під нею СПРАВДІ є дах. Схил у неї
+  // будується на габариті зони, і без цього карнизна дошка вилітала в повітря
+  // над вирізом Г-подібного контуру.
+  const clipAt = (s: number): [number, number] =>
+    sl.clipU ? sl.clipU(Math.max(-hl, Math.min(hl, s))) : [-hw, hw]
+  const [eu0, eu1] = clipAt(low * hl)
+  for (const [a, b] of eu1 - eu0 < 0.05 ? [] : freeRuns(eu0 - w, eu1 + w, (u) => at(u, eaveS))) {
     const mid = at((a + b) / 2, eaveS)
     // Висоту беремо по ЗОВНІШНІЙ грані: якби брали по центру, дошка стирчала б
     // над покриттям — усередину схил підіймається.
@@ -581,11 +587,37 @@ function fasciaOf(
   // «хрест» на зламі). Кут між ними накриває кожух гребеня, розширений на
   // товщину самих дощок.
   const ridgeDir = sl.tilt > 0 ? 1 : -1
-  for (const side of [-1, 1] as const) {
-    const u = side * (hw + w / 2 - lap)
-    const s0 = ridgeDir > 0 ? -hl - w : -hl
-    const s1 = ridgeDir > 0 ? hl : hl + w
-    for (const [a, b] of freeRuns(s0, s1, (s) => at(u, s))) {
+  const s0 = ridgeDir > 0 ? -hl - w : -hl
+  const s1 = ridgeDir > 0 ? hl : hl + w
+  // Скатний край СКЛАДЕНОЇ зони йде сходинками: на різних ділянках падіння він
+  // стоїть у різних місцях. Тому спершу ділимо падіння на ділянки зі спільним
+  // краєм, а вже на кожній кладемо суцільний брусок — інакше дошка йшла б по
+  // габариту зони й половина її висіла б у повітрі.
+  const rakeRuns = (side: -1 | 1): [number, number, number][] => {
+    if (!sl.clipU) return [[side * (hw + w / 2 - lap), s0, s1]]
+    const out: [number, number, number][] = []
+    const n = Math.max(2, Math.ceil((s1 - s0) / 0.2))
+    let edge = NaN
+    let start = s0
+    const close = (at: number) => {
+      if (!Number.isNaN(edge) && at - start > 0.05) out.push([edge + side * (w / 2 - lap), start, at])
+    }
+    for (let i = 0; i <= n; i++) {
+      const s = s0 + ((s1 - s0) * i) / n
+      const c = clipAt(s)
+      const e = c[1] - c[0] < 0.05 ? NaN : c[side < 0 ? 0 : 1]
+      if (Number.isNaN(e) !== Number.isNaN(edge) || Math.abs(e - edge) > 0.05) {
+        close(s)
+        edge = e
+        start = s
+      }
+    }
+    close(s1)
+    return out
+  }
+  for (const side of [-1, 1] as const)
+    for (const [u, ra, rb] of rakeRuns(side)) {
+    for (const [a, b] of freeRuns(ra, rb, (s) => at(u, s))) {
       const sc = (a + b) / 2
       const ly = sc * sin + cos * nRake
       const lz = sc * cos - sin * nRake
@@ -599,8 +631,8 @@ function fasciaOf(
         rotY: sl.rotY,
         tilt: sl.tilt,
       })
+      }
     }
-  }
 }
 
 // Кожух гребеня. Кладеться ПО СХИЛУ, а не горизонтальним бруском поверх:
