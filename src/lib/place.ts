@@ -44,6 +44,9 @@ export function freeSpot(
   obstacles: PlanRect[],
   fits: (r: PlanRect) => boolean = () => true,
   rings = 24,
+  // Де взагалі можна ставити (контур покриття, плита поверху). Якщо задано —
+  // не знайшовши місця кільцями, пройдемо цю область сіткою.
+  area?: PlanRect,
 ): PlanRect | null {
   const ok = (r: PlanRect) => fits(r) && !obstacles.some((o) => overlaps(r, o))
   if (ok(start)) return start
@@ -66,5 +69,17 @@ export function freeSpot(
       if (ok(spot)) return spot
     }
   }
+  // Кільця йдуть лише по ВОСЬМИ напрямках від якоря, тож вільне місце, що
+  // лежить навскіс, вони не бачать. Через це четверта зона даху не додавалась,
+  // хоча місце було. Тому наостанок проходимо всю область сіткою й беремо
+  // найближчу вільну клітинку.
+  if (!area) return null
+  const a = bx(area)
+  const cand: PlanRect[] = []
+  for (let x = a.x0 + start.width / 2; x <= a.x1 - start.width / 2 + 1e-6; x += GRID)
+    for (let z = a.z0 + start.depth / 2; z <= a.z1 - start.depth / 2 + 1e-6; z += GRID)
+      cand.push({ ...start, x, z })
+  cand.sort((p, q) => Math.hypot(p.x - start.x, p.z - start.z) - Math.hypot(q.x - start.x, q.z - start.z))
+  for (const c of cand) if (ok(c)) return c
   return null
 }

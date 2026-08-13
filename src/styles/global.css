@@ -106,19 +106,34 @@ body {
 }
 
 /* ===== Каркас: сцена + права панель ===== */
+
+/* Ширину колонки тримаємо в ОКРЕМІЙ властивості й анімуємо саме її. Просто
+   `transition: grid-template-columns` браузери інтерполюють ненадійно: колонка
+   лишалась на місці всю анімацію й стрибала в нуль в останню мить — панель
+   уже поїхала, а фон за нею стояв, і полотно 3D розширювалось ривком.
+   Оголошена через @property властивість — справжня довжина, і вона їде
+   плавно. */
+@property --panel-w {
+  syntax: '<length>';
+  /* Успадковується: за цією ж величиною їде й кнопка згортання всередині
+     сцени, тож вони рухаються кадр у кадр. */
+  inherits: true;
+  initial-value: 360px;
+}
+
 .app {
   display: grid;
-  grid-template-columns: 1fr var(--panel-width);
+  --panel-w: var(--panel-width);
+  grid-template-columns: minmax(0, 1fr) var(--panel-w);
+  /* Панель ширини не міняє — коли колонка вужчає, вона просто виходить за
+     край і ховається тут. Інакше її вміст перевёрстувався б щокадру. */
+  overflow: hidden;
   /* minmax(0, 1fr), а не auto: інакше рядок росте під вміст панелі, і разом з
      ним РОЗТЯГУЄТЬСЯ полотно 3D — камера різко «стрибає», щойно в панелі
      з'явиться зайвий блок (напр. дані обраної кімнати). */
   grid-template-rows: minmax(0, 1fr);
   height: 100%;
-  /* Колонка їде РІВНО з панеллю, тією самою кривою. Раніше вона стрибала в
-     нуль за один кадр: полотно 3D миттєво ставало на 360 px ширшим, і камера
-     перескакувала. Тепер ширина міняється поступово, і переїзд читається як
-     плавна панорама. */
-  transition: grid-template-columns 0.32s cubic-bezier(0.32, 0.72, 0, 1);
+  transition: --panel-w 0.32s cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 .viewport {
@@ -133,29 +148,25 @@ body {
   min-height: 0; /* дозволяє панелі стискатись, а не розпирати рядок сітки */
   background: var(--surface);
   border-left: 1px solid var(--border);
-  /* Панель ЇДЕ за край, а не зникає ривком. Анімуємо саме transform: колонку
-     сітки чіпати не можна — від зміни ширини полотно 3D переміряється щокадру,
-     і камера смикається. */
-  transition: transform 0.32s cubic-bezier(0.32, 0.72, 0, 1);
+  /* Ширина СТАЛА: панель не стискається разом із колонкою, а виїжджає за край.
+     Інакше її вміст перевёрстувався б на кожному кадрі анімації. */
+  width: var(--panel-width);
 }
 
-/* Згорнута панель. Колонку сітки стягуємо в нуль — інакше на її місці
-   лишався порожній прямокутник, — а саму панель лишаємо на власній ширині й
-   виносимо зсувом за край. */
+/* Згорнута панель — колонка стягується в нуль, і панель їде за край разом із
+   нею. Окремо зсувати її не треба: вона просто ширша за свою колонку. */
 .app--narrow {
-  grid-template-columns: 1fr 0;
+  --panel-w: 0px;
 }
 
 .panel--closed {
-  width: var(--panel-width);
-  transform: translateX(100%);
   pointer-events: none;
 }
 
 .panel-toggle {
   position: absolute;
   top: 50%;
-  right: var(--panel-width);
+  right: var(--panel-w);
   z-index: 5;
   transform: translateY(-50%);
   width: 26px;
@@ -169,15 +180,11 @@ body {
   font-size: 18px;
   line-height: 1;
   cursor: pointer;
-  /* Кнопка їде рівно з панеллю — те саме сповільнення. */
+  /* Кнопка прив'язана до тієї самої властивості, що й колонка, тож їде з нею
+     кадр у кадр — власного сповільнення їй не треба. */
   transition:
-    right 0.32s cubic-bezier(0.32, 0.72, 0, 1),
     color 0.15s,
     border-color 0.15s;
-}
-
-.panel-toggle--closed {
-  right: 0;
 }
 
 .panel-toggle:hover {
@@ -923,9 +930,12 @@ body {
 
   /* Панель прокручується цілком */
   .panel {
+    /* На телефоні панель на всю ширину й їде ВНИЗ, тож ширину не фіксуємо. */
+    width: auto;
     border-left: none;
     border-top: 1px solid var(--border);
     overflow-y: auto;
+    transition: transform 0.32s cubic-bezier(0.32, 0.72, 0, 1);
   }
   .panel__content {
     flex: 0 0 auto;
@@ -973,9 +983,9 @@ body {
     grid-template-rows: 1fr 0;
   }
   .panel--closed {
-    width: auto;
     height: 56vh;
     transform: translateY(100%);
+    pointer-events: none;
   }
   .panel-toggle {
     top: auto;

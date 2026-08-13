@@ -92,12 +92,23 @@ function sanitize(config: HouseConfig): HouseConfig {
 // Повернулись раніше за крок → відповідне ручне редагування більше не діє.
 // План скидається на кроці «форма» (там міняють форму будинку), вікна — щойно
 // виходимо з кроку «Вікна» назад (там міняється планування, а з ним і стіни).
-const planReset = (index: number) => ({
+// Виділення живе лише на СВОЄМУ кроці. Переходячи далі, гасимо його: інакше
+// зона, яку щойно правили, так і світиться підсвіткою на наступному кроці.
+const clearPicks = {
   selectedRoom: null,
   selectedWindow: null,
   selectedWall: null,
   selectedDoor: null,
   selectedRoofPart: null,
+  selectedFacadeWall: null,
+  selectedTerrace: null,
+  selectedInteriorRoom: null,
+  selectedInnerWall: null,
+  selectedInnerDoor: null,
+}
+
+const planReset = (index: number) => ({
+  ...clearPicks,
   // Разом із плануванням відкочуємо й дах: там міняють форму будинку, а зони
   // даху намальовані під стару.
   ...(index < ROOMS_STEP
@@ -560,7 +571,7 @@ export const useConfigurator = create<ConfiguratorState>((set) => ({
         if (validateTerrace(plan, s.terraceZones).length > 0) return s
       }
       const next = Math.min(s.currentStep + 1, STEPS.length - 1)
-      return { currentStep: next, maxStepReached: Math.max(s.maxStepReached, next) }
+      return { ...clearPicks, currentStep: next, maxStepReached: Math.max(s.maxStepReached, next) }
     }),
 
   // З першого кроку «Назад» повертає на стартовий екран

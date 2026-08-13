@@ -238,7 +238,7 @@ export function addRoofPart(
   for (const k of [1, 0.75, 0.5, 0.35, 0.25]) {
     const w = Math.max(MIN_SIDE, snap(width * k))
     const d = Math.max(MIN_SIDE, snap(depth * k))
-    spot = freeSpot({ ...start, width: w, depth: d }, mine, onRoof)
+    spot = freeSpot({ ...start, width: w, depth: d }, mine, onRoof, 24, box)
     if (spot) break
   }
   if (!spot) return null
