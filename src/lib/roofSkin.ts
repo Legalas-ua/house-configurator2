@@ -8,6 +8,7 @@ import {
   partRects,
   rectsBox,
   slopeBox,
+  zoneRects,
   zoneRise,
   ROOF_LIFT,
   type RoofPart,
@@ -851,7 +852,7 @@ export function roofSkin(
     // Межі стіни = вісь плюс пів товщини й оздоблення: рівно видима поверхня.
     const out = WALL_T / 2 + CLAD_MAX_OUT
     // Сусідні зони того ж рівня: до них скат доходить упритул, без звісу.
-    const siblings = parts.filter((o) => o.level === part.level && o.id !== part.id).flatMap(partRects)
+    const siblings = zoneRects(parts, part)
     const blockers: Blocker[] = [...above, ...siblings].map((r) => ({
       x0: r.x - r.width / 2 - out,
       x1: r.x + r.width / 2 + out,

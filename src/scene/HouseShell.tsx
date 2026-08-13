@@ -36,7 +36,7 @@ import {
   type ResolvedWindow,
   type Side,
 } from '../lib/windows'
-import { cornerStop, parapetEdges, partRects, roofSkeleton, slopeBox, zoneRise, ROOF_LIFT } from '../lib/roof'
+import { cornerStop, parapetEdges, partRects, roofSkeleton, slopeBox, zoneRects, zoneRise, ROOF_LIFT } from '../lib/roof'
 import { edgeProfile, facePoint, planRise, unionCells, type Box as SkelBox, type SkelEdge, type SkelFace } from '../lib/roofSkeleton'
 import { roofSkin } from '../lib/roofSkin'
 import { terraceSkin, terraceSurfaces, TERRACE_UP_STACK } from '../lib/terraceSkin'
@@ -1445,7 +1445,7 @@ export default function HouseShell() {
         const y = (p.level + 1) * FLOOR_H
         // Фронтони скатного і стінки парапету плоского — усе це так само
         // зовнішні стіни, тільки вище покриття.
-        const sibs = roof.filter((o) => o.level === p.level && o.id !== p.id).flatMap(partRects)
+        const sibs = zoneRects(roof, p)
         return [...gablePanels(p, above, y, p.level, sibs), ...parapetPanels(p, above, y, p.level)].map((g) => ({
           ...g,
           // Матеріал фронтон/парапет НЕ обирають окремо: вони продовжують ту
@@ -1816,7 +1816,7 @@ export default function HouseShell() {
       // Сусідні зони того ж рівня: до них скат доходить УПРИТУЛ, без звісу —
       // інакше два крила налазять одне на одне на два звіси, і замість єндови
       // виходить каша з двох карнизів.
-      const sibs = roof.filter((o) => o.level === part.level && o.id !== part.id).flatMap(partRects)
+      const sibs = zoneRects(roof, part)
       // Складена зона будується ПО ЧАСТИНАХ, але з ОДНИМ підйомом гребеня:
       // головна частина задає висоту, другорядні врізаються в неї під прямим
       // кутом на тій самій відмітці.

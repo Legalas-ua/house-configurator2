@@ -1,7 +1,7 @@
 import type { HousePlan, PlanRect } from '../config/types'
 import { GRID, MIN_SIDE, snap } from './editPlan'
 import { outlineRects, ringContains, unionOutline } from './outline'
-import { freeSpot } from './place'
+import { freeSpot, touches } from './place'
 import { WALL_T } from './windows'
 import { mergeEdges, outlineEdges, roofFaces, type SkelEdge } from './roofSkeleton'
 
@@ -28,9 +28,10 @@ export interface RoofPart extends PlanRect {
   // а `rects` — самі частини. Порожнє поле означає одну частину = габарит.
   rects?: PlanRect[]
   kind: RoofKind
-  // ГОЛОВНА частина складеної зони — індекс у `rects`. Її гребінь задає дах,
-  // решта врізається в нього. Порожнє поле — головною береться найбільша.
-  main?: number
+  // ГОЛОВНА на стику з сусідньою зоною. Питання виникає лише тоді, коли в двох
+  // сусідів однакова висота коника: за різної висоти головним стає вищий сам
+  // собою, і галочка ні на що не впливає.
+  mainZone?: boolean
   parapetH: number // висота парапету (плоский)
   parapetT: number // товщина парапету (плоский)
   pitch: number // кут скату, градуси (скатний / односхилий)
@@ -292,7 +293,7 @@ export function joinRoofParts(parts: RoofPart[], a: string, b: string): RoofPart
   const rects = [...partRects(pa), ...partRects(pb)]
   // Головна частина зони після об'єднання рахується наново: старий індекс
   // указував би на зовсім інший прямокутник.
-  const merged: RoofPart = { ...pa, rects, main: undefined, ...rectsBox(rects) }
+  const merged: RoofPart = { ...pa, rects, ...rectsBox(rects) }
   return parts.filter((r) => r.id !== b).map((r) => (r.id === a ? merged : r))
 }
 
@@ -300,7 +301,7 @@ export function joinRoofParts(parts: RoofPart[], a: string, b: string): RoofPart
 export function splitRoofPart(parts: RoofPart[], id: string): RoofPart[] {
   const p = parts.find((r) => r.id === id)
   if (!p || !p.rects || p.rects.length < 2) return parts
-  const pieces = p.rects.map((r, i) => ({ ...p, rects: undefined, main: undefined, id: `${p.id}~${i}`, ...r }))
+  const pieces = p.rects.map((r, i) => ({ ...p, rects: undefined, id: `${p.id}~${i}`, ...r }))
   return parts.flatMap((r) => (r.id === id ? pieces : [r]))
 }
 
@@ -509,6 +510,18 @@ export const ROOF_LIFT = 0.09
 
 export type SideKey = 'xmin' | 'xmax' | 'zmin' | 'zmax'
 
+// Прямокутник сусідньої зони, що пам'ятає, ЧИЙ він: за ним видно висоту
+// коника, а отже — хто на стику головний.
+export type ZoneRect = PlanRect & { part?: RoofPart }
+
+// Прямокутники всіх ІНШИХ зон рівня — саме в такому вигляді їх чекає
+// `slopeBox`: складена зона віддає свої частини, і кожна знає свою зону.
+export function zoneRects(parts: RoofPart[], part: RoofPart): ZoneRect[] {
+  return parts
+    .filter((o) => o.level === part.level && o.id !== part.id)
+    .flatMap((o) => partRects(o).map((r) => ({ ...r, part: o })))
+}
+
 // Сторони, ПРИТИСНУТІ до стіни поверху вище. Ознака та сама, що й для
 // парапету, — грань накрита плитою поверху вище.
 export function pinnedSides(part: RoofPart, above: PlanRect[]): Record<SideKey, boolean> {
@@ -543,8 +556,8 @@ export function pinnedSides(part: RoofPart, above: PlanRect[]): Record<SideKey, 
 // площини. Прямокутна геометрія не вміє «звіс на половині грані», тож із двох
 // зол вибираємо менше: торкання частиною — це вже не спільна лінія, а
 // звичайний вільний край зі звісом.
-export function zoneSides(part: RoofPart, siblings: PlanRect[]): Record<SideKey, boolean> {
-  const out: Record<SideKey, boolean> = { xmin: false, xmax: false, zmin: false, zmax: false }
+export function zoneSides(part: RoofPart, siblings: PlanRect[]): Record<SideKey, ZoneRect | null> {
+  const out: Record<SideKey, ZoneRect | null> = { xmin: null, xmax: null, zmin: null, zmax: null }
   const b = box(part)
   const full = { x: b.x1 - b.x0, z: b.z1 - b.z0 }
   for (const s of siblings) {
@@ -552,33 +565,82 @@ export function zoneSides(part: RoofPart, siblings: PlanRect[]): Record<SideKey,
     const xOver = Math.min(b.x1, c.x1) - Math.max(b.x0, c.x0)
     const zOver = Math.min(b.z1, c.z1) - Math.max(b.z0, c.z0)
     if (zOver > full.z * 0.85) {
-      if (Math.abs(c.x1 - b.x0) < 0.01) out.xmin = true
-      if (Math.abs(c.x0 - b.x1) < 0.01) out.xmax = true
+      if (Math.abs(c.x1 - b.x0) < 0.01) out.xmin = s
+      if (Math.abs(c.x0 - b.x1) < 0.01) out.xmax = s
     }
     if (xOver > full.x * 0.85) {
-      if (Math.abs(c.z1 - b.z0) < 0.01) out.zmin = true
-      if (Math.abs(c.z0 - b.z1) < 0.01) out.zmax = true
+      if (Math.abs(c.z1 - b.z0) < 0.01) out.zmin = s
+      if (Math.abs(c.z0 - b.z1) < 0.01) out.zmax = s
     }
   }
   return out
 }
 
-export function sideExtend(part: RoofPart, above: PlanRect[], siblings: PlanRect[] = []): Record<SideKey, number> {
+// Куди дивиться ГРЕБІНЬ зони: вздовж Z чи вздовж X. Схил падає впоперек.
+export function ridgeAlongZ(p: RoofPart): boolean {
+  return p.rotation % 180 === 0 ? p.depth >= p.width : p.depth < p.width
+}
+
+// Висота коника зони над карнизом — рахується з самої зони, без плану й
+// сусідів. Саме за нею вирішується, хто на стику головний.
+export function ridgeHeight(p: RoofPart): number {
+  if (p.kind === 'flat') return p.parapetH
+  const tan = Math.tan((p.pitch * Math.PI) / 180)
+  const alongZ = p.rotation % 180 === 0 ? p.depth >= p.width : p.depth < p.width
+  const span = alongZ ? p.width : p.depth
+  return (p.kind === 'mono' ? span : span / 2) * tan
+}
+
+// Хто головний на стику. Вищий коник перемагає; за рівних вирішує галочка, а
+// коли її ніде немає — стабільний порядок за id, щоб дах не миготів.
+export function mainOfPair(a: RoofPart, b: RoofPart): RoofPart {
+  const ha = ridgeHeight(a)
+  const hb = ridgeHeight(b)
+  if (Math.abs(ha - hb) > 0.01) return ha > hb ? a : b
+  if (!!a.mainZone !== !!b.mainZone) return a.mainZone ? a : b
+  return a.id < b.id ? a : b
+}
+
+export function sideExtend(
+  part: RoofPart,
+  above: PlanRect[],
+  siblings: PlanRect[] = [],
+): Record<SideKey, number> {
   const pin = pinnedSides(part, above)
   const nb = zoneSides(part, siblings)
-  const value = (p: boolean, n: boolean) => (p ? -(WALL_T / 2 - 0.002) : n ? 0 : EAVE_BASE + part.overhang)
+  // НИЖЧА зона врізається у скат вищої, тож її схил має зайти в сусіда рівно
+  // настільки, щоб дійти до лінії їхнього перетину. Вища лишається як є.
+  const reach = (s: ZoneRect | null, alongZ: boolean) => {
+    const o = s?.part
+    if (!o || mainOfPair(part, o) === part) return 0
+    const tan = o.kind === 'flat' ? 0 : Math.tan((o.pitch * Math.PI) / 180)
+    if (tan < 1e-6) return 0
+    // Заходити є куди лише тоді, коли схил сусіда РОСТЕ від нашого стику,
+    // тобто його гребінь іде вздовж стику. Якщо гребені паралельні, обидва
+    // схили однакові — заходити нікуди, вийшло б накладання двох дахів.
+    if (ridgeAlongZ(o) !== alongZ) return 0
+    return Math.min(ridgeHeight(part) / tan, o.kind === 'mono' ? Infinity : ridgeHeight(o) / tan)
+  }
+  // Стик по грані x — це лінія вздовж Z, по грані z — вздовж X.
+  const value = (p: boolean, n: ZoneRect | null, k: SideKey) =>
+    p ? -(WALL_T / 2 - 0.002) : n ? reach(n, k === 'xmin' || k === 'xmax') : EAVE_BASE + part.overhang
   return {
-    xmin: value(pin.xmin, nb.xmin),
-    xmax: value(pin.xmax, nb.xmax),
-    zmin: value(pin.zmin, nb.zmin),
-    zmax: value(pin.zmax, nb.zmax),
+    xmin: value(pin.xmin, nb.xmin, 'xmin'),
+    xmax: value(pin.xmax, nb.xmax, 'xmax'),
+    zmin: value(pin.zmin, nb.zmin, 'zmin'),
+    zmax: value(pin.zmax, nb.zmax, 'zmax'),
   }
 }
 
 // Габарит СКАТУ у світі — рівно те, що будує HouseShell. `rect` дозволяє взяти
 // окрему ЧАСТИНУ складеної зони; без нього — габарит усієї зони. `siblings` —
 // сусідні зони того ж рівня: до них скат доходить упритул, без звісу.
-export function slopeBox(part: RoofPart, above: PlanRect[], rect?: PlanRect, siblings: PlanRect[] = []) {
+export function slopeBox(
+  part: RoofPart,
+  above: PlanRect[],
+  rect?: PlanRect,
+  siblings: PlanRect[] = [],
+) {
   const b = box(rect ?? part)
   const o = sideExtend(part, above, siblings)
   return {
@@ -752,11 +814,9 @@ export function roofWindowClashes(plan: HousePlan, parts: RoofPart[], windows: C
 
 // ---- Складена зона: дах по прямому скелету ----
 
-// Головна частина зони. За замовчуванням найбільша — саме вона задає гребінь,
-// а решта врізається в нього.
-export function mainRect(part: RoofPart): number {
+// Найбільша частина СКЛАДЕНОЇ зони: спірні клітинки контуру дістаються їй.
+function mainRect(part: RoofPart): number {
   const rects = partRects(part)
-  if (part.main !== undefined && part.main >= 0 && part.main < rects.length) return part.main
   let best = 0
   let area = -1
   rects.forEach((r, i) => {
@@ -827,4 +887,29 @@ function buildSkeleton(part: RoofPart, above: PlanRect[], siblings: PlanRect[] =
   // зшиваємо назад, інакше сусідні схили накриють ту саму ділянку двічі.
   const whole = mergeEdges(edges)
   return { boxes, edges: whole, faces: roofFaces(boxes, whole) }
+}
+
+// ---- Стик двох зон ----
+//
+// Правило, узгоджене з Lev: вирішує ВИСОТА коника. Нижчий дах врізається у скат
+// вищого — його схил заходить у сусіда рівно до лінії їхнього перетину (див.
+// `sideExtend`), а вищий лишається як є. Питання «хто головний» виникає лише за
+// РІВНОЇ висоти: тоді його вирішує галочка в панелі, і одразу на одній зоні з
+// пари — сусідові вона вже недоступна.
+
+// Зони того ж рівня, що торкаються цієї СПІЛЬНОЮ ГРАННЮ (а не кутом).
+export function zoneNeighbours(parts: RoofPart[], part: RoofPart): RoofPart[] {
+  const mine = partRects(part)
+  return parts.filter(
+    (o) =>
+      o.level === part.level &&
+      o.id !== part.id &&
+      partRects(o).some((r) => mine.some((m) => touches(m, r))),
+  )
+}
+
+// Сусіди РІВНОЇ висоти: лише з ними галочка «головна» щось вирішує.
+export function tiedNeighbours(parts: RoofPart[], part: RoofPart): RoofPart[] {
+  const h = ridgeHeight(part)
+  return zoneNeighbours(parts, part).filter((o) => Math.abs(ridgeHeight(o) - h) <= 0.01)
 }

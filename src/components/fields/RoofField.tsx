@@ -2,11 +2,11 @@ import { useConfigurator, useHousePlan, useRoof, useWindows } from '../../state/
 import type { PlanMode } from '../../config/types'
 import type { StepDef } from '../../config/steps'
 import {
-  mainRect,
-  partRects,
+  mainOfPair,
   roofLevels,
   roofWindowClashes,
   stepOverhang,
+  tiedNeighbours,
   updateRoofPart,
   OVERHANG,
   PARAPET_H,
@@ -91,6 +91,8 @@ function RoofEditorPanel() {
   if (levels.length === 0) return <p className="rooms__hint">{texts.noLevels}</p>
 
   const part = parts.find((p) => p.id === selected)
+  // Сусіди РІВНОЇ висоти — лише з ними галочка «головна» щось вирішує.
+  const tied = part ? tiedNeighbours(parts, part) : []
   const patch = (p: Parameters<typeof updateRoofPart>[2]) => part && setCustomRoof(updateRoofPart(parts, part.id, p))
 
   return (
@@ -162,28 +164,24 @@ function RoofEditorPanel() {
                     </button>
                   </div>
                 </div>
-                {/* СКЛАДЕНА зона: яка частина головна. Її гребінь задає дах,
-                    решта врізається в нього — тож вибір міняє форму даху
-                    цілком, а не лише дрібницю. */}
-                {/* Вальмовому головна частина нічого не дає: у нього схили
-                    ростуть з усіх граней однаково, тож напрям гребеня нізвідки
-                    не береться. Показуємо лише двосхилому. */}
-                {partRects(part).length > 1 && part.kind === 'gable' && (
+                {/* ГОЛОВНА НА СТИКУ. За різної висоти коника головним стає вищий
+                    сам собою — питання виникає лише за рівної висоти, і тоді
+                    вибір є лише на ОДНІЙ зоні з пари. */}
+                {tied.length > 0 && (
                   <>
                     <span className="rooms__subtitle">{texts.main}</span>
-                    <div className="chips">
-                      {partRects(part).map((r, i) => (
-                        <button
-                          key={i}
-                          type="button"
-                          className={`chip${mainRect(part) === i ? ' chip--on' : ''}`}
-                          onClick={() => patch({ main: i })}
-                        >
-                          {r.width.toFixed(1)} × {r.depth.toFixed(1)} м
-                        </button>
-                      ))}
-                    </div>
-                    <p className="rooms__hint">{texts.mainHint}</p>
+                    <label className="floor-hide">
+                      <input
+                        type="checkbox"
+                        checked={tied.every((o) => mainOfPair(part, o) === part)}
+                        disabled={tied.some((o) => o.mainZone)}
+                        onChange={(e) => patch({ mainZone: e.target.checked })}
+                      />
+                      {texts.mainLabel}
+                    </label>
+                    <p className="rooms__hint">
+                      {tied.some((o) => o.mainZone) ? texts.mainTaken : texts.mainHint}
+                    </p>
                   </>
                 )}
                 {/* Вальмовий симетричний — повертати його нічого. */}
