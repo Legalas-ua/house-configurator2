@@ -1,6 +1,6 @@
 import type { HousePlan, PlanRect, RoofMatKind, RoofMatSpec } from '../config/types'
 import { roofSkeleton } from './roof'
-import { facePoint, faceSpan } from './roofSkeleton'
+import { facePoint, faceSpan, planRise } from './roofSkeleton'
 import {
   cornerStop,
   parapetCorner,
@@ -679,6 +679,52 @@ function ridgeCap(sl: Slope, kind: RoofMatKind, out: SkinBox[]) {
   })
 }
 
+// Кожухи на ПОХИЛИХ ребрах складеної зони. Профіль кожного схилу вже містить
+// ці ребра: там, де межа смуги їде вбік із глибиною, схил і сходиться із
+// сусіднім під 45°. Ребро буває двох ґатунків — вальма (дах над ним
+// перегинається ВНИЗ, і шов треба накрити) та єндова (перегин угору, там
+// жолоб). Розрізняємо їх просто: дивимось, що по обидва боки від ребра —
+// нижче чи вище.
+function skeletonCaps(
+  part: RoofPart,
+  above: PlanRect[],
+  roofY: number,
+  siblings: PlanRect[],
+  kind: RoofMatKind,
+  out: SkinBox[],
+  skip: (x: number, z: number) => boolean,
+) {
+  const sk = roofSkeleton(part, above, siblings)
+  const tan = Math.tan((part.pitch * Math.PI) / 180)
+  const tv = part.kind === 'gable' && part.overhang === 0 ? ROOF_T / Math.cos(Math.atan(tan)) : 0
+  const y = (t: number) => roofY + ROOF_LIFT + t * tan + tv
+  for (const f of sk.faces) {
+    for (let i = 0; i + 1 < f.steps.length; i++) {
+      const s0 = f.steps[i]
+      const s1 = f.steps[i + 1]
+      if (s1.t - s0.t < 0.05) continue
+      for (const side of ['lo', 'hi'] as const) {
+        const [u0, u1] = [s0[side], s1[side]]
+        if (Math.abs(u1 - u0) < 0.05) continue // ребро вздовж падіння — не похиле
+        const [x0, z0] = facePoint(f.edge, u0, s0.t)
+        const [x1, z1] = facePoint(f.edge, u1, s1.t)
+        if (skip(x0, z0) || skip(x1, z1)) continue
+        // Перегин донизу (вальма) чи догори (єндова)? Пробуємо трохи вбік від
+        // середини ребра поперек нього.
+        const mx = (x0 + x1) / 2
+        const mz = (z0 + z1) / 2
+        const len = Math.hypot(x1 - x0, z1 - z0)
+        const px = (-(z1 - z0) / len) * 0.2
+        const pz = ((x1 - x0) / len) * 0.2
+        const h = planRise(sk.edges, mx, mz)
+        if (planRise(sk.edges, mx + px, mz + pz) > h + 0.01) continue
+        if (planRise(sk.edges, mx - px, mz - pz) > h + 0.01) continue
+        hipCap([x0, y(s0.t), z0], [x1, y(s1.t), z1], roofSkinHeight(kind) + 0.012, out)
+      }
+    }
+  }
+}
+
 // Кожух на ВАЛЬМІ — по діагональному ребру між сусідніми схилами. Ребро йде
 // під кутом і в плані, і по висоті, тож поворот беремо з самого відрізка.
 function hipCap(
@@ -792,6 +838,10 @@ export function roofSkin(
 
     // Вальма: чотири діагональні ребра між схилами. Шов на них закриває
     // окремий кожух, покладений ПО ребру — тобто теж під кутом.
+    // Складена зона: усі ребра в неї похилі — і вальми, і єндови. Кожух
+    // кладеться по самому ребру, як і на простій вальмі.
+    if (part.kind !== 'flat' && part.kind !== 'mono' && partRects(part).length > 1)
+      skeletonCaps(part, above, roofY, siblings, spec.kind, gt.boxes, atWall)
     if (part.kind === 'hip' && partRects(part).length === 1) {
       const gb = slopeBox(part, above, undefined, siblings)
       const w = gb.x1 - gb.x0

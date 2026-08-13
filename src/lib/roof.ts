@@ -3,7 +3,7 @@ import { GRID, MIN_SIDE, snap } from './editPlan'
 import { outlineRects, ringContains, unionOutline } from './outline'
 import { freeSpot } from './place'
 import { WALL_T } from './windows'
-import { outlineEdges, roofFaces, type SkelEdge } from './roofSkeleton'
+import { mergeEdges, outlineEdges, roofFaces, type SkelEdge } from './roofSkeleton'
 
 // ============================================================
 // Дах як ДАНІ — за тим самим принципом, що план і вікна.
@@ -823,5 +823,8 @@ function buildSkeleton(part: RoofPart, above: PlanRect[], siblings: PlanRect[] =
       e.own === main ? mainAlongZ : mainAlongZ ? ratio > 1 / CROSS : ratio > CROSS
     return { ...e, rising: ridgeAlongZ ? !e.horizontal : e.horizontal }
   })
-  return { boxes, edges, faces: roofFaces(boxes, edges) }
+  // Розмітка могла лишити одну пряму грань нарізаною по частинах зони —
+  // зшиваємо назад, інакше сусідні схили накриють ту саму ділянку двічі.
+  const whole = mergeEdges(edges)
+  return { boxes, edges: whole, faces: roofFaces(boxes, whole) }
 }

@@ -37,7 +37,7 @@ import {
   type Side,
 } from '../lib/windows'
 import { cornerStop, parapetEdges, partRects, roofSkeleton, slopeBox, zoneRise, ROOF_LIFT } from '../lib/roof'
-import { edgeProfile, facePoint, unionCells, type Box as SkelBox, type SkelEdge, type SkelFace } from '../lib/roofSkeleton'
+import { edgeProfile, facePoint, planRise, unionCells, type Box as SkelBox, type SkelEdge, type SkelFace } from '../lib/roofSkeleton'
 import { roofSkin } from '../lib/roofSkin'
 import { terraceSkin, terraceSurfaces, TERRACE_UP_STACK } from '../lib/terraceSkin'
 import { interiorSkin, interiorSurfaces } from '../lib/interiorSkin'
@@ -498,7 +498,7 @@ function skeletonBand(
           { u: e.a, h: 0 },
           { u: e.b, h: 0 },
         ]
-      : edgeProfile(edges, e)
+      : edgeProfile((x, z) => planRise(edges, x, z), e)
     const ref: V3 = e.horizontal ? [0, 0, e.n] : [e.n, 0, 0]
     const P = (u: number, y: number): V3 => (e.horizontal ? [u, y, e.line] : [e.line, y, u])
     for (let i = 0; i + 1 < prof.length; i++) {

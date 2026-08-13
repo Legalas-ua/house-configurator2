@@ -1,7 +1,7 @@
 import type { PlanRect } from '../config/types'
 import type { HeightAt } from './cladding'
 import { parapetEdges, partRects, roofSkeleton, slopeBox, ROOF_LIFT, type RoofPart } from './roof'
-import { edgeProfile, facePoint, insideBoxes, planRise } from './roofSkeleton'
+import { edgeProfile, facePoint, insideBoxes, outlineEdges, planRise } from './roofSkeleton'
 import { WALL_T } from './windows'
 import type { WallFace } from './wallFaces'
 
@@ -116,18 +116,34 @@ export function gablePanels(
   // самому контуру. Рахувати їх по габариту зони не можна: саме через це на
   // Г-подібному даху світив голий трикутник — оздоблення стояло по габариту, а
   // геометрія по частинах.
-  // Односхилий сюди НЕ заходить: його геометрія — одна похила площина на всю
-  // зону, скелета під нею немає. Інакше, перемкнувши двосхилий на односхилий,
-  // клієнт бачив оздоблення, підрізане ще по-двосхилому.
-  if (partRects(part).length > 1 && part.kind === 'gable') {
+  // ОДНОСХИЛИЙ сюди теж заходить, але зі своєю висотою: скелета під ним немає,
+  // у нього одна похила площина на всю зону. Спільне в них те, що стіни йдуть
+  // по КОНТУРУ, а не по габариту.
+  if (partRects(part).length > 1) {
+    const boxes = partRects(part).map((r) => {
+      const b = slopeBox(part, above, r, siblings)
+      return { x0: b.x0, x1: b.x1, z0: b.z0, z1: b.z1 }
+    })
     const sk = roofSkeleton(part, above, siblings)
+    let edges = sk.edges
+    let hplan = (x: number, z: number) => planRise(sk.edges, x, z)
+    if (part.kind === 'mono') {
+      const g = slopeBox(part, above, undefined, siblings)
+      const w = g.x1 - g.x0
+      const d = g.z1 - g.z0
+      const alongZ = part.rotation % 180 === 0 ? d >= w : d < w
+      // Низький край площини — від нього й рахується підйом.
+      const low = part.rotation < 180 ? (alongZ ? g.x0 : g.z1) : alongZ ? g.x1 : g.z0
+      edges = outlineEdges(boxes).map((e) => ({ ...e, rising: false }))
+      hplan = (x, z) => Math.abs((alongZ ? x : z) - low)
+    }
     const out: GablePanel[] = []
-    for (const e of sk.edges) {
+    for (const e of edges) {
       // Ріг ВЛАСНЕ рогом є лише там, де стіна повертає (90°). На увігнутому
       // куті (270°) вона йде далі, і загортати оздоблення нікуди.
       const turns = (u: number, dir: 1 | -1) => {
         const [x, z] = facePoint(e, u + dir * 0.01, 0.01)
-        return !insideBoxes(sk.boxes, x, z)
+        return !insideBoxes(boxes, x, z)
       }
       const face: WallFace = {
         id: `${floor}|gable|${part.id}|${e.horizontal ? 'h' : 'v'}|${e.line.toFixed(2)}|${e.a.toFixed(2)}`,
@@ -146,20 +162,20 @@ export function gablePanels(
         cornerA: e.horizontal && turns(e.a, -1) ? e.a : undefined,
         cornerB: e.horizontal && turns(e.b, 1) ? e.b : undefined,
       }
-      // Карниз — сама лише вузька грань клина під схилом.
-      if (e.rising) {
+      // Дах над гранню лежить на нулі — це КАРНИЗ: сама лише вузька грань
+      // клина під схилом. Інакше це фронтон, і стіна йде до самої лінії даху.
+      const top = Math.max(...edgeProfile(hplan, e).map((p) => p.h)) * tan
+      if (top < 0.02) {
         out.push({ face, baseY: roofY, height: ROOF_LIFT })
         continue
       }
-      // Фронтон — стіна до самої лінії даху над нею.
-      const top = Math.max(...edgeProfile(sk.edges, e).map((p) => p.h)) * tan
       out.push({
         face,
         baseY: roofY,
         height: ROOF_LIFT + top,
         heightAt: (u) => {
           const [x, z] = facePoint(e, u, 1e-3)
-          return roofY + ROOF_LIFT + planRise(sk.edges, x, z) * tan
+          return roofY + ROOF_LIFT + hplan(x, z) * tan
         },
       })
     }
@@ -179,7 +195,12 @@ export function gablePanels(
   const f1 = ridgeAlongZ ? g.x1 : g.z1
   const r0 = ridgeAlongZ ? g.z0 : g.x0
   const r1 = ridgeAlongZ ? g.z1 : g.x1
-  const highAtMax = !(mono && part.rotation >= 180)
+  // Куди дивиться ВИСОКИЙ край односхилого. Локальна вісь X геометрії при
+  // повороті на 90° лягає на −Z, тож для падіння вздовж Z умова дзеркальна —
+  // рахуємо рівно так само, як HouseShell і покриття. Раніше тут стояло просто
+  // «поворот < 180», і при падінні вздовж Z фронтон рахувався з ПРОТИЛЕЖНОГО
+  // краю: оздоблення підрізалось дзеркально до справжнього схилу.
+  const highAtMax = !mono || (ridgeAlongZ ? part.rotation < 180 : part.rotation >= 180)
 
   // Верх стіни в точці u — це лінія схилу. Саме до неї підрізаються елементи,
   // тож оздоблення доходить упритул до похилої плити, без сходинок.

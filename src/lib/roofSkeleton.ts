@@ -202,6 +202,16 @@ export function facePoint(e: SkelEdge, u: number, t: number): [number, number] {
 // ближчий справжній карниз.
 function cornerEdges(edges: SkelEdge[], reach: number): SkelEdge[] {
   const out: SkelEdge[] = []
+  // Грань контуру, що впирається в кінець `end` грані `e`.
+  const nextTo = (e: SkelEdge, end: number) =>
+    edges.find(
+      (o) =>
+        o !== e &&
+        o.horizontal !== e.horizontal &&
+        Math.abs(o.line - end) < 0.01 &&
+        e.line > o.a - 0.01 &&
+        e.line < o.b + 0.01,
+    )
   for (const e of edges) {
     if (!e.rising) continue
     // Углиб від грані — у бік, протилежний зовнішній нормалі.
@@ -210,18 +220,57 @@ function cornerEdges(edges: SkelEdge[], reach: number): SkelEdge[] {
     for (const [end, n] of [
       [e.a, 1],
       [e.b, -1],
-    ] as const)
-      out.push({
-        horizontal: !e.horizontal,
-        line: end,
-        a: Math.min(from, to),
-        b: Math.max(from, to),
-        n,
-        own: e.own,
-        rising: true,
-        corner: true,
-        parent: e,
-      })
+    ] as const) {
+      // За кінцем карниза дах загортається двома гранями. ПЕРША — упоперек
+      // карниза: вона й дає трикутник на розі. Якщо за рогом знову карниз, той
+      // бік накриває власний схил, і ця грань лягала б поверх нього другим
+      // шаром покриття.
+      if (!nextTo(e, end)?.rising)
+        out.push({
+          horizontal: !e.horizontal,
+          line: end,
+          a: Math.min(from, to),
+          b: Math.max(from, to),
+          n,
+          own: e.own,
+          rising: true,
+          corner: true,
+          parent: e,
+        })
+    }
+  }
+  return out
+}
+
+// Співлінійні сусідні грані з однаковою нормаллю й однаковою роллю — це ОДНА
+// грань. Розрізаними вони виходять із контуру лише тому, що за ними різні
+// прямокутники зони; лишити їх нарізкою не можна — кожна з них розповзається
+// за свій кінець, і сусідні схили накривають ту саму ділянку ДВІЧІ (покриття
+// лягало другим шаром).
+export function mergeEdges(edges: SkelEdge[]): SkelEdge[] {
+  const sorted = [...edges].sort(
+    (p, q) =>
+      Number(p.horizontal) - Number(q.horizontal) ||
+      p.line - q.line ||
+      p.n - q.n ||
+      Number(p.rising) - Number(q.rising) ||
+      p.a - q.a,
+  )
+  const out: SkelEdge[] = []
+  for (const e of sorted) {
+    const last = out[out.length - 1]
+    if (
+      last &&
+      last.horizontal === e.horizontal &&
+      Math.abs(last.line - e.line) < 1e-6 &&
+      last.n === e.n &&
+      last.rising === e.rising &&
+      Math.abs(last.b - e.a) < 1e-6
+    ) {
+      last.b = e.b
+      continue
+    }
+    out.push({ ...e })
   }
   return out
 }
@@ -236,6 +285,9 @@ function owns(boxes: Box[], edges: SkelEdge[], e: SkelEdge, u: number, t: number
   // За кінцем грані точка вже далі за t — там схил і закінчується. Без цієї
   // перевірки схил «розповзався» вздовж власної лінії на весь контур.
   if (edgeDist(e, x, z) > t + 1e-4) return false
+  // Кутова грань живе ЛИШЕ за рогом свого карниза — там, де точка вийшла за
+  // його кінець далі, ніж відійшла від його лінії. Інакше вона залазила б на
+  // сам карниз і псувала розкрій.
   // Кутова грань живе ЛИШЕ за рогом свого карниза — там, де точка вийшла за
   // його кінець далі, ніж відійшла від його лінії. Інакше вона залазила б на
   // сам карниз і псувала розкрій.
@@ -311,7 +363,7 @@ export function roofFaces(boxes: Box[], edges: SkelEdge[], step = 0.05): SkelFac
   // кутові грані лише добирають те, що лишилось за кінцями карнизів.
   const field = edges.filter((e) => e.rising)
   const out: SkelFace[] = []
-  for (const e of [...field, ...cornerEdges(field, limit)]) {
+  for (const e of [...field, ...cornerEdges(edges, limit)]) {
     const uMin = e.a - limit
     const uMax = e.b + limit
     const span = (t: number) => spanAt(boxes, field, e, t, uMin, uMax)
@@ -430,10 +482,14 @@ export function faceSpan(face: SkelFace, t: number): [number, number] {
 // Силует ДАХУ над гранню: висота (у плані, до множення на tan) над кожною
 // точкою грані. Уздовж карниза це нуль, а над фронтоном — та сама ламана, по
 // якій його ріже дах. Вузли, що лежать на одній прямій, злипаються.
-export function edgeProfile(edges: SkelEdge[], e: SkelEdge, step = 0.02): { u: number; h: number }[] {
+export function edgeProfile(
+  h: (x: number, z: number) => number,
+  e: SkelEdge,
+  step = 0.02,
+): { u: number; h: number }[] {
   const at = (u: number) => {
     const [x, z] = facePoint(e, u, 1e-3)
-    return planRise(edges, x, z)
+    return h(x, z)
   }
   const n = Math.max(2, Math.ceil((e.b - e.a) / step))
   const raw: { u: number; h: number }[] = []
