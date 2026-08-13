@@ -885,14 +885,19 @@ function buildSkeleton(
   // поперек — саме вона й врізається в головну єндовою. Квадратне крило
   // власного гребеня не отримує: інакше дах ламався б від міліметра різниці
   // між сторонами.
-  const along = (b: (typeof boxes)[number]) =>
-    part.rotation % 180 === 0 ? b.z1 - b.z0 >= b.x1 - b.x0 : b.z1 - b.z0 < b.x1 - b.x0
-  const mainAlongZ = along(boxes[main])
+  //
+  // Напрям беремо з ВЛАСНОГО прямокутника зони, а не з габариту схилу: у
+  // габарит входить іще й захід у сусіда, і від нього зона могла стати
+  // «глибшою за широку». Через це, коли клієнт лише міняв кут нахилу, дах
+  // раптом сам перекидався на 90°.
+  const own = partRects(part)
+  const along = (r: PlanRect) => (part.rotation % 180 === 0 ? r.depth >= r.width : r.depth < r.width)
+  const mainAlongZ = along(own[main])
   const CROSS = 1.2
   const edges: SkelEdge[] = outlineEdges(boxes, main).map((e) => {
     if (part.kind === 'hip') return { ...e, rising: true }
-    const b = boxes[e.own]
-    const ratio = (b.z1 - b.z0) / Math.max(b.x1 - b.x0, 1e-6)
+    const r = own[e.own]
+    const ratio = r.depth / Math.max(r.width, 1e-6)
     const ridgeAlongZ =
       e.own === main ? mainAlongZ : mainAlongZ ? ratio > 1 / CROSS : ratio > CROSS
     return { ...e, rising: ridgeAlongZ ? !e.horizontal : e.horizontal }

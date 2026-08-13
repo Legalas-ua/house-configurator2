@@ -525,6 +525,44 @@ function skeletonBand(
   }
 }
 
+// Зріз по ЄНДОВІ. Там, де наш дах підрізано сусідським, верхню поверхню
+// обрізано й дно теж — а між ними лишався наскрізний просвіт, і дах світився
+// (скріншот Lev). Закриваємо зріз вертикальною стінкою.
+function skeletonCut(
+  faces: SkelFace[],
+  tan: number,
+  lo: (y: number) => number,
+  hi: (y: number) => number,
+  hidden: (x: number, z: number) => boolean,
+  pos: number[],
+) {
+  for (const f of faces) {
+    const e = f.edge
+    for (let i = 0; i + 1 < f.steps.length; i++) {
+      const s0 = f.steps[i]
+      const s1 = f.steps[i + 1]
+      if (s1.t - s0.t < 1e-3) continue
+      for (const side of ['lo', 'hi'] as const) {
+        const dir = side === 'lo' ? -1 : 1
+        // Точка ТРОХИ ЗА краєм: якщо там уже чужий дах — це зріз, а не край.
+        const [mx, mz] = facePoint(e, (s0[side] + s1[side]) / 2 + dir * 0.05, (s0.t + s1.t) / 2)
+        if (!hidden(mx, mz)) continue
+        const [x0, z0] = facePoint(e, s0[side], s0.t)
+        const [x1, z1] = facePoint(e, s1[side], s1.t)
+        const ref: V3 = e.horizontal ? [dir, 0, 0] : [0, 0, dir]
+        pushQuad(
+          pos,
+          [x0, lo(s0.t * tan), z0],
+          [x1, lo(s1.t * tan), z1],
+          [x1, hi(s1.t * tan), z1],
+          [x0, hi(s0.t * tan), z0],
+          ref,
+        )
+      }
+    }
+  }
+}
+
 interface Skeleton {
   boxes: SkelBox[]
   edges: SkelEdge[]
@@ -541,6 +579,7 @@ function skeletonGeometry(
   const pos: number[] = []
   skeletonSurface(sk.faces, tan, 0, UP, pos)
   skeletonBand(sk.edges, tan, () => -skirt, (y) => y, pos, hidden)
+  if (hidden) skeletonCut(sk.faces, tan, () => -skirt, (y) => y, hidden, pos)
   // Дно — лише під тією частиною, що справді лишилась дахом. Під сусідським
   // схилом наше дно просто висіло б у повітрі (саме воно й світило рожевим).
   for (const c of unionCells(sk.boxes)) {
@@ -574,6 +613,7 @@ function skeletonPlateGeometry(
   skeletonSurface(sk.faces, tan, tv, UP, pos)
   skeletonSurface(sk.faces, tan, 0, DOWN, pos)
   skeletonBand(sk.edges, tan, (y) => y, (y) => y + tv, pos, hidden)
+  if (hidden) skeletonCut(sk.faces, tan, (y) => y, (y) => y + tv, hidden, pos)
   const g = new BufferGeometry()
   g.setAttribute('position', new Float32BufferAttribute(pos, 3))
   g.computeVertexNormals()
