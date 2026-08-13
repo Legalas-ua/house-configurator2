@@ -1,6 +1,7 @@
 import type { PlanRect } from '../config/types'
 import type { HeightAt } from './cladding'
-import { parapetEdges, slopeBox, ROOF_LIFT, type RoofPart } from './roof'
+import { parapetEdges, partRects, roofSkeleton, slopeBox, ROOF_LIFT, type RoofPart } from './roof'
+import { edgeProfile, facePoint, planRise } from './roofSkeleton'
 import { WALL_T } from './windows'
 import type { WallFace } from './wallFaces'
 
@@ -109,12 +110,52 @@ export function gablePanels(
   // HouseShell: wallLike лише за overhang === 0).
   if (part.kind === 'gable' && part.overhang > 0) return []
 
+  const tan = Math.tan((part.pitch * Math.PI) / 180)
+
+  // СКЛАДЕНА зона — дах по прямому скелету, і стіни під ним ідуть по тому
+  // самому контуру. Рахувати їх по габариту зони не можна: саме через це на
+  // Г-подібному даху світив голий трикутник — оздоблення стояло по габариту, а
+  // геометрія по частинах.
+  if (partRects(part).length > 1) {
+    const sk = roofSkeleton(part, above, siblings)
+    const out: GablePanel[] = []
+    for (const e of sk.edges) {
+      const face: WallFace = {
+        id: `${floor}|gable|${part.id}|${e.horizontal ? 'h' : 'v'}|${e.line.toFixed(2)}|${e.a.toFixed(2)}`,
+        floor,
+        horizontal: e.horizontal,
+        line: e.line,
+        nx: e.horizontal ? 0 : e.n,
+        nz: e.horizontal ? e.n : 0,
+        a: e.a,
+        b: e.b,
+        halfT: 0,
+      }
+      // Карниз — сама лише вузька грань клина під схилом.
+      if (e.rising) {
+        out.push({ face, baseY: roofY, height: ROOF_LIFT })
+        continue
+      }
+      // Фронтон — стіна до самої лінії даху над нею.
+      const top = Math.max(...edgeProfile(sk.edges, e).map((p) => p.h)) * tan
+      out.push({
+        face,
+        baseY: roofY,
+        height: ROOF_LIFT + top,
+        heightAt: (u) => {
+          const [x, z] = facePoint(e, u, 1e-3)
+          return roofY + ROOF_LIFT + planRise(sk.edges, x, z) * tan
+        },
+      })
+    }
+    return out
+  }
+
   const g = slopeBox(part, above, undefined, siblings)
   const w = g.x1 - g.x0
   const d = g.z1 - g.z0
   const ridgeAlongZ = part.rotation % 180 === 0 ? d >= w : d < w
   const span = ridgeAlongZ ? w : d
-  const tan = Math.tan((part.pitch * Math.PI) / 180)
   const mono = part.kind === 'mono'
   const rise = mono ? span * tan : (span / 2) * tan
   const height = ROOF_LIFT + rise

@@ -1,4 +1,6 @@
 import type { HousePlan, PlanRect, RoofMatKind, RoofMatSpec } from '../config/types'
+import { roofSkeleton } from './roof'
+import { facePoint, faceSpan } from './roofSkeleton'
 import {
   cornerStop,
   parapetCorner,
@@ -97,6 +99,10 @@ interface Slope {
   // який проміжок уздовж гребеня існує на відстані s від центру схилу.
   clipU?: (s: number) => [number, number]
   noRake?: boolean // краї схилу — вальми, торцевої планки там не буває
+  // Схил, якого немає в контурі: кутовий трикутник прямого скелета. Він
+  // лежить УСЕРЕДИНІ даху, тож ні карнизної, ні торцевої планки на ньому не
+  // буває — тільки саме покриття.
+  inner?: boolean
   cap?: number // довжина кожуха на ВЕРХНЬОМУ краї (0/undefined — кожуха немає)
 }
 
@@ -255,10 +261,12 @@ function clipToRects(
 function slopesOf(part: RoofPart, above: PlanRect[], roofY: number, siblings: PlanRect[]): Slope[] {
   const rects = partRects(part)
   if (rects.length <= 1) return slopesOfRect(part, above, roofY, rects[0], siblings)
-  // ОДНОСХИЛИЙ і ДВОСХИЛИЙ — площина (у двосхилого «намет» із двох) одна на
-  // всю зону, підрізана по її контуру. Розкладка по частинах давала кілька
-  // окремих скатів замість одного даху складної форми.
-  if (part.kind === 'mono' || part.kind === 'gable') {
+  // СКАТНИЙ І ВАЛЬМОВИЙ — один дах по прямому скелету: стільки схилів, скільки
+  // карнизів у контуру, кожен підрізаний по своїй ділянці скелета.
+  if (part.kind === 'gable' || part.kind === 'hip') return skeletonSlopes(part, above, roofY, siblings)
+  // ОДНОСХИЛИЙ — одна площина на всю зону, підрізана по її контуру. Скелет
+  // йому не потрібен: у односхилого немає ні гребеня, ні єндов.
+  if (part.kind === 'mono') {
     const boxes = rects.map((r) => {
       const b = slopeBox(part, above, r, siblings)
       return { x: (b.x0 + b.x1) / 2, z: (b.z0 + b.z1) / 2, width: b.x1 - b.x0, depth: b.z1 - b.z0 }
@@ -267,6 +275,58 @@ function slopesOf(part: RoofPart, above: PlanRect[], roofY: number, siblings: Pl
   }
   // Решта типів поки лишається сумою схилів своїх частин.
   return rects.flatMap((r) => slopesOfRect(part, above, roofY, r, siblings))
+}
+
+// Схили складеної зони: по одному на кожен КАРНИЗ контуру плюс кутові
+// трикутники. Мають ТОЧНО збігатися з тілом даху в HouseShell — обидва
+// беруть ті самі схили того самого скелета.
+function skeletonSlopes(part: RoofPart, above: PlanRect[], roofY: number, siblings: PlanRect[]): Slope[] {
+  const sk = roofSkeleton(part, above, siblings)
+  const tan = Math.tan((part.pitch * Math.PI) / 180)
+  const ang = Math.atan(tan)
+  // Зі звісом покрівля лягає просто на тіло даху; без звісу зверху ще плита.
+  const tv = part.kind === 'gable' && part.overhang === 0 ? ROOF_T / Math.cos(ang) : 0
+  return sk.faces.map((f) => {
+    const e = f.edge
+    let uMin = Infinity
+    let uMax = -Infinity
+    for (const s of f.steps) {
+      uMin = Math.min(uMin, s.lo)
+      uMax = Math.max(uMax, s.hi)
+    }
+    const tMax = f.steps[f.steps.length - 1].t
+    const rise = tMax * tan
+    const len = Math.hypot(tMax, rise)
+    const uc = (uMin + uMax) / 2
+    const [cx, cz] = facePoint(e, uc, tMax / 2)
+    // Той самий лад, що й у вальмового: rotY розвертає схил карнизом униз,
+    // а u йде вздовж карниза.
+    const rotY = e.horizontal ? (e.n < 0 ? 0 : Math.PI) : e.n < 0 ? Math.PI / 2 : -Math.PI / 2
+    const sign = e.horizontal ? -e.n : e.n
+    const cos = Math.cos(ang)
+    return {
+      cx,
+      cy: roofY + ROOF_LIFT + rise / 2 + tv,
+      cz,
+      rotY,
+      tilt: ang,
+      width: uMax - uMin,
+      len,
+      clipU: (s: number): [number, number] => {
+        const [lo, hi] = faceSpan(f, Math.min(Math.max((s + len / 2) * cos, 0), tMax))
+        const a = (lo - uc) * sign
+        const b = (hi - uc) * sign
+        return [Math.min(a, b), Math.max(a, b)]
+      },
+      // Кожух — по верхньому краю; де там не гребінь, а вальма, підрізання
+      // стягує його в нуль і він сам зникає.
+      cap: e.corner ? 0 : uMax - uMin,
+      // Боки схилу тут — не фронтони, а лінії єндов і вальм: вертикальна
+      // дошка на них стирчала б поперек даху.
+      noRake: true,
+      inner: e.corner,
+    }
+  })
 }
 
 function slopesOfRect(
@@ -680,7 +740,7 @@ export function roofSkin(
         continue
       }
       layElements(sl, spec.kind, g.boxes, MAX_ELEMENTS)
-      fasciaOf(sl, spec.kind, gt.boxes, ROOF_T, blockers)
+      if (!sl.inner) fasciaOf(sl, spec.kind, gt.boxes, ROOF_T, blockers)
       // Між схилами на гребені лишається щілина — накриваємо кожухом.
       if (part.kind !== 'mono') ridgeCap(sl, spec.kind, gt.boxes)
       // Найвища точка — щоб поява йшла зверху вниз, а не знизу вгору.

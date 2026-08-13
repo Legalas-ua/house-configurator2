@@ -89,7 +89,7 @@ const uniqSorted = (v: number[]) => {
 // ЛИШЕ доки за ними той самий прямокутник: одна пряма стіна може бути
 // фронтоном головної частини й карнизом крила водночас, і зшити їх в одну
 // грань означало б утратити врізку.
-export function outlineEdges(boxes: Box[]): Omit<SkelEdge, 'rising'>[] {
+export function outlineEdges(boxes: Box[], main = -1): Omit<SkelEdge, 'rising'>[] {
   const xs = uniqSorted(boxes.flatMap((b) => [b.x0, b.x1]))
   const zs = uniqSorted(boxes.flatMap((b) => [b.z0, b.z1]))
   const nx = xs.length - 1
@@ -100,15 +100,17 @@ export function outlineEdges(boxes: Box[]): Omit<SkelEdge, 'rising'>[] {
     const c = cell(i, j)
     return c !== null && insideBoxes(boxes, c[0], c[1])
   }
-  // Чия клітинка. Спірні (накриті кількома) віддаємо БІЛЬШІЙ частині: вона й
-  // задає дах, а менша до неї врізається.
+  // Чия клітинка. Спірні (накриті кількома) віддаємо ГОЛОВНІЙ частині — це
+  // вона задає дах, а решта до неї врізається. Головної не задано — більшій.
+  const covers = (b: Box, c: [number, number]) => c[0] >= b.x0 && c[0] <= b.x1 && c[1] >= b.z0 && c[1] <= b.z1
   const owner = (i: number, j: number) => {
     const c = cell(i, j)
+    if (!c) return 0
+    if (main >= 0 && main < boxes.length && covers(boxes[main], c)) return main
     let own = 0
     let area = -1
-    if (!c) return own
     boxes.forEach((b, k) => {
-      if (c[0] < b.x0 || c[0] > b.x1 || c[1] < b.z0 || c[1] > b.z1) return
+      if (!covers(b, c)) return
       const a = (b.x1 - b.x0) * (b.z1 - b.z0)
       if (a > area) {
         area = a
@@ -150,6 +152,18 @@ export function outlineEdges(boxes: Box[]): Omit<SkelEdge, 'rising'>[] {
       if (left === right) continue
       push(false, xs[i], zs[j], zs[j + 1], left ? 1 : -1, owner(left ? i - 1 : i, j))
     }
+  return out
+}
+
+// Клітинки, з яких складається контур: по них зшивається ДНО тіла даху.
+export function unionCells(boxes: Box[]): Box[] {
+  const xs = uniqSorted(boxes.flatMap((b) => [b.x0, b.x1]))
+  const zs = uniqSorted(boxes.flatMap((b) => [b.z0, b.z1]))
+  const out: Box[] = []
+  for (let i = 0; i < xs.length - 1; i++)
+    for (let j = 0; j < zs.length - 1; j++)
+      if (insideBoxes(boxes, (xs[i] + xs[i + 1]) / 2, (zs[j] + zs[j + 1]) / 2))
+        out.push({ x0: xs[i], x1: xs[i + 1], z0: zs[j], z1: zs[j + 1] })
   return out
 }
 
@@ -248,7 +262,9 @@ function spanAt(
   uMin: number,
   uMax: number,
 ): [number, number] | null {
-  const n = 128
+  // Грубий прохід + уточнення поділом навпіл. Дрібніше не треба: усі межі
+  // прямі, а дуже вузьких клаптів у прямокутного контуру не буває.
+  const n = 64
   const step = (uMax - uMin) / n
   const at = (i: number) => uMin + step * i
   let bestA = -1
@@ -409,4 +425,30 @@ export function faceSpan(face: SkelFace, t: number): [number, number] {
   }
   const e = s[s.length - 1]
   return [e.lo, e.hi]
+}
+
+// Силует ДАХУ над гранню: висота (у плані, до множення на tan) над кожною
+// точкою грані. Уздовж карниза це нуль, а над фронтоном — та сама ламана, по
+// якій його ріже дах. Вузли, що лежать на одній прямій, злипаються.
+export function edgeProfile(edges: SkelEdge[], e: SkelEdge, step = 0.02): { u: number; h: number }[] {
+  const at = (u: number) => {
+    const [x, z] = facePoint(e, u, 1e-3)
+    return planRise(edges, x, z)
+  }
+  const n = Math.max(2, Math.ceil((e.b - e.a) / step))
+  const raw: { u: number; h: number }[] = []
+  for (let i = 0; i <= n; i++) {
+    const u = e.a + ((e.b - e.a) * i) / n
+    raw.push({ u, h: at(u) })
+  }
+  const out = [raw[0]]
+  for (let i = 1; i < raw.length - 1; i++) {
+    const p = out[out.length - 1]
+    const c = raw[i]
+    const q = raw[i + 1]
+    const k = (c.u - p.u) / Math.max(q.u - p.u, EPS)
+    if (Math.abs(c.h - (p.h + k * (q.h - p.h))) > 1e-3) out.push(c)
+  }
+  out.push(raw[raw.length - 1])
+  return out
 }

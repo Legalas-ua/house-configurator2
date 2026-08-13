@@ -3,6 +3,7 @@ import { GRID, MIN_SIDE, snap } from './editPlan'
 import { outlineRects, ringContains, unionOutline } from './outline'
 import { freeSpot } from './place'
 import { WALL_T } from './windows'
+import { outlineEdges, roofFaces, type SkelEdge } from './roofSkeleton'
 
 // ============================================================
 // Дах як ДАНІ — за тим самим принципом, що план і вікна.
@@ -27,6 +28,9 @@ export interface RoofPart extends PlanRect {
   // а `rects` — самі частини. Порожнє поле означає одну частину = габарит.
   rects?: PlanRect[]
   kind: RoofKind
+  // ГОЛОВНА частина складеної зони — індекс у `rects`. Її гребінь задає дах,
+  // решта врізається в нього. Порожнє поле — головною береться найбільша.
+  main?: number
   parapetH: number // висота парапету (плоский)
   parapetT: number // товщина парапету (плоский)
   pitch: number // кут скату, градуси (скатний / односхилий)
@@ -286,7 +290,9 @@ export function joinRoofParts(parts: RoofPart[], a: string, b: string): RoofPart
   const pb = parts.find((p) => p.id === b)
   if (!pa || !pb) return parts
   const rects = [...partRects(pa), ...partRects(pb)]
-  const merged: RoofPart = { ...pa, rects, ...rectsBox(rects) }
+  // Головна частина зони після об'єднання рахується наново: старий індекс
+  // указував би на зовсім інший прямокутник.
+  const merged: RoofPart = { ...pa, rects, main: undefined, ...rectsBox(rects) }
   return parts.filter((r) => r.id !== b).map((r) => (r.id === a ? merged : r))
 }
 
@@ -294,7 +300,7 @@ export function joinRoofParts(parts: RoofPart[], a: string, b: string): RoofPart
 export function splitRoofPart(parts: RoofPart[], id: string): RoofPart[] {
   const p = parts.find((r) => r.id === id)
   if (!p || !p.rects || p.rects.length < 2) return parts
-  const pieces = p.rects.map((r, i) => ({ ...p, rects: undefined, id: `${p.id}~${i}`, ...r }))
+  const pieces = p.rects.map((r, i) => ({ ...p, rects: undefined, main: undefined, id: `${p.id}~${i}`, ...r }))
   return parts.flatMap((r) => (r.id === id ? pieces : [r]))
 }
 
@@ -734,4 +740,68 @@ export function roofWindowClashes(plan: HousePlan, parts: RoofPart[], windows: C
     }
   }
   return out
+}
+
+// ---- Складена зона: дах по прямому скелету ----
+
+// Головна частина зони. За замовчуванням найбільша — саме вона задає гребінь,
+// а решта врізається в нього.
+export function mainRect(part: RoofPart): number {
+  const rects = partRects(part)
+  if (part.main !== undefined && part.main >= 0 && part.main < rects.length) return part.main
+  let best = 0
+  let area = -1
+  rects.forEach((r, i) => {
+    const a = r.width * r.depth
+    if (a > area) {
+      area = a
+      best = i
+    }
+  })
+  return best
+}
+
+// Контур зони, розмітка «карниз чи фронтон» і схили. Карниз — грань,
+// ПАРАЛЕЛЬНА гребеню своєї частини: у вальмового такі всі, у двосхилого —
+// лише дві з чотирьох, і саме через це крило, повернуте поперек головної
+// частини, отримує власний нижчий гребінь і врізається в неї єндовою.
+// Скелет рахують ТРИ місця (геометрія, покриття, оздоблення фронтонів), і всі
+// три — на кожен кадр перетягування зони. Тримаємо останні відповіді: ключ
+// повністю описує вхід, тож зайвого не віддамо.
+const skelCache = new Map<string, ReturnType<typeof buildSkeleton>>()
+
+export function roofSkeleton(part: RoofPart, above: PlanRect[], siblings: PlanRect[] = []) {
+  const rect = (r: PlanRect) => `${r.x},${r.z},${r.width},${r.depth}`
+  const key = [
+    part.kind,
+    part.rotation,
+    part.overhang,
+    part.pitch,
+    mainRect(part),
+    partRects(part).map(rect).join(';'),
+    above.map(rect).join(';'),
+    siblings.map(rect).join(';'),
+  ].join('|')
+  const hit = skelCache.get(key)
+  if (hit) return hit
+  const made = buildSkeleton(part, above, siblings)
+  // Кеш маленький навмисно: під час перетягування ключ інший щокадру, і
+  // тримати всю історію немає сенсу.
+  if (skelCache.size > 16) skelCache.clear()
+  skelCache.set(key, made)
+  return made
+}
+
+function buildSkeleton(part: RoofPart, above: PlanRect[], siblings: PlanRect[] = []) {
+  const boxes = partRects(part).map((r) => {
+    const b = slopeBox(part, above, r, siblings)
+    return { x0: b.x0, x1: b.x1, z0: b.z0, z1: b.z1 }
+  })
+  const edges: SkelEdge[] = outlineEdges(boxes, mainRect(part)).map((e) => {
+    if (part.kind === 'hip') return { ...e, rising: true }
+    const b = boxes[e.own]
+    const ridgeAlongZ = part.rotation % 180 === 0 ? b.z1 - b.z0 >= b.x1 - b.x0 : b.z1 - b.z0 < b.x1 - b.x0
+    return { ...e, rising: ridgeAlongZ ? !e.horizontal : e.horizontal }
+  })
+  return { boxes, edges, faces: roofFaces(boxes, edges) }
 }

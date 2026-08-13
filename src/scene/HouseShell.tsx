@@ -36,7 +36,8 @@ import {
   type ResolvedWindow,
   type Side,
 } from '../lib/windows'
-import { cornerStop, parapetEdges, partRects, slopeBox, zoneRise, ROOF_LIFT } from '../lib/roof'
+import { cornerStop, parapetEdges, partRects, roofSkeleton, slopeBox, zoneRise, ROOF_LIFT } from '../lib/roof'
+import { edgeProfile, facePoint, unionCells, type Box as SkelBox, type SkelEdge, type SkelFace } from '../lib/roofSkeleton'
 import { roofSkin } from '../lib/roofSkin'
 import { terraceSkin, terraceSurfaces, TERRACE_UP_STACK } from '../lib/terraceSkin'
 import { interiorSkin, interiorSurfaces } from '../lib/interiorSkin'
@@ -437,6 +438,106 @@ function monoGeometry(
   s.closePath()
   const g = new ExtrudeGeometry(s, { depth, bevelEnabled: false })
   g.translate(0, 0, -depth / 2)
+  return g
+}
+
+// ---- Складена зона: дах по прямому скелету ----
+//
+// Тут уже не витягнутий профіль: над Г- чи Т-подібним контуром схилів більше
+// ніж два, і дивляться вони в різні боки. Тіло збираємо трикутниками ОДРАЗУ у
+// світових координатах плану — повертати таке нікуди, тож меш ставиться без
+// зсуву й повороту.
+type V3 = [number, number, number]
+
+function pushTri(pos: number[], a: V3, b: V3, c: V3, ref: V3) {
+  const nx = (b[1] - a[1]) * (c[2] - a[2]) - (b[2] - a[2]) * (c[1] - a[1])
+  const ny = (b[2] - a[2]) * (c[0] - a[0]) - (b[0] - a[0]) * (c[2] - a[2])
+  const nz = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+  if (Math.abs(nx) + Math.abs(ny) + Math.abs(nz) < 1e-9) return // вироджений
+  // Обхід не вивіряємо на око — розвертаємо трикутник за опорним напрямком.
+  const [p, q] = nx * ref[0] + ny * ref[1] + nz * ref[2] >= 0 ? [b, c] : [c, b]
+  pos.push(a[0], a[1], a[2], p[0], p[1], p[2], q[0], q[1], q[2])
+}
+
+function pushQuad(pos: number[], a: V3, b: V3, c: V3, d: V3, ref: V3) {
+  pushTri(pos, a, b, c, ref)
+  pushTri(pos, a, c, d, ref)
+}
+
+const UP: V3 = [0, 1, 0]
+const DOWN: V3 = [0, -1, 0]
+
+// Поверхня даху: кожен схил — стрічка чотирикутників між вузлами свого
+// профілю. `lift` піднімає всю поверхню (низ і верх похилої плити).
+function skeletonSurface(faces: SkelFace[], tan: number, lift: number, ref: V3, pos: number[]) {
+  for (const f of faces) {
+    const at = (u: number, t: number): V3 => {
+      const [x, z] = facePoint(f.edge, u, t)
+      return [x, lift + t * tan, z]
+    }
+    for (let i = 0; i + 1 < f.steps.length; i++) {
+      const s0 = f.steps[i]
+      const s1 = f.steps[i + 1]
+      pushQuad(pos, at(s0.lo, s0.t), at(s0.hi, s0.t), at(s1.hi, s1.t), at(s1.lo, s1.t), ref)
+    }
+  }
+}
+
+// Смуга по контуру між двома висотами: від `lo(u)` до `hi(u)`. Уздовж карниза
+// лінія даху рівна, над фронтоном — ламана, по якій його ріжуть схили.
+function skeletonBand(
+  edges: SkelEdge[],
+  tan: number,
+  lo: (h: number) => number,
+  hi: (h: number) => number,
+  pos: number[],
+) {
+  for (const e of edges) {
+    const prof = e.rising
+      ? [
+          { u: e.a, h: 0 },
+          { u: e.b, h: 0 },
+        ]
+      : edgeProfile(edges, e)
+    const ref: V3 = e.horizontal ? [0, 0, e.n] : [e.n, 0, 0]
+    const P = (u: number, y: number): V3 => (e.horizontal ? [u, y, e.line] : [e.line, y, u])
+    for (let i = 0; i + 1 < prof.length; i++) {
+      const p = prof[i]
+      const q = prof[i + 1]
+      pushQuad(pos, P(p.u, lo(p.h * tan)), P(q.u, lo(q.h * tan)), P(q.u, hi(q.h * tan)), P(p.u, hi(p.h * tan)), ref)
+    }
+  }
+}
+
+interface Skeleton {
+  boxes: SkelBox[]
+  edges: SkelEdge[]
+  faces: SkelFace[]
+}
+
+// Тіло даху: поверхня зверху, стіни по контуру, дно на рівні спідниці.
+function skeletonGeometry(sk: Skeleton, tan: number, skirt: number): BufferGeometry {
+  const pos: number[] = []
+  skeletonSurface(sk.faces, tan, 0, UP, pos)
+  skeletonBand(sk.edges, tan, () => -skirt, (y) => y, pos)
+  for (const c of unionCells(sk.boxes))
+    pushQuad(pos, [c.x0, -skirt, c.z0], [c.x1, -skirt, c.z0], [c.x1, -skirt, c.z1], [c.x0, -skirt, c.z1], DOWN)
+  const g = new BufferGeometry()
+  g.setAttribute('position', new Float32BufferAttribute(pos, 3))
+  g.computeVertexNormals()
+  return g
+}
+
+// Похила плита поверх тіла — те саме, що `gablePlateGeometry`, лише по всьому
+// скелету: покрівля, а не стіна.
+function skeletonPlateGeometry(sk: Skeleton, tan: number, tv: number): BufferGeometry {
+  const pos: number[] = []
+  skeletonSurface(sk.faces, tan, tv, UP, pos)
+  skeletonSurface(sk.faces, tan, 0, DOWN, pos)
+  skeletonBand(sk.edges, tan, (y) => y, (y) => y + tv, pos)
+  const g = new BufferGeometry()
+  g.setAttribute('position', new Float32BufferAttribute(pos, 3))
+  g.computeVertexNormals()
   return g
 }
 
@@ -1720,6 +1821,29 @@ export default function HouseShell() {
       // головна частина задає висоту, другорядні врізаються в неї під прямим
       // кутом на тій самій відмітці.
       const zone = zoneRise(part, above, sibs)
+      // СКЛАДЕНА зона скатного даху — ОДИН дах по прямому скелету: головна
+      // частина тримає свій гребінь, крило врізається в неї власним, нижчим,
+      // а на стику лягає єндова. Один «намет» на габарит зони тут не годиться:
+      // над вирізом контуру даху немає взагалі.
+      if ((part.kind === 'gable' || part.kind === 'hip') && partRects(part).length > 1) {
+        const sk = roofSkeleton(part, above, sibs)
+        const tan = Math.tan((part.pitch * Math.PI) / 180)
+        const skirt = ROOF_LIFT + TIER_LAP
+        const b = { roofY, partId: part.id, level: part.level, x: 0, y: roofY + ROOF_LIFT, z: 0, rotY: 0 }
+        // БЕЗ звісу схили спиняються рівно на стіні, тож тіло — це продовження
+        // стіни (фронтон), а покрівля лягає окремою плитою поверх. Зі звісом
+        // дах нависає, і збоку видно вже ТОРЕЦЬ даху, а не стіну.
+        const wall = part.kind === 'gable' && part.overhang === 0
+        out.push({ ...b, geo: skeletonGeometry(sk, tan, skirt), wallLike: wall, edge: part.kind === 'gable' && !wall })
+        if (wall)
+          out.push({
+            ...b,
+            geo: skeletonPlateGeometry(sk, tan, ROOF_T / Math.cos(Math.atan(tan))),
+            wallLike: false,
+            edge: true,
+          })
+        continue
+      }
       // Габарит УСІЄЇ зони — по ньому будується спільна площина скату.
       const gz = slopeBox(part, above, undefined, sibs)
       // Напрям гребеня беремо теж по зоні, а не по окремій частині: інакше
@@ -1785,27 +1909,16 @@ export default function HouseShell() {
         // світлий колір стін. Саме той «порожній трикутник» на стику.
         out.push({ ...b, geo: monoGeometry(pw, pd, h0, h1, skirt, false), wallLike: false, edge: true })
       } else {
-        // ДВОСХИЛИЙ — ОДИН «намет» на всю зону, а кожна частина відрізає від
-        // нього свій шматок. Раніше кожна частина була самостійним двосхилим
-        // дахом «від нуля до повної висоти», і складена зона розпадалась на
-        // кілька дахів замість одного, підрізаного по контуру.
-        const zoneSpan = Math.max(zoneRidgeAlongZ ? gz.x1 - gz.x0 : gz.z1 - gz.z0, 1e-6)
+        // ДВОСХИЛИЙ. Сюди доходить лише ПРОСТА зона з одного прямокутника:
+        // складену вище перехопив прямий скелет. Верхня лінія — класичний
+        // «будиночок»: карниз, гребінь посередині, карниз.
+        const zoneSpan = Math.max(pw, 1e-6)
         const gh = zone || (zoneSpan / 2) * tan
-        // Гребінь — посередині зони; висота падає від нього до країв.
-        const [F0, F1] = zoneRidgeAlongZ ? [gz.x0, gz.x1] : [gz.z0, gz.z1]
-        const Fr = (F0 + F1) / 2
-        const hAt = (f: number) => Math.max(0, gh - (Math.abs(f - Fr) / (zoneSpan / 2)) * gh)
-        // Локальна вісь X геометрії при повороті на 90° лягає на −Z, тож там
-        // вона йде ПРОТИ світової осі падіння.
-        const [f0, f1] = zoneRidgeAlongZ ? [g.x0, g.x1] : [g.z0, g.z1]
-        const fc = (f0 + f1) / 2
-        const sgn = zoneRidgeAlongZ ? 1 : -1
         const top: TopLine = [
-          [-pw / 2, hAt(fc - (sgn * pw) / 2)],
-          [pw / 2, hAt(fc + (sgn * pw) / 2)],
+          [-pw / 2, 0],
+          [0, gh],
+          [pw / 2, 0],
         ]
-        // Гребінь потрапляє в цю частину — ламана стає «будиночком».
-        if (Fr > f0 + 1e-6 && Fr < f1 - 1e-6) top.splice(1, 0, [sgn * (Fr - fc), gh])
         const b = { roofY, partId: part.id, level: part.level, x, y, z, rotY }
         if (part.overhang > 0) {
           // Зі звісом дах нависає над стінами: усе, що видно збоку, — це вже
