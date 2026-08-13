@@ -787,8 +787,9 @@ function skeletonCaps(
         const px = (-(z1 - z0) / len) * 0.2
         const pz = ((x1 - x0) / len) * 0.2
         const h = planRise(sk.edges, mx, mz)
-        const up = planRise(sk.edges, mx + px, mz + pz) > h + 0.01
-        const down = planRise(sk.edges, mx - px, mz - pz) > h + 0.01
+        // Під сусідським дахом — це лінія ВРІЗКИ, теж єндова.
+        const up = planRise(sk.edges, mx + px, mz + pz) > h + 0.01 || sk.hidden(mx + px, mz + pz)
+        const down = planRise(sk.edges, mx - px, mz - pz) > h + 0.01 || sk.hidden(mx - px, mz - pz)
         // Обабіч НИЖЧЕ — це вальма: перегин донизу, шов накриває кожух зверху.
         // Обабіч ВИЩЕ — єндова: шов лягає в саму складку, ширшою планкою.
         if (up !== down) continue // не ребро, а звичайний край схилу

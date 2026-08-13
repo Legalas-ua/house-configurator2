@@ -957,11 +957,17 @@ export function cutByNeighbour(parts: RoofPart[], part: RoofPart): boolean {
 
 // Скелет зони З УРАХУВАННЯМ сусідів: усе, що опинилось під дахом вищої зони,
 // зрізається — саме там і проходить єндова.
-export function zoneSkeleton(plan: HousePlan, parts: RoofPart[], part: RoofPart) {
+export function zoneSkeleton(
+  plan: HousePlan,
+  parts: RoofPart[],
+  part: RoofPart,
+): ReturnType<typeof roofSkeleton> & { hidden: (x: number, z: number) => boolean } {
   const above = plan.floors[part.level + 1]?.slab ?? []
   const sibs = zoneRects(parts, part)
   const higher = zoneNeighbours(parts, part).filter((o) => o.kind !== 'flat' && mainOfPair(part, o) === o)
-  if (higher.length === 0 || (part.kind !== 'gable' && part.kind !== 'hip')) return roofSkeleton(part, above, sibs)
+  const none = () => false
+  if (higher.length === 0 || (part.kind !== 'gable' && part.kind !== 'hip'))
+    return { ...roofSkeleton(part, above, sibs), hidden: none }
   const tan = Math.tan((part.pitch * Math.PI) / 180)
   const fields = higher.map((o) => zoneHeightField(plan, parts, o))
   const covered = (x: number, z: number, t: number) => {
@@ -969,5 +975,10 @@ export function zoneSkeleton(plan: HousePlan, parts: RoofPart[], part: RoofPart)
     return fields.some((f) => f(x, z) > h + 0.01)
   }
   const key = higher.map((o) => `${o.id}:${o.x},${o.z},${o.width},${o.depth},${o.pitch},${o.rotation},${o.kind}`).join('|')
-  return roofSkeleton(part, above, sibs, covered, key)
+  const sk = roofSkeleton(part, above, sibs, covered, key)
+  // Чи наш дах у цій точці вже НАКРИТИЙ сусідським. Цим одним запитанням
+  // підрізається все інше: стіни тіла даху, його дно й лінія, на якій треба
+  // покласти єндову.
+  const hidden = (x: number, z: number) => covered(x, z, planRise(sk.edges, x, z))
+  return { ...sk, hidden }
 }

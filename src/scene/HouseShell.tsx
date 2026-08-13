@@ -491,6 +491,8 @@ function skeletonBand(
   lo: (h: number) => number,
   hi: (h: number) => number,
   pos: number[],
+  // Ділянка вже під дахом сусіда — стіни там немає, там єндова.
+  hidden?: (x: number, z: number) => boolean,
 ) {
   for (const e of edges) {
     const prof = e.rising
@@ -504,6 +506,20 @@ function skeletonBand(
     for (let i = 0; i + 1 < prof.length; i++) {
       const p = prof[i]
       const q = prof[i + 1]
+      if (hidden) {
+        // Ділимо грань дрібно: під сусідський дах вона заходить частиною.
+        const n = Math.max(1, Math.ceil((q.u - p.u) / 0.25))
+        for (let k = 0; k < n; k++) {
+          const ua = p.u + ((q.u - p.u) * k) / n
+          const ub = p.u + ((q.u - p.u) * (k + 1)) / n
+          const ha = p.h + ((q.h - p.h) * k) / n
+          const hb = p.h + ((q.h - p.h) * (k + 1)) / n
+          const [mx, mz] = e.horizontal ? [(ua + ub) / 2, e.line] : [e.line, (ua + ub) / 2]
+          if (hidden(mx, mz)) continue
+          pushQuad(pos, P(ua, lo(ha * tan)), P(ub, lo(hb * tan)), P(ub, hi(hb * tan)), P(ua, hi(ha * tan)), ref)
+        }
+        continue
+      }
       pushQuad(pos, P(p.u, lo(p.h * tan)), P(q.u, lo(q.h * tan)), P(q.u, hi(q.h * tan)), P(p.u, hi(p.h * tan)), ref)
     }
   }
@@ -516,12 +532,30 @@ interface Skeleton {
 }
 
 // Тіло даху: поверхня зверху, стіни по контуру, дно на рівні спідниці.
-function skeletonGeometry(sk: Skeleton, tan: number, skirt: number): BufferGeometry {
+function skeletonGeometry(
+  sk: Skeleton,
+  tan: number,
+  skirt: number,
+  hidden?: (x: number, z: number) => boolean,
+): BufferGeometry {
   const pos: number[] = []
   skeletonSurface(sk.faces, tan, 0, UP, pos)
-  skeletonBand(sk.edges, tan, () => -skirt, (y) => y, pos)
-  for (const c of unionCells(sk.boxes))
-    pushQuad(pos, [c.x0, -skirt, c.z0], [c.x1, -skirt, c.z0], [c.x1, -skirt, c.z1], [c.x0, -skirt, c.z1], DOWN)
+  skeletonBand(sk.edges, tan, () => -skirt, (y) => y, pos, hidden)
+  // Дно — лише під тією частиною, що справді лишилась дахом. Під сусідським
+  // схилом наше дно просто висіло б у повітрі (саме воно й світило рожевим).
+  for (const c of unionCells(sk.boxes)) {
+    const nx = hidden ? Math.max(1, Math.ceil((c.x1 - c.x0) / 0.4)) : 1
+    const nz = hidden ? Math.max(1, Math.ceil((c.z1 - c.z0) / 0.4)) : 1
+    for (let i = 0; i < nx; i++)
+      for (let j = 0; j < nz; j++) {
+        const x0 = c.x0 + ((c.x1 - c.x0) * i) / nx
+        const x1 = c.x0 + ((c.x1 - c.x0) * (i + 1)) / nx
+        const z0 = c.z0 + ((c.z1 - c.z0) * j) / nz
+        const z1 = c.z0 + ((c.z1 - c.z0) * (j + 1)) / nz
+        if (hidden?.((x0 + x1) / 2, (z0 + z1) / 2)) continue
+        pushQuad(pos, [x0, -skirt, z0], [x1, -skirt, z0], [x1, -skirt, z1], [x0, -skirt, z1], DOWN)
+      }
+  }
   const g = new BufferGeometry()
   g.setAttribute('position', new Float32BufferAttribute(pos, 3))
   g.computeVertexNormals()
@@ -530,11 +564,16 @@ function skeletonGeometry(sk: Skeleton, tan: number, skirt: number): BufferGeome
 
 // Похила плита поверх тіла — те саме, що `gablePlateGeometry`, лише по всьому
 // скелету: покрівля, а не стіна.
-function skeletonPlateGeometry(sk: Skeleton, tan: number, tv: number): BufferGeometry {
+function skeletonPlateGeometry(
+  sk: Skeleton,
+  tan: number,
+  tv: number,
+  hidden?: (x: number, z: number) => boolean,
+): BufferGeometry {
   const pos: number[] = []
   skeletonSurface(sk.faces, tan, tv, UP, pos)
   skeletonSurface(sk.faces, tan, 0, DOWN, pos)
-  skeletonBand(sk.edges, tan, (y) => y, (y) => y + tv, pos)
+  skeletonBand(sk.edges, tan, (y) => y, (y) => y + tv, pos, hidden)
   const g = new BufferGeometry()
   g.setAttribute('position', new Float32BufferAttribute(pos, 3))
   g.computeVertexNormals()
@@ -1836,11 +1875,11 @@ export default function HouseShell() {
         // стіни (фронтон), а покрівля лягає окремою плитою поверх. Зі звісом
         // дах нависає, і збоку видно вже ТОРЕЦЬ даху, а не стіну.
         const wall = part.kind === 'gable' && part.overhang === 0
-        out.push({ ...b, geo: skeletonGeometry(sk, tan, skirt), wallLike: wall, edge: part.kind === 'gable' && !wall })
+        out.push({ ...b, geo: skeletonGeometry(sk, tan, skirt, sk.hidden), wallLike: wall, edge: part.kind === 'gable' && !wall })
         if (wall)
           out.push({
             ...b,
-            geo: skeletonPlateGeometry(sk, tan, ROOF_T / Math.cos(Math.atan(tan))),
+            geo: skeletonPlateGeometry(sk, tan, ROOF_T / Math.cos(Math.atan(tan)), sk.hidden),
             wallLike: false,
             edge: true,
           })
