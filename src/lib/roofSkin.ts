@@ -255,9 +255,10 @@ function clipToRects(
 function slopesOf(part: RoofPart, above: PlanRect[], roofY: number, siblings: PlanRect[]): Slope[] {
   const rects = partRects(part)
   if (rects.length <= 1) return slopesOfRect(part, above, roofY, rects[0], siblings)
-  // ОДНОСХИЛИЙ — одна площина на всю зону, підрізана по її контуру. Розкладка
-  // по частинах давала два окремі скати замість одного даху складної форми.
-  if (part.kind === 'mono') {
+  // ОДНОСХИЛИЙ і ДВОСХИЛИЙ — площина (у двосхилого «намет» із двох) одна на
+  // всю зону, підрізана по її контуру. Розкладка по частинах давала кілька
+  // окремих скатів замість одного даху складної форми.
+  if (part.kind === 'mono' || part.kind === 'gable') {
     const boxes = rects.map((r) => {
       const b = slopeBox(part, above, r, siblings)
       return { x: (b.x0 + b.x1) / 2, z: (b.z0 + b.z1) / 2, width: b.x1 - b.x0, depth: b.z1 - b.z0 }
@@ -368,19 +369,26 @@ function slopesOfRect(
   const len = Math.hypot(half, rise)
   const c = Math.cos(meshRotY)
   const sn = Math.sin(meshRotY)
-  return ([-1, 1] as const).map((dir) => ({
-    cx: cx + dir * (half / 2) * c,
-    cy: roofY + ROOF_LIFT + rise / 2 + tv,
-    cz: cz - dir * (half / 2) * sn,
-    rotY,
-    // Схил падає ВІД гребеня, тож на половинах нахил дзеркальний.
-    tilt: dir > 0 ? -ang : ang,
-    width: across,
-    len,
-    // Кожух ставлять ОБИДВІ половини — вони перекриваються над гребенем
-    // і закривають шов.
-    cap: across,
-  }))
+  return ([-1, 1] as const).map((dir) => {
+    const scx = cx + dir * (half / 2) * c
+    const scz = cz - dir * (half / 2) * sn
+    return {
+      cx: scx,
+      cy: roofY + ROOF_LIFT + rise / 2 + tv,
+      cz: scz,
+      rotY,
+      // Схил падає ВІД гребеня, тож на половинах нахил дзеркальний.
+      tilt: dir > 0 ? -ang : ang,
+      width: across,
+      len,
+      // Кожух ставлять ОБИДВІ половини — вони перекриваються над гребенем
+      // і закривають шов.
+      cap: across,
+      // Підрізання по контуру складеної зони — те саме, що в односхилого:
+      // «намет» один на всю зону, а частини відрізають від нього свої шматки.
+      clipU: clipRects && clipToRects(clipRects, ridgeAlongZ, ang, rotY, scx, scz),
+    }
+  })
 }
 
 export interface RoofSkinGroup {
@@ -557,11 +565,21 @@ function ridgeCap(sl: Slope, kind: RoofMatKind, out: SkinBox[]) {
   // Там, де є скатні дошки, кожух виходить і на них: інакше на самій маківці
   // фронтону лишається відкритий гострий кут між двома дошками.
   const overRake = sl.noRake ? 0 : 2 * (FASCIA_W + 0.01)
+  // Складена зона: гребінь існує лише там, де під ним справді є дах. Без
+  // підрізання кожух вилітав у повітря над вирізом Г-подібного контуру.
+  let uc = 0
+  let along = sl.cap
+  if (sl.clipU) {
+    const [lo, hi] = sl.clipU(s)
+    if (hi - lo < 0.05) return
+    uc = (lo + hi) / 2
+    along = hi - lo
+  }
   out.push({
-    x: sl.cx + lz * rs,
+    x: sl.cx + uc * rc + lz * rs,
     y: sl.cy + ly,
-    z: sl.cz + lz * rc,
-    dx: sl.cap + overRake,
+    z: sl.cz - uc * rs + lz * rc,
+    dx: along + overRake,
     dy: 0.028,
     dz: CAP_D,
     rotY: sl.rotY,

@@ -300,13 +300,19 @@ function plateGeometry(rings: Ring[], hole: Rect | null, depth = PLATE_T): Extru
 // skirt — пряма спідниця під схилами. Без неї схил сходить у нуль рівно на
 // верху стіни, і дах виглядає втопленим у неї; спідниця дає краю товщину й
 // піднімає початок схилу над стіною.
-function gableGeometry(width: number, depth: number, height: number, skirt: number): ExtrudeGeometry {
+//
+// ВЕРХНЯ ЛІНІЯ приходить готовою ламаною [локальний X, висота] — щоб СКЛАДЕНА
+// зона лишалась ОДНИМ дахом. «Намет» будується один на всю зону, а кожна її
+// частина відрізає від нього свій шматок: у частини під гребенем ламана має
+// три точки (край, гребінь, край), у бічної — дві, і виходить простий скат.
+// Коли частина одна, ламана — рівно той самий «будиночок», що був.
+type TopLine = [number, number][]
+
+function gableGeometry(width: number, depth: number, top: TopLine, skirt: number): ExtrudeGeometry {
   const s = new Shape()
   s.moveTo(-width / 2, -skirt)
   s.lineTo(width / 2, -skirt)
-  s.lineTo(width / 2, 0)
-  s.lineTo(0, height)
-  s.lineTo(-width / 2, 0)
+  for (let i = top.length - 1; i >= 0; i--) s.lineTo(top[i][0], top[i][1])
   s.closePath()
   const g = new ExtrudeGeometry(s, { depth, bevelEnabled: false })
   g.translate(0, 0, -depth / 2)
@@ -316,14 +322,11 @@ function gableGeometry(width: number, depth: number, height: number, skirt: numb
 // Покрівельні плити двосхилого даху — те саме, що плита в односхилого, тільки
 // їх дві й вони сходяться на гребені. Тіло під ними лишається СТІНОЮ (фронтон),
 // тож оздоблення фасаду продовжується вгору, як і в односхилого.
-function gablePlateGeometry(width: number, depth: number, height: number, tv: number): ExtrudeGeometry {
+function gablePlateGeometry(depth: number, top: TopLine, tv: number): ExtrudeGeometry {
   const s = new Shape()
-  s.moveTo(-width / 2, 0)
-  s.lineTo(0, height)
-  s.lineTo(width / 2, 0)
-  s.lineTo(width / 2, tv)
-  s.lineTo(0, height + tv)
-  s.lineTo(-width / 2, tv)
+  s.moveTo(top[0][0], top[0][1])
+  for (let i = 1; i < top.length; i++) s.lineTo(top[i][0], top[i][1])
+  for (let i = top.length - 1; i >= 0; i--) s.lineTo(top[i][0], top[i][1] + tv)
   s.closePath()
   const g = new ExtrudeGeometry(s, { depth, bevelEnabled: false })
   g.translate(0, 0, -depth / 2)
@@ -1717,7 +1720,7 @@ export default function HouseShell() {
       // головна частина задає висоту, другорядні врізаються в неї під прямим
       // кутом на тій самій відмітці.
       const zone = zoneRise(part, above, sibs)
-      // Габарит УСІЄЇ зони — по ньому будується спільна площина односхилого.
+      // Габарит УСІЄЇ зони — по ньому будується спільна площина скату.
       const gz = slopeBox(part, above, undefined, sibs)
       // Напрям гребеня беремо теж по зоні, а не по окремій частині: інакше
       // частини складеної зони дивилися б у різні боки.
@@ -1732,8 +1735,7 @@ export default function HouseShell() {
       const w = g.x1 - g.x0
       const d = g.z1 - g.z0
       // 0° — гребінь уздовж довшої сторони, 90° — упоперек.
-      const ridgeAlongZ = part.kind === 'mono' ? zoneRidgeAlongZ : part.rotation % 180 === 0 ? d >= w : d < w
-      const span = ridgeAlongZ ? w : d
+      const ridgeAlongZ = part.kind === 'hip' ? (part.rotation % 180 === 0 ? d >= w : d < w) : zoneRidgeAlongZ
       const skirt = ROOF_LIFT + TIER_LAP
       const [pw, pd] = ridgeAlongZ ? [w, d] : [d, w]
       const x = (g.x0 + g.x1) / 2
@@ -1783,21 +1785,42 @@ export default function HouseShell() {
         // світлий колір стін. Саме той «порожній трикутник» на стику.
         out.push({ ...b, geo: monoGeometry(pw, pd, h0, h1, skirt, false), wallLike: false, edge: true })
       } else {
-        const gh = zone || (span / 2) * tan
+        // ДВОСХИЛИЙ — ОДИН «намет» на всю зону, а кожна частина відрізає від
+        // нього свій шматок. Раніше кожна частина була самостійним двосхилим
+        // дахом «від нуля до повної висоти», і складена зона розпадалась на
+        // кілька дахів замість одного, підрізаного по контуру.
+        const zoneSpan = Math.max(zoneRidgeAlongZ ? gz.x1 - gz.x0 : gz.z1 - gz.z0, 1e-6)
+        const gh = zone || (zoneSpan / 2) * tan
+        // Гребінь — посередині зони; висота падає від нього до країв.
+        const [F0, F1] = zoneRidgeAlongZ ? [gz.x0, gz.x1] : [gz.z0, gz.z1]
+        const Fr = (F0 + F1) / 2
+        const hAt = (f: number) => Math.max(0, gh - (Math.abs(f - Fr) / (zoneSpan / 2)) * gh)
+        // Локальна вісь X геометрії при повороті на 90° лягає на −Z, тож там
+        // вона йде ПРОТИ світової осі падіння.
+        const [f0, f1] = zoneRidgeAlongZ ? [g.x0, g.x1] : [g.z0, g.z1]
+        const fc = (f0 + f1) / 2
+        const sgn = zoneRidgeAlongZ ? 1 : -1
+        const top: TopLine = [
+          [-pw / 2, hAt(fc - (sgn * pw) / 2)],
+          [pw / 2, hAt(fc + (sgn * pw) / 2)],
+        ]
+        // Гребінь потрапляє в цю частину — ламана стає «будиночком».
+        if (Fr > f0 + 1e-6 && Fr < f1 - 1e-6) top.splice(1, 0, [sgn * (Fr - fc), gh])
         const b = { roofY, partId: part.id, level: part.level, x, y, z, rotY }
         if (part.overhang > 0) {
           // Зі звісом дах нависає над стінами: усе, що видно збоку, — це вже
           // ТОРЕЦЬ даху, а не стіна. Тож призма отримує колір торцевої планки,
           // а не покрівлі: інакше збоку світить біла площина.
-          out.push({ ...b, geo: gableGeometry(pw, pd, gh, skirt), wallLike: false, edge: true })
+          out.push({ ...b, geo: gableGeometry(pw, pd, top, skirt), wallLike: false, edge: true })
         } else {
           // БЕЗ звісу схили закінчуються рівно на стіні, тож фронтон — це
           // продовження самої стіни: віддаємо його як wallLike, і фасадне
           // оздоблення заходить на нього так само, як в односхилого.
-          const run = Math.max(pw / 2, 1e-6)
+          // Товщина плити — по нахилу ЗОНИ, а не цієї частини: площина спільна.
+          const run = Math.max(zoneSpan / 2, 1e-6)
           const tv = (ROOF_T * Math.hypot(run, gh)) / run
-          out.push({ ...b, geo: gableGeometry(pw, pd, gh, skirt), wallLike: true })
-          out.push({ ...b, geo: gablePlateGeometry(pw, pd, gh, tv), wallLike: false, edge: true })
+          out.push({ ...b, geo: gableGeometry(pw, pd, top, skirt), wallLike: true })
+          out.push({ ...b, geo: gablePlateGeometry(pd, top, tv), wallLike: false, edge: true })
         }
       }
       }
