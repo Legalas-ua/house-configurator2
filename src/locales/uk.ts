@@ -203,6 +203,8 @@ export const uk = {
         overhang: 'Звіс',
         noOverhang: 'без звісу',
         rotation: 'Поворот',
+        main: 'Головна частина',
+        mainHint: 'Її гребінь задає дах — решта врізається в нього єндовою',
       },
     },
     facade: {

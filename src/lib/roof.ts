@@ -797,10 +797,22 @@ function buildSkeleton(part: RoofPart, above: PlanRect[], siblings: PlanRect[] =
     const b = slopeBox(part, above, r, siblings)
     return { x0: b.x0, x1: b.x1, z0: b.z0, z1: b.z1 }
   })
-  const edges: SkelEdge[] = outlineEdges(boxes, mainRect(part)).map((e) => {
+  const main = mainRect(part)
+  // Гребінь ГОЛОВНОЇ частини задає дах: решта лягає під нього. Власний,
+  // перпендикулярний гребінь дістається лише тій частині, що ЯВНО витягнута
+  // поперек — саме вона й врізається в головну єндовою. Квадратне крило
+  // власного гребеня не отримує: інакше дах ламався б від міліметра різниці
+  // між сторонами.
+  const along = (b: (typeof boxes)[number]) =>
+    part.rotation % 180 === 0 ? b.z1 - b.z0 >= b.x1 - b.x0 : b.z1 - b.z0 < b.x1 - b.x0
+  const mainAlongZ = along(boxes[main])
+  const CROSS = 1.2
+  const edges: SkelEdge[] = outlineEdges(boxes, main).map((e) => {
     if (part.kind === 'hip') return { ...e, rising: true }
     const b = boxes[e.own]
-    const ridgeAlongZ = part.rotation % 180 === 0 ? b.z1 - b.z0 >= b.x1 - b.x0 : b.z1 - b.z0 < b.x1 - b.x0
+    const ratio = (b.z1 - b.z0) / Math.max(b.x1 - b.x0, 1e-6)
+    const ridgeAlongZ =
+      e.own === main ? mainAlongZ : mainAlongZ ? ratio > 1 / CROSS : ratio > CROSS
     return { ...e, rising: ridgeAlongZ ? !e.horizontal : e.horizontal }
   })
   return { boxes, edges, faces: roofFaces(boxes, edges) }

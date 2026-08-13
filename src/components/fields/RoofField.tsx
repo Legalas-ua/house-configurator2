@@ -2,6 +2,8 @@ import { useConfigurator, useHousePlan, useRoof, useWindows } from '../../state/
 import type { PlanMode } from '../../config/types'
 import type { StepDef } from '../../config/steps'
 import {
+  mainRect,
+  partRects,
   roofLevels,
   roofWindowClashes,
   stepOverhang,
@@ -160,6 +162,27 @@ function RoofEditorPanel() {
                     </button>
                   </div>
                 </div>
+                {/* СКЛАДЕНА зона: яка частина головна. Її гребінь задає дах,
+                    решта врізається в нього — тож вибір міняє форму даху
+                    цілком, а не лише дрібницю. */}
+                {partRects(part).length > 1 && part.kind !== 'mono' && (
+                  <>
+                    <span className="rooms__subtitle">{texts.main}</span>
+                    <div className="chips">
+                      {partRects(part).map((r, i) => (
+                        <button
+                          key={i}
+                          type="button"
+                          className={`chip${mainRect(part) === i ? ' chip--on' : ''}`}
+                          onClick={() => patch({ main: i })}
+                        >
+                          {r.width.toFixed(1)} × {r.depth.toFixed(1)} м
+                        </button>
+                      ))}
+                    </div>
+                    <p className="rooms__hint">{texts.mainHint}</p>
+                  </>
+                )}
                 {/* Вальмовий симетричний — повертати його нічого. */}
                 {part.kind !== 'hip' && (
                   <>
