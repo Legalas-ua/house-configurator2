@@ -3,7 +3,7 @@ import { GRID, MIN_SIDE, snap } from './editPlan'
 import { outlineRects, ringContains, unionOutline } from './outline'
 import { freeSpot, touches } from './place'
 import { WALL_T } from './windows'
-import { mergeEdges, outlineEdges, roofFaces, type SkelEdge } from './roofSkeleton'
+import { mergeEdges, outlineEdges, planRise, roofFaces, type SkelEdge } from './roofSkeleton'
 
 // ============================================================
 // Дах як ДАНІ — за тим самим принципом, що план і вікна.
@@ -612,6 +612,8 @@ export function sideExtend(
   // настільки, щоб дійти до лінії їхнього перетину. Вища лишається як є.
   const reach = (s: ZoneRect | null, alongZ: boolean) => {
     const o = s?.part
+    // Заходить лише той, кого ми вміємо підрізати по сусідському скату.
+    if (part.kind !== 'gable' && part.kind !== 'hip') return 0
     if (!o || mainOfPair(part, o) === part) return 0
     const tan = o.kind === 'flat' ? 0 : Math.tan((o.pitch * Math.PI) / 180)
     if (tan < 1e-6) return 0
@@ -838,21 +840,28 @@ function mainRect(part: RoofPart): number {
 // повністю описує вхід, тож зайвого не віддамо.
 const skelCache = new Map<string, ReturnType<typeof buildSkeleton>>()
 
-export function roofSkeleton(part: RoofPart, above: PlanRect[], siblings: PlanRect[] = []) {
+export function roofSkeleton(
+  part: RoofPart,
+  above: PlanRect[],
+  siblings: PlanRect[] = [],
+  // Дах ВИЩОГО сусіда: усе, що під ним, з нашого схилу зрізається.
+  covered?: (x: number, z: number, t: number) => boolean,
+  coverKey = '',
+) {
   const rect = (r: PlanRect) => `${r.x},${r.z},${r.width},${r.depth}`
   const key = [
     part.kind,
     part.rotation,
     part.overhang,
     part.pitch,
-    mainRect(part),
     partRects(part).map(rect).join(';'),
     above.map(rect).join(';'),
     siblings.map(rect).join(';'),
+    coverKey,
   ].join('|')
   const hit = skelCache.get(key)
   if (hit) return hit
-  const made = buildSkeleton(part, above, siblings)
+  const made = buildSkeleton(part, above, siblings, covered)
   // Кеш маленький навмисно: під час перетягування ключ інший щокадру, і
   // тримати всю історію немає сенсу.
   if (skelCache.size > 16) skelCache.clear()
@@ -860,7 +869,12 @@ export function roofSkeleton(part: RoofPart, above: PlanRect[], siblings: PlanRe
   return made
 }
 
-function buildSkeleton(part: RoofPart, above: PlanRect[], siblings: PlanRect[] = []) {
+function buildSkeleton(
+  part: RoofPart,
+  above: PlanRect[],
+  siblings: PlanRect[] = [],
+  covered?: (x: number, z: number, t: number) => boolean,
+) {
   const boxes = partRects(part).map((r) => {
     const b = slopeBox(part, above, r, siblings)
     return { x0: b.x0, x1: b.x1, z0: b.z0, z1: b.z1 }
@@ -886,7 +900,7 @@ function buildSkeleton(part: RoofPart, above: PlanRect[], siblings: PlanRect[] =
   // Розмітка могла лишити одну пряму грань нарізаною по частинах зони —
   // зшиваємо назад, інакше сусідні схили накриють ту саму ділянку двічі.
   const whole = mergeEdges(edges)
-  return { boxes, edges: whole, faces: roofFaces(boxes, whole) }
+  return { boxes, edges: whole, faces: roofFaces(boxes, whole, 0.05, covered) }
 }
 
 // ---- Стик двох зон ----
@@ -912,4 +926,48 @@ export function zoneNeighbours(parts: RoofPart[], part: RoofPart): RoofPart[] {
 export function tiedNeighbours(parts: RoofPart[], part: RoofPart): RoofPart[] {
   const h = ridgeHeight(part)
   return zoneNeighbours(parts, part).filter((o) => Math.abs(ridgeHeight(o) - h) <= 0.01)
+}
+
+// Висота даху зони в точці. Поза її схилами — нуль: там даху просто немає.
+// Це «чистий» дах сусіда, без підрізань: вищий ніколи не ріжеться.
+function zoneHeightField(plan: HousePlan, parts: RoofPart[], part: RoofPart): (x: number, z: number) => number {
+  const above = plan.floors[part.level + 1]?.slab ?? []
+  const sibs = zoneRects(parts, part)
+  const boxes = partRects(part).map((r) => slopeBox(part, above, r, sibs))
+  const inside = (x: number, z: number) =>
+    boxes.some((q) => x > q.x0 - 1e-4 && x < q.x1 + 1e-4 && z > q.z0 - 1e-4 && z < q.z1 + 1e-4)
+  if (part.kind === 'flat') return () => 0
+  const tan = Math.tan((part.pitch * Math.PI) / 180)
+  if (part.kind === 'mono') {
+    const g = slopeBox(part, above, undefined, sibs)
+    const alongZ = ridgeAlongZ(part)
+    const low = part.rotation < 180 ? (alongZ ? g.x0 : g.z1) : alongZ ? g.x1 : g.z0
+    return (x, z) => (inside(x, z) ? Math.abs((alongZ ? x : z) - low) * tan : 0)
+  }
+  const sk = roofSkeleton(part, above, sibs)
+  return (x, z) => (inside(x, z) ? planRise(sk.edges, x, z) * tan : 0)
+}
+
+// Чи цю зону ріже сусідній дах — тоді її треба будувати скелетом, а не
+// простою призмою: підрізати призму нічим.
+export function cutByNeighbour(parts: RoofPart[], part: RoofPart): boolean {
+  if (part.kind !== 'gable' && part.kind !== 'hip') return false
+  return zoneNeighbours(parts, part).some((o) => o.kind !== 'flat' && mainOfPair(part, o) === o)
+}
+
+// Скелет зони З УРАХУВАННЯМ сусідів: усе, що опинилось під дахом вищої зони,
+// зрізається — саме там і проходить єндова.
+export function zoneSkeleton(plan: HousePlan, parts: RoofPart[], part: RoofPart) {
+  const above = plan.floors[part.level + 1]?.slab ?? []
+  const sibs = zoneRects(parts, part)
+  const higher = zoneNeighbours(parts, part).filter((o) => o.kind !== 'flat' && mainOfPair(part, o) === o)
+  if (higher.length === 0 || (part.kind !== 'gable' && part.kind !== 'hip')) return roofSkeleton(part, above, sibs)
+  const tan = Math.tan((part.pitch * Math.PI) / 180)
+  const fields = higher.map((o) => zoneHeightField(plan, parts, o))
+  const covered = (x: number, z: number, t: number) => {
+    const h = t * tan
+    return fields.some((f) => f(x, z) > h + 0.01)
+  }
+  const key = higher.map((o) => `${o.id}:${o.x},${o.z},${o.width},${o.depth},${o.pitch},${o.rotation},${o.kind}`).join('|')
+  return roofSkeleton(part, above, sibs, covered, key)
 }

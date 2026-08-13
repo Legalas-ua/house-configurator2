@@ -36,7 +36,7 @@ import {
   type ResolvedWindow,
   type Side,
 } from '../lib/windows'
-import { cornerStop, parapetEdges, partRects, roofSkeleton, slopeBox, zoneRects, zoneRise, ROOF_LIFT } from '../lib/roof'
+import { cornerStop, cutByNeighbour, parapetEdges, partRects, slopeBox, zoneRects, zoneRise, zoneSkeleton, ROOF_LIFT } from '../lib/roof'
 import { edgeProfile, facePoint, planRise, unionCells, type Box as SkelBox, type SkelEdge, type SkelFace } from '../lib/roofSkeleton'
 import { roofSkin } from '../lib/roofSkin'
 import { terraceSkin, terraceSurfaces, TERRACE_UP_STACK } from '../lib/terraceSkin'
@@ -1446,7 +1446,7 @@ export default function HouseShell() {
         // Фронтони скатного і стінки парапету плоского — усе це так само
         // зовнішні стіни, тільки вище покриття.
         const sibs = zoneRects(roof, p)
-        return [...gablePanels(p, above, y, p.level, sibs), ...parapetPanels(p, above, y, p.level)].map((g) => ({
+        return [...gablePanels(p, above, y, p.level, sibs, plan, roof), ...parapetPanels(p, above, y, p.level)].map((g) => ({
           ...g,
           // Матеріал фронтон/парапет НЕ обирають окремо: вони продовжують ту
           // стіну, над якою стоять. Інакше, помінявши матеріал стіни під
@@ -1825,8 +1825,10 @@ export default function HouseShell() {
       // частина тримає свій гребінь, крило врізається в неї власним, нижчим,
       // а на стику лягає єндова. Один «намет» на габарит зони тут не годиться:
       // над вирізом контуру даху немає взагалі.
-      if ((part.kind === 'gable' || part.kind === 'hip') && partRects(part).length > 1) {
-        const sk = roofSkeleton(part, above, sibs)
+      // Скелетом будуємо не лише складену зону, а й ту, що ВРІЗАЄТЬСЯ в сусідню:
+      // просту призму нічим підрізати по чужому скату.
+      if ((part.kind === 'gable' || part.kind === 'hip') && (partRects(part).length > 1 || cutByNeighbour(roof, part))) {
+        const sk = zoneSkeleton(plan, roof, part)
         const tan = Math.tan((part.pitch * Math.PI) / 180)
         const skirt = ROOF_LIFT + TIER_LAP
         const b = { roofY, partId: part.id, level: part.level, x: 0, y: roofY + ROOF_LIFT, z: 0, rotY: 0 }

@@ -279,9 +279,18 @@ export function mergeEdges(edges: SkelEdge[]): SkelEdge[] {
 
 // Чи належить точка (u, t) саме цьому схилу: вона всередині контуру і жоден
 // інший карниз не ближчий за власний.
-function owns(boxes: Box[], edges: SkelEdge[], e: SkelEdge, u: number, t: number): boolean {
+function owns(
+  boxes: Box[],
+  edges: SkelEdge[],
+  e: SkelEdge,
+  u: number,
+  t: number,
+  // Точку вже накрив ВИЩИЙ сусід: тут наш дах закінчується єндовою.
+  covered?: (x: number, z: number, t: number) => boolean,
+): boolean {
   const [x, z] = facePoint(e, u, t)
   if (!insideBoxes(boxes, x, z)) return false
+  if (covered?.(x, z, t)) return false
   // За кінцем грані точка вже далі за t — там схил і закінчується. Без цієї
   // перевірки схил «розповзався» вздовж власної лінії на весь контур.
   if (edgeDist(e, x, z) > t + 1e-4) return false
@@ -313,6 +322,7 @@ function spanAt(
   t: number,
   uMin: number,
   uMax: number,
+  covered: ((x: number, z: number, t: number) => boolean) | undefined,
   // Смуга на попередній глибині. Межі схилу йдуть під 45°, тож нова смуга
   // лежить поруч — шукаємо спершу там, дрібним кроком. Без цього груба вибірка
   // по всій ширині зони просто ПЕРЕСТРИБУВАЛА вузьку смужку біля вістря, і на
@@ -320,10 +330,10 @@ function spanAt(
   hint?: [number, number],
 ): [number, number] | null {
   if (hint) {
-    const near = scan(boxes, edges, e, t, Math.max(uMin, hint[0] - 0.35), Math.min(uMax, hint[1] + 0.35))
+    const near = scan(boxes, edges, e, t, Math.max(uMin, hint[0] - 0.35), Math.min(uMax, hint[1] + 0.35), covered)
     if (near) return near
   }
-  return scan(boxes, edges, e, t, uMin, uMax)
+  return scan(boxes, edges, e, t, uMin, uMax, covered)
 }
 
 function scan(
@@ -333,6 +343,7 @@ function scan(
   t: number,
   uMin: number,
   uMax: number,
+  covered?: (x: number, z: number, t: number) => boolean,
 ): [number, number] | null {
   // Грубий прохід + уточнення поділом навпіл. Дрібніше не треба: усі межі
   // прямі, а дуже вузьких клаптів у прямокутного контуру не буває.
@@ -343,7 +354,7 @@ function scan(
   let bestB = -1
   let runA = -1
   for (let i = 0; i <= n; i++) {
-    if (owns(boxes, edges, e, at(i), t)) {
+    if (owns(boxes, edges, e, at(i), t, covered)) {
       if (runA < 0) runA = i
       if (bestA < 0 || i - runA > bestB - bestA) {
         bestA = runA
@@ -358,7 +369,7 @@ function scan(
     let hi = at(outside)
     for (let k = 0; k < 20; k++) {
       const m = (lo + hi) / 2
-      if (owns(boxes, edges, e, m, t)) lo = m
+      if (owns(boxes, edges, e, m, t, covered)) lo = m
       else hi = m
     }
     return lo
@@ -371,7 +382,12 @@ function scan(
 // Профіль схилу від карниза до самого верху. Вибірка дрібна, але вузли, що
 // лежать на одній прямій, злипаються — лишаються тільки справжні злами
 // (вальма, єндова, гребінь).
-export function roofFaces(boxes: Box[], edges: SkelEdge[], step = 0.05): SkelFace[] {
+export function roofFaces(
+  boxes: Box[],
+  edges: SkelEdge[],
+  step = 0.05,
+  covered?: (x: number, z: number, t: number) => boolean,
+): SkelFace[] {
   const x0 = Math.min(...boxes.map((b) => b.x0))
   const x1 = Math.max(...boxes.map((b) => b.x1))
   const z0 = Math.min(...boxes.map((b) => b.z0))
@@ -386,7 +402,7 @@ export function roofFaces(boxes: Box[], edges: SkelEdge[], step = 0.05): SkelFac
   for (const e of [...field, ...cornerEdges(edges, limit)]) {
     const uMin = e.a - limit
     const uMax = e.b + limit
-    const span = (t: number, hint?: [number, number]) => spanAt(boxes, field, e, t, uMin, uMax, hint)
+    const span = (t: number, hint?: [number, number]) => spanAt(boxes, field, e, t, uMin, uMax, covered, hint)
 
     // Схил не обов'язково починається на карнизі: кутова грань виростає з
     // ТОЧКИ десь усередині даху. Тому проходимо всю глибину й беремо
@@ -435,7 +451,7 @@ export function roofFaces(boxes: Box[], edges: SkelEdge[], step = 0.05): SkelFac
         let hi = c.t
         for (let k = 0; k < 20; k++) {
           const m = (lo + hi) / 2
-          if (owns(boxes, field, e, gone, m)) lo = m
+          if (owns(boxes, field, e, gone, m, covered)) lo = m
           else hi = m
         }
         const before = span(Math.max(lo - 1e-4, p.t))

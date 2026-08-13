@@ -1,5 +1,5 @@
 import type { HousePlan, PlanRect, RoofMatKind, RoofMatSpec } from '../config/types'
-import { roofSkeleton } from './roof'
+import { cutByNeighbour, zoneSkeleton } from './roof'
 import { facePoint, faceSpan, outlineEdges, planRise } from './roofSkeleton'
 import {
   cornerStop,
@@ -259,12 +259,22 @@ function clipToRects(
 
 // Схили однієї зони. Мають ТОЧНО збігатися з геометрією HouseShell — інакше
 // покриття «злітає» з даху.
-function slopesOf(part: RoofPart, above: PlanRect[], roofY: number, siblings: PlanRect[]): Slope[] {
+function slopesOf(
+  part: RoofPart,
+  above: PlanRect[],
+  roofY: number,
+  siblings: PlanRect[],
+  plan: HousePlan,
+  parts: RoofPart[],
+): Slope[] {
   const rects = partRects(part)
-  if (rects.length <= 1) return slopesOfRect(part, above, roofY, rects[0], siblings)
+  // Зона, що ВРІЗАЄТЬСЯ в сусідню, теж іде через скелет: інакше її нічим
+  // підрізати по чужому скату.
+  if (rects.length <= 1 && !cutByNeighbour(parts, part))
+    return slopesOfRect(part, above, roofY, rects[0], siblings)
   // СКАТНИЙ І ВАЛЬМОВИЙ — один дах по прямому скелету: стільки схилів, скільки
   // карнизів у контуру, кожен підрізаний по своїй ділянці скелета.
-  if (part.kind === 'gable' || part.kind === 'hip') return skeletonSlopes(part, above, roofY, siblings)
+  if (part.kind === 'gable' || part.kind === 'hip') return skeletonSlopes(part, roofY, zoneSkeleton(plan, parts, part))
   // ОДНОСХИЛИЙ — одна площина на всю зону, підрізана по її контуру. Скелет
   // йому не потрібен: у односхилого немає ні гребеня, ні єндов.
   if (part.kind === 'mono') {
@@ -281,8 +291,7 @@ function slopesOf(part: RoofPart, above: PlanRect[], roofY: number, siblings: Pl
 // Схили складеної зони: по одному на кожен КАРНИЗ контуру плюс кутові
 // трикутники. Мають ТОЧНО збігатися з тілом даху в HouseShell — обидва
 // беруть ті самі схили того самого скелета.
-function skeletonSlopes(part: RoofPart, above: PlanRect[], roofY: number, siblings: PlanRect[]): Slope[] {
-  const sk = roofSkeleton(part, above, siblings)
+function skeletonSlopes(part: RoofPart, roofY: number, sk: ReturnType<typeof zoneSkeleton>): Slope[] {
   const tan = Math.tan((part.pitch * Math.PI) / 180)
   const ang = Math.atan(tan)
   // Зі звісом покрівля лягає просто на тіло даху; без звісу зверху ще плита.
@@ -587,9 +596,12 @@ function fasciaOf(
   // сусіднім, тож обидві дошки вилітали в повітря й перехрещувались (той самий
   // «хрест» на зламі). Кут між ними накриває кожух гребеня, розширений на
   // товщину самих дощок.
-  const ridgeDir = sl.tilt > 0 ? 1 : -1
-  const s0 = ridgeDir > 0 ? -hl - w : -hl
-  const s1 = ridgeDir > 0 ? hl : hl + w
+  // Дошка спиняється рівно на КАРНИЗІ, а не виходить за нього на свою ширину:
+  // ріг за неї бере карнизна планка, вона й так загортається на ширину скатної.
+  // Раніше обидві виходили одна за одну, і на кожному розі стирчав хрестик —
+  // «бакенбарди» на скріншоті Lev.
+  const s0 = -hl
+  const s1 = hl
   // Скатний край СКЛАДЕНОЇ зони йде сходинками: на різних ділянках падіння він
   // стоїть у різних місцях. Тому спершу ділимо падіння на ділянки зі спільним
   // краєм, а вже на кожній кладемо суцільний брусок — інакше дошка йшла б по
@@ -743,14 +755,12 @@ function monoEaveFascia(
 // нижче чи вище.
 function skeletonCaps(
   part: RoofPart,
-  above: PlanRect[],
+  sk: ReturnType<typeof zoneSkeleton>,
   roofY: number,
-  siblings: PlanRect[],
   kind: RoofMatKind,
   out: SkinBox[],
   skip: (x: number, z: number) => boolean,
 ) {
-  const sk = roofSkeleton(part, above, siblings)
   const tan = Math.tan((part.pitch * Math.PI) / 180)
   const tv = part.kind === 'gable' && part.overhang === 0 ? ROOF_T / Math.cos(Math.atan(tan)) : 0
   const y = (t: number) => roofY + ROOF_LIFT + t * tan + tv
@@ -777,9 +787,19 @@ function skeletonCaps(
         const px = (-(z1 - z0) / len) * 0.2
         const pz = ((x1 - x0) / len) * 0.2
         const h = planRise(sk.edges, mx, mz)
-        if (planRise(sk.edges, mx + px, mz + pz) > h + 0.01) continue
-        if (planRise(sk.edges, mx - px, mz - pz) > h + 0.01) continue
-        hipCap([x0, y(s0.t), z0], [x1, y(s1.t), z1], roofSkinHeight(kind) + 0.012, out)
+        const up = planRise(sk.edges, mx + px, mz + pz) > h + 0.01
+        const down = planRise(sk.edges, mx - px, mz - pz) > h + 0.01
+        // Обабіч НИЖЧЕ — це вальма: перегин донизу, шов накриває кожух зверху.
+        // Обабіч ВИЩЕ — єндова: шов лягає в саму складку, ширшою планкою.
+        if (up !== down) continue // не ребро, а звичайний край схилу
+        const valley = up && down
+        hipCap(
+          [x0, y(s0.t), z0],
+          [x1, y(s1.t), z1],
+          roofSkinHeight(kind) + (valley ? 0.002 : 0.012),
+          out,
+          valley ? 0.3 : 0.16,
+        )
       }
     }
   }
@@ -792,6 +812,7 @@ function hipCap(
   b: [number, number, number],
   lift: number,
   out: SkinBox[],
+  width = 0.16,
 ) {
   const dx = b[0] - a[0]
   const dy = b[1] - a[1]
@@ -805,7 +826,7 @@ function hipCap(
     x: (a[0] + b[0]) / 2,
     y: (a[1] + b[1]) / 2 + lift,
     z: (a[2] + b[2]) / 2,
-    dx: 0.16,
+    dx: width,
     dy: 0.028,
     dz: len,
     rotY,
@@ -862,7 +883,7 @@ export function roofSkin(
     const atWall = (x: number, z: number) =>
       blockers.some((r) => x > r.x0 && x < r.x1 && z > r.z0 && z < r.z1)
 
-    for (const sl of slopesOf(part, above, roofY, siblings)) {
+    for (const sl of slopesOf(part, above, roofY, siblings, plan, parts)) {
       if (flat) {
         g.boxes.push({
           x: sl.cx,
@@ -900,8 +921,8 @@ export function roofSkin(
     // окремий кожух, покладений ПО ребру — тобто теж під кутом.
     // Складена зона: усі ребра в неї похилі — і вальми, і єндови. Кожух
     // кладеться по самому ребру, як і на простій вальмі.
-    if (part.kind !== 'flat' && part.kind !== 'mono' && partRects(part).length > 1)
-      skeletonCaps(part, above, roofY, siblings, spec.kind, gt.boxes, atWall)
+    if (part.kind !== 'flat' && part.kind !== 'mono' && (partRects(part).length > 1 || cutByNeighbour(parts, part)))
+      skeletonCaps(part, zoneSkeleton(plan, parts, part), roofY, spec.kind, gt.boxes, atWall)
     // Складений односхилий: карниз крила схил не бачить — його планку кладемо
     // окремо, по контуру зони.
     if (part.kind === 'mono' && partRects(part).length > 1)

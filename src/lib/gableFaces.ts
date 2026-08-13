@@ -1,6 +1,6 @@
-import type { PlanRect } from '../config/types'
+import type { HousePlan, PlanRect } from '../config/types'
 import type { HeightAt } from './cladding'
-import { parapetEdges, partRects, roofSkeleton, slopeBox, ROOF_LIFT, type RoofPart } from './roof'
+import { cutByNeighbour, parapetEdges, partRects, roofSkeleton, slopeBox, zoneSkeleton, ROOF_LIFT, type RoofPart } from './roof'
 import { edgeProfile, facePoint, insideBoxes, outlineEdges, planRise } from './roofSkeleton'
 import { WALL_T } from './windows'
 import type { WallFace } from './wallFaces'
@@ -103,6 +103,10 @@ export function gablePanels(
   roofY: number,
   floor: number,
   siblings: PlanRect[] = [],
+  // План і всі зони — щоб фронтон рахувався по ПІДРІЗАНОМУ скелету: там, де
+  // зона врізається в сусідню, стіни під нею вже немає.
+  plan?: HousePlan,
+  parts?: RoofPart[],
 ): GablePanel[] {
   // У вальмового фронтонів немає взагалі — схили сходяться з усіх боків.
   if (part.kind === 'flat' || part.kind === 'hip') return []
@@ -119,12 +123,12 @@ export function gablePanels(
   // ОДНОСХИЛИЙ сюди теж заходить, але зі своєю висотою: скелета під ним немає,
   // у нього одна похила площина на всю зону. Спільне в них те, що стіни йдуть
   // по КОНТУРУ, а не по габариту.
-  if (partRects(part).length > 1) {
+  if (partRects(part).length > 1 || (plan && parts && cutByNeighbour(parts, part))) {
     const boxes = partRects(part).map((r) => {
       const b = slopeBox(part, above, r, siblings)
       return { x0: b.x0, x1: b.x1, z0: b.z0, z1: b.z1 }
     })
-    const sk = roofSkeleton(part, above, siblings)
+    const sk = plan && parts ? zoneSkeleton(plan, parts, part) : roofSkeleton(part, above, siblings)
     let edges = sk.edges
     let hplan = (x: number, z: number) => planRise(sk.edges, x, z)
     if (part.kind === 'mono') {
