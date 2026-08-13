@@ -313,6 +313,26 @@ function spanAt(
   t: number,
   uMin: number,
   uMax: number,
+  // Смуга на попередній глибині. Межі схилу йдуть під 45°, тож нова смуга
+  // лежить поруч — шукаємо спершу там, дрібним кроком. Без цього груба вибірка
+  // по всій ширині зони просто ПЕРЕСТРИБУВАЛА вузьку смужку біля вістря, і на
+  // вальмі лишався непокритий трикутник.
+  hint?: [number, number],
+): [number, number] | null {
+  if (hint) {
+    const near = scan(boxes, edges, e, t, Math.max(uMin, hint[0] - 0.35), Math.min(uMax, hint[1] + 0.35))
+    if (near) return near
+  }
+  return scan(boxes, edges, e, t, uMin, uMax)
+}
+
+function scan(
+  boxes: Box[],
+  edges: SkelEdge[],
+  e: SkelEdge,
+  t: number,
+  uMin: number,
+  uMax: number,
 ): [number, number] | null {
   // Грубий прохід + уточнення поділом навпіл. Дрібніше не треба: усі межі
   // прямі, а дуже вузьких клаптів у прямокутного контуру не буває.
@@ -366,7 +386,7 @@ export function roofFaces(boxes: Box[], edges: SkelEdge[], step = 0.05): SkelFac
   for (const e of [...field, ...cornerEdges(edges, limit)]) {
     const uMin = e.a - limit
     const uMax = e.b + limit
-    const span = (t: number) => spanAt(boxes, field, e, t, uMin, uMax)
+    const span = (t: number, hint?: [number, number]) => spanAt(boxes, field, e, t, uMin, uMax, hint)
 
     // Схил не обов'язково починається на карнизі: кутова грань виростає з
     // ТОЧКИ десь усередині даху. Тому проходимо всю глибину й беремо
@@ -375,7 +395,8 @@ export function roofFaces(boxes: Box[], edges: SkelEdge[], step = 0.05): SkelFac
     let blank = 0
     for (let i = 0; ; i++) {
       const t = Math.min(i * step, limit)
-      const s = span(t)
+      const last = raw[raw.length - 1]
+      const s = span(t, last && [last.lo, last.hi])
       if (s) {
         blank = 0
         raw.push({ t, lo: s[0], hi: s[1] })
@@ -431,13 +452,14 @@ export function roofFaces(boxes: Box[], edges: SkelEdge[], step = 0.05): SkelFac
     const last = nodes[nodes.length - 1]
     const prev = nodes[nodes.length - 2]
     const gap = last.hi - last.lo
-    if (gap > 1e-3 && gap < 2.5 * step && last.t < limit - EPS && last.t > prev.t + EPS) {
+    if (gap > 1e-3 && last.t < limit - EPS && last.t > prev.t + EPS) {
       const dt = last.t - prev.t
       const kLo = (last.lo - prev.lo) / dt
       const kHi = (last.hi - prev.hi) / dt
-      // Сходяться лише якщо смуга справді звужується.
-      if (kLo - kHi > 1e-6) {
-        const extra = gap / (kLo - kHi)
+      // Сходяться лише якщо смуга справді звужується, і вістря поруч — інакше
+      // це не вістря, а схил, обрізаний фронтоном.
+      const extra = gap / (kLo - kHi)
+      if (kLo - kHi > 1e-6 && extra < 2.5 * step) {
         const u = last.lo + kLo * extra
         nodes.push({ t: last.t + extra, lo: u, hi: u })
       }

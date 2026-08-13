@@ -1,6 +1,6 @@
 import type { HousePlan, PlanRect, RoofMatKind, RoofMatSpec } from '../config/types'
 import { roofSkeleton } from './roof'
-import { facePoint, faceSpan, planRise } from './roofSkeleton'
+import { facePoint, faceSpan, outlineEdges, planRise } from './roofSkeleton'
 import {
   cornerStop,
   parapetCorner,
@@ -679,6 +679,61 @@ function ridgeCap(sl: Slope, kind: RoofMatKind, out: SkinBox[]) {
   })
 }
 
+// Карнизні планки складеного ОДНОСХИЛОГО, яких не бачить схил. Схил у такої
+// зони будується на габариті, тож його власна планка лягає лише на НИЖНІЙ край
+// габариту. А в Г-подібного контуру карниз є ще й на внутрішній грані — у
+// крила свій нижній край, і він лишався без планки.
+function monoEaveFascia(
+  part: RoofPart,
+  above: PlanRect[],
+  roofY: number,
+  siblings: PlanRect[],
+  kind: RoofMatKind,
+  out: SkinBox[],
+  skip: (x: number, z: number) => boolean,
+) {
+  const boxes = partRects(part).map((r) => {
+    const b = slopeBox(part, above, r, siblings)
+    return { x0: b.x0, x1: b.x1, z0: b.z0, z1: b.z1 }
+  })
+  const g = slopeBox(part, above, undefined, siblings)
+  const w = g.x1 - g.x0
+  const d = g.z1 - g.z0
+  const alongZ = part.rotation % 180 === 0 ? d >= w : d < w
+  const low = part.rotation < 180 ? (alongZ ? g.x0 : g.z1) : alongZ ? g.x1 : g.z0
+  const tan = Math.tan((part.pitch * Math.PI) / 180)
+  const ang = Math.atan(tan)
+  const cover = roofSkinHeight(kind)
+  const tv = ROOF_T / Math.cos(ang)
+  const H = ROOF_T / Math.max(Math.cos(ang), 0.2) + cover + 0.03
+  const deep = FASCIA_W + (ROOF_T + cover + 0.02) * Math.abs(Math.sin(ang))
+
+  for (const e of outlineEdges(boxes)) {
+    // Грань упоперек падіння — це або карниз, або висока стіна.
+    if ((alongZ ? e.horizontal : !e.horizontal) || Math.abs(e.line - low) < 0.01) continue
+    // Карниз лише там, де дах ЗА гранню йде ВГОРУ. Якщо навпаки — це висока
+    // стіна під верхньою кромкою схилу, планки там не буває.
+    const inward = e.line - e.n * 0.05
+    if (Math.abs(inward - low) <= Math.abs(e.line - low)) continue
+    const mid = (e.a + e.b) / 2
+    if (skip(e.horizontal ? mid : e.line, e.horizontal ? e.line : mid)) continue
+    // Зовнішня грань дошки виходить за край даху рівно як у схилу.
+    const face = e.line + e.n * (FASCIA_W - 0.005)
+    const top = roofY + ROOF_LIFT + Math.abs(face - low) * tan + tv + cover
+    const c = e.line + e.n * (FASCIA_W - 0.005 - deep / 2)
+    out.push({
+      x: e.horizontal ? mid : c,
+      y: top + 0.004 - H / 2,
+      z: e.horizontal ? c : mid,
+      dx: e.b - e.a,
+      dy: H,
+      dz: deep,
+      rotY: e.horizontal ? 0 : Math.PI / 2,
+      tilt: 0,
+    })
+  }
+}
+
 // Кожухи на ПОХИЛИХ ребрах складеної зони. Профіль кожного схилу вже містить
 // ці ребра: там, де межа смуги їде вбік із глибиною, схил і сходиться із
 // сусіднім під 45°. Ребро буває двох ґатунків — вальма (дах над ним
@@ -714,6 +769,10 @@ function skeletonCaps(
         const mx = (x0 + x1) / 2
         const mz = (z0 + z1) / 2
         const len = Math.hypot(x1 - x0, z1 - z0)
+        // Короткий відрізок — це не ребро, а похибка розкрою: справжня вальма
+        // чи єндова завжди довга. Інакше на даху з'являвся зайвий шматочок
+        // кожуха завдовжки кілька сантиметрів.
+        if (len < 0.3) continue
         const px = (-(z1 - z0) / len) * 0.2
         const pz = ((x1 - x0) / len) * 0.2
         const h = planRise(sk.edges, mx, mz)
@@ -842,6 +901,10 @@ export function roofSkin(
     // кладеться по самому ребру, як і на простій вальмі.
     if (part.kind !== 'flat' && part.kind !== 'mono' && partRects(part).length > 1)
       skeletonCaps(part, above, roofY, siblings, spec.kind, gt.boxes, atWall)
+    // Складений односхилий: карниз крила схил не бачить — його планку кладемо
+    // окремо, по контуру зони.
+    if (part.kind === 'mono' && partRects(part).length > 1)
+      monoEaveFascia(part, above, roofY, siblings, spec.kind, gt.boxes, atWall)
     if (part.kind === 'hip' && partRects(part).length === 1) {
       const gb = slopeBox(part, above, undefined, siblings)
       const w = gb.x1 - gb.x0
