@@ -104,6 +104,10 @@ interface Slope {
   // лежить УСЕРЕДИНІ даху, тож ні карнизної, ні торцевої планки на ньому не
   // буває — тільки саме покриття.
   inner?: boolean
+  // Місце, де тіло даху ПІДРІЗАНЕ сусіднім: покриття там класти нікуди — воно
+  // висітиме в повітрі. Підрізання по `clipU` цього не ловить: воно ріже смугу
+  // вздовж гребеня, а виріз буває й посеред схилу.
+  hidden?: (x: number, z: number) => boolean
   cap?: number // довжина кожуха на ВЕРХНЬОМУ краї (0/undefined — кожуха немає)
 }
 
@@ -127,10 +131,13 @@ function layElements(sl: Slope, kind: RoofMatKind, out: SkinBox[], budget: numbe
     const n = dy / 2 + lift + bow
     const ly = s * sin + cos * n
     const lz = s * cos - sin * n
+    const x = sl.cx + u * rc + lz * rs
+    const z = sl.cz - u * rs + lz * rc
+    if (sl.hidden?.(x, z)) return
     out.push({
-      x: sl.cx + u * rc + lz * rs,
+      x,
       y: sl.cy + ly,
-      z: sl.cz - u * rs + lz * rc,
+      z,
       dx: du,
       dy,
       dz: ds,
@@ -335,6 +342,7 @@ function skeletonSlopes(part: RoofPart, roofY: number, sk: ReturnType<typeof zon
       // дошка на них стирчала б поперек даху.
       noRake: true,
       inner: e.corner,
+      hidden: sk.hidden,
     }
   })
 }
