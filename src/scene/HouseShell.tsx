@@ -1910,9 +1910,9 @@ export default function HouseShell() {
       // проста призма правильна, а от підрізати її нічим.
       const bySkeleton =
         part.kind === 'mono'
-          ? cutByNeighbour(roof, part)
+          ? cutByNeighbour(plan, roof, part)
           : (part.kind === 'gable' || part.kind === 'hip') &&
-            (partRects(part).length > 1 || cutByNeighbour(roof, part))
+            (partRects(part).length > 1 || cutByNeighbour(plan, roof, part))
       if (bySkeleton) {
         const sk = zoneSkeleton(plan, roof, part)
         const tan = Math.tan((part.pitch * Math.PI) / 180)

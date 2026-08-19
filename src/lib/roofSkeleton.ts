@@ -315,39 +315,11 @@ function owns(
   return h > t - 1e-4 && h < t + 1e-4
 }
 
-// Смуга схилу на відстані t: [lo, hi] уздовж грані. Біля УВІГНУТОГО кута схил
-// розширюється за власну грань, тож шукаємо ширше за [a, b]. Межі йдуть під
-// 45° або паралельно карнизу, тож досить грубого проходу з уточненням
-// поділом навпіл.
-function spanAt(
-  boxes: Box[],
-  edges: SkelEdge[],
-  e: SkelEdge,
-  t: number,
-  uMin: number,
-  uMax: number,
-  covered: ((x: number, z: number, t: number) => boolean) | undefined,
-  // Смуга на попередній глибині. Межі схилу йдуть під 45°, тож нова смуга
-  // лежить поруч — шукаємо спершу там, дрібним кроком. Без цього груба вибірка
-  // по всій ширині зони просто ПЕРЕСТРИБУВАЛА вузьку смужку біля вістря, і на
-  // вальмі лишався непокритий трикутник.
-  hint?: [number, number],
-): [number, number] | null {
-  if (hint) {
-    const lo = Math.max(uMin, hint[0] - 0.35)
-    const hi = Math.min(uMax, hint[1] + 0.35)
-    const near = scan(boxes, edges, e, t, lo, hi, covered)
-    // Підказці вірмо лише тоді, коли смуга ВМІСТИЛАСЬ у вікно. Якщо вона
-    // впирається в його край — смуга ширша за вікно, і повертати обрізок не
-    // можна: біля лінії врізки схил спершу звужується до сліду, а далі знову
-    // йде на всю ширину. Саме на цьому й лишалась незакрита смуга вздовж
-    // єндови — профіль назавжди застрягав у вузькому вікні.
-    if (near && near[0] > lo + 1e-3 && near[1] < hi - 1e-3) return near
-  }
-  return scan(boxes, edges, e, t, uMin, uMax, covered)
-}
-
-function scan(
+// Смуги схилу на глибині t: [lo, hi] уздовж грані. Їх буває КІЛЬКА — коли зону
+// перетинає чужий дах, суцільна смуга розпадається на окремі клапті. Раніше тут
+// поверталась одна, найдовша: на ХРЕСТІ двох дахів так губилось 11% площі, а на
+// Т-подібній зоні — ті самі відомі 6%.
+function scanRuns(
   boxes: Box[],
   edges: SkelEdge[],
   e: SkelEdge,
@@ -355,44 +327,159 @@ function scan(
   uMin: number,
   uMax: number,
   covered?: (x: number, z: number, t: number) => boolean,
-): [number, number] | null {
-  // Грубий прохід + уточнення поділом навпіл. Дрібніше не треба: усі межі
-  // прямі, а дуже вузьких клаптів у прямокутного контуру не буває.
-  const n = 64
-  const step = (uMax - uMin) / n
-  const at = (i: number) => uMin + step * i
-  let bestA = -1
-  let bestB = -1
-  let runA = -1
-  for (let i = 0; i <= n; i++) {
-    if (owns(boxes, edges, e, at(i), t, covered)) {
-      if (runA < 0) runA = i
-      if (bestA < 0 || i - runA > bestB - bestA) {
-        bestA = runA
-        bestB = i
-      }
-    } else runA = -1
-  }
-  if (bestA < 0) return null
-  // Уточнення краю: між останньою «своєю» і першою «чужою» точкою.
-  const refine = (inside: number, outside: number) => {
-    let lo = at(inside)
-    let hi = at(outside)
+  // Точки, де смуга БУЛА на попередній глибині. Груба вибірка перестрибує
+  // смугу, вужчу за свій крок, — а саме такою смуга й стає, коли її підтискає
+  // чужий дах. Далі вона знову розширюється, але профіль уже обірвано, і схил
+  // лишався недобудованим на всю висоту (11% дірок на хресті).
+  seeds: number[] = [],
+): [number, number][] {
+  const n = 96
+  const du = (uMax - uMin) / n
+  const at = (i: number) => uMin + du * i
+  const has = (u: number) => owns(boxes, edges, e, u, t, covered)
+  // Усі межі схилу прямі (45° або паралельно карнизу), тож край уточнюємо
+  // поділом навпіл — двадцяти кроків вистачає з запасом.
+  const bisect = (inside: number, outside: number) => {
+    let lo = inside
+    let hi = outside
     for (let k = 0; k < 20; k++) {
       const m = (lo + hi) / 2
-      if (owns(boxes, edges, e, m, t, covered)) lo = m
+      if (has(m)) lo = m
       else hi = m
     }
     return lo
   }
-  const lo = bestA === 0 ? at(0) : refine(bestA, bestA - 1)
-  const hi = bestB === n ? at(n) : refine(bestB, bestB + 1)
-  return hi - lo > 1e-4 ? [lo, hi] : null
+  const runs: [number, number][] = []
+  let from = -1
+  for (let i = 0; i <= n; i++) {
+    if (has(at(i))) {
+      if (from < 0) from = i
+      if (i === n) runs.push([from === 0 ? at(0) : bisect(at(from), at(from - 1)), at(n)])
+    } else if (from >= 0) {
+      runs.push([from === 0 ? at(0) : bisect(at(from), at(from - 1)), bisect(at(i - 1), at(i))])
+      from = -1
+    }
+  }
+  // Смуга навколо підказки: розповзаємось від неї дрібним кроком, поки не
+  // випадемо назовні, і уточнюємо обидва краї.
+  const grow = (u: number): [number, number] | null => {
+    if (!has(u)) return null
+    const st = du / 4
+    let lo = u
+    for (let k = 0; k < 80 && lo - st > uMin && has(lo - st); k++) lo -= st
+    let hi = u
+    for (let k = 0; k < 80 && hi + st < uMax && has(hi + st); k++) hi += st
+    const a = lo - st > uMin ? bisect(lo, lo - st) : uMin
+    const b = hi + st < uMax ? bisect(hi, hi + st) : uMax
+    return b - a > 1e-4 ? [a, b] : null
+  }
+  for (const u of seeds) {
+    if (u < uMin || u > uMax) continue
+    if (runs.some(([a, b]) => u > a - 1e-6 && u < b + 1e-6)) continue
+    const r = grow(u)
+    if (r && !runs.some(([a, b]) => Math.min(b, r[1]) - Math.max(a, r[0]) > 1e-6)) runs.push(r)
+  }
+  runs.sort((p, q) => p[0] - q[0])
+  return runs.filter(([a, b]) => b - a > 1e-4)
 }
 
-// Профіль схилу від карниза до самого верху. Вибірка дрібна, але вузли, що
-// лежать на одній прямій, злипаються — лишаються тільки справжні злами
-// (вальма, єндова, гребінь).
+const overlapOf = (a: [number, number], b: [number, number]) => Math.min(a[1], b[1]) - Math.max(a[0], b[0])
+
+// Профіль однієї смуги: вузли, між якими схил іде рівно лінійно.
+function profileOf(
+  boxes: Box[],
+  field: SkelEdge[],
+  e: SkelEdge,
+  raw: SkelStep[],
+  near: (t: number, hint: [number, number]) => [number, number] | null,
+  step: number,
+  limit: number,
+  covered?: (x: number, z: number, t: number) => boolean,
+): SkelStep[] | null {
+  if (raw.length < 2) return null
+
+  // Вершина: уточнюємо, на якій відстані смуга починається, і ставимо там
+  // точку. Інакше замість вістря вийшов би обрубок завширшки з крок.
+  if (raw[0].t > EPS) {
+    const hint: [number, number] = [raw[0].lo, raw[0].hi]
+    let lo = Math.max(raw[0].t - step, 0)
+    let hi = raw[0].t
+    for (let k = 0; k < 20; k++) {
+      const m = (lo + hi) / 2
+      if (near(m, hint)) hi = m
+      else lo = m
+    }
+    const s = near(hi + 1e-4, hint) ?? hint
+    raw.unshift({ t: hi, lo: (s[0] + s[1]) / 2, hi: (s[0] + s[1]) / 2 })
+  }
+
+  // СТРИБОК: край смуги впирається в гребінь сусіднього схилу й далі йде вже по
+  // іншій лінії. Уточнюємо, на якій саме відстані, і ставимо ДВА вузли на одній
+  // — інакше замість чіткої лінії гребеня була б похила сходинка завширшки з
+  // крок вибірки.
+  const nodes: SkelStep[] = [raw[0]]
+  for (let i = 1; i < raw.length; i++) {
+    const p = raw[i - 1]
+    const c = raw[i]
+    const dt = c.t - p.t
+    const far = Math.max(Math.abs(c.lo - p.lo), Math.abs(c.hi - p.hi))
+    if (far > dt * 1.5 + 1e-3) {
+      // Точка, що зникла на цьому кроці, — по ній і шукаємо межу.
+      const gone = Math.abs(c.lo - p.lo) > Math.abs(c.hi - p.hi) ? (p.lo + c.lo) / 2 : (p.hi + c.hi) / 2
+      let lo = p.t
+      let hi = c.t
+      for (let k = 0; k < 20; k++) {
+        const m = (lo + hi) / 2
+        if (owns(boxes, field, e, gone, m, covered)) lo = m
+        else hi = m
+      }
+      const before = near(Math.max(lo - 1e-4, p.t), [p.lo, p.hi])
+      const after = near(Math.min(hi + 1e-4, c.t), [c.lo, c.hi])
+      if (before) nodes.push({ t: lo, lo: before[0], hi: before[1] })
+      if (after) nodes.push({ t: lo, lo: after[0], hi: after[1] })
+    }
+    nodes.push(c)
+  }
+
+  // Верхівка: там, де смуга стягується в точку (кінець гребеня, вершина
+  // вальми). Остання вибірка не доходить до неї на частину кроку. Схил, що
+  // упирається у ФРОНТОН, лишається широким — його не добудовуємо.
+  const last = nodes[nodes.length - 1]
+  const prev = nodes[nodes.length - 2]
+  const gap = last.hi - last.lo
+  if (gap > 1e-3 && last.t < limit - EPS && last.t > prev.t + EPS) {
+    const dt = last.t - prev.t
+    const kLo = (last.lo - prev.lo) / dt
+    const kHi = (last.hi - prev.hi) / dt
+    const extra = gap / (kLo - kHi)
+    if (kLo - kHi > 1e-6 && extra < 2.5 * step) {
+      const u = last.lo + kLo * extra
+      nodes.push({ t: last.t + extra, lo: u, hi: u })
+    }
+  }
+
+  // Злипання співлінійних вузлів. Пару з однаковим t не чіпаємо — це злам.
+  const steps: SkelStep[] = [nodes[0]]
+  for (let i = 1; i < nodes.length - 1; i++) {
+    const p = steps[steps.length - 1]
+    const c = nodes[i]
+    const q = nodes[i + 1]
+    const dt = q.t - p.t
+    if (dt < EPS || Math.abs(c.t - p.t) < EPS || Math.abs(q.t - c.t) < EPS) {
+      steps.push(c)
+      continue
+    }
+    const k = (c.t - p.t) / dt
+    if (Math.abs(c.lo - (p.lo + k * (q.lo - p.lo))) > 1e-3 || Math.abs(c.hi - (p.hi + k * (q.hi - p.hi))) > 1e-3)
+      steps.push(c)
+  }
+  steps.push(nodes[nodes.length - 1])
+  return steps.length < 2 ? null : steps
+}
+
+// Схили від кожного карниза догори. Один карниз дає СТІЛЬКИ схилів, на скільки
+// клаптів його смугу розрізали чужі дахи: кожен клапоть живе далі своїм
+// профілем.
 export function roofFaces(
   boxes: Box[],
   edges: SkelEdge[],
@@ -416,102 +503,81 @@ export function roofFaces(
   for (const e of [...field, ...cornerEdges(edges, limit)]) {
     const uMin = e.a - limit
     const uMax = e.b + limit
-    const span = (t: number, hint?: [number, number]) => spanAt(boxes, field, e, t, uMin, uMax, covered, hint)
+    const runsAt = (t: number, seeds: number[] = []) => scanRuns(boxes, field, e, t, uMin, uMax, covered, seeds)
+    // Смуга, найближча до підказки: нею тягнеться профіль конкретного клаптя.
+    const near = (t: number, hint: [number, number]): [number, number] | null => {
+      let best: [number, number] | null = null
+      let bestOv = -Infinity
+      for (const r of runsAt(t, [hint[0] + 1e-3, (hint[0] + hint[1]) / 2, hint[1] - 1e-3])) {
+        const ov = overlapOf(r, hint)
+        if (ov > bestOv) {
+          bestOv = ov
+          best = r
+        }
+      }
+      return bestOv > 1e-9 ? best : null
+    }
 
-    // Схил не обов'язково починається на карнизі: кутова грань виростає з
-    // ТОЧКИ десь усередині даху. Тому проходимо всю глибину й беремо
-    // найдовший суцільний відрізок, а не спиняємось на першій порожнечі.
-    const raw: SkelStep[] = []
+    interface Branch {
+      raw: SkelStep[]
+      last: [number, number]
+      alive: boolean
+      // На якому кроці клапоть обірвався. Підказку від нього тримаємо ще
+      // кілька кроків: смуга спершу зникає зовсім (її цілком накрив чужий дах),
+      // а трохи вище виринає знову вузенькою — і без підказки її вже не знайти.
+      diedAt?: number
+    }
+    const SEED_HOLD = 6
+    const all: Branch[] = []
     let blank = 0
     for (let i = 0; ; i++) {
       const t = Math.min(i * step, limit)
-      const last = raw[raw.length - 1]
-      const s = span(t, last && [last.lo, last.hi])
-      if (s) {
-        blank = 0
-        raw.push({ t, lo: s[0], hi: s[1] })
-      } else if (raw.length > 0 && ++blank > 4) break
+      // Підказки — краї та середини смуг із попередньої глибини.
+      const seeds: number[] = []
+      for (const b of all)
+        if (b.alive || (b.diedAt !== undefined && i - b.diedAt <= SEED_HOLD))
+          seeds.push(b.last[0] + 1e-3, (b.last[0] + b.last[1]) / 2, b.last[1] - 1e-3)
+      const rs = runsAt(t, seeds)
+      const taken = new Set<number>()
+      for (const b of all) {
+        if (!b.alive) continue
+        let pick = -1
+        let bestOv = 1e-9
+        rs.forEach((r, j) => {
+          if (taken.has(j)) return
+          const ov = overlapOf(r, b.last)
+          if (ov > bestOv) {
+            bestOv = ov
+            pick = j
+          }
+        })
+        if (pick < 0) {
+          b.alive = false
+          b.diedAt = i
+          continue
+        }
+        taken.add(pick)
+        b.raw.push({ t, lo: rs[pick][0], hi: rs[pick][1] })
+        b.last = rs[pick]
+      }
+      // Смуга, яку не підхопив жоден клапоть, — або вістря схилу, або новий
+      // клапоть, що відділився за чужим дахом.
+      rs.forEach((r, j) => {
+        if (!taken.has(j)) all.push({ raw: [{ t, lo: r[0], hi: r[1] }], last: r, alive: true })
+      })
+      // Порожньо — ще не кінець: вище схил може виринути знову (саме так і
+      // буває, коли його підтискає чужий дах). Терпимо стільки ж кроків,
+      // скільки живе підказка.
+      if (rs.length === 0 && all.length > 0) {
+        if (++blank > SEED_HOLD) break
+      } else blank = 0
       if (t >= limit) break
     }
-    if (raw.length < 2) continue
-    // Вершина: уточнюємо, на якій відстані схил починається, і ставимо там
-    // точку. Інакше замість вістря вийшов би обрубок завширшки з крок.
-    if (raw[0].t > EPS) {
-      let lo = Math.max(raw[0].t - step, 0)
-      let hi = raw[0].t
-      for (let k = 0; k < 20; k++) {
-        const m = (lo + hi) / 2
-        if (span(m)) hi = m
-        else lo = m
-      }
-      const s = span(hi + 1e-4) ?? [raw[0].lo, raw[0].hi]
-      raw.unshift({ t: hi, lo: (s[0] + s[1]) / 2, hi: (s[0] + s[1]) / 2 })
-    }
 
-    // СТРИБОК: край схилу впирається в гребінь сусіднього і далі йде вже по
-    // іншій лінії. Уточнюємо, на якій саме відстані, і ставимо ДВА вузли на
-    // одній — інакше на даху замість чіткої лінії гребеня була б похила
-    // сходинка завширшки з крок вибірки.
-    const nodes: SkelStep[] = [raw[0]]
-    for (let i = 1; i < raw.length; i++) {
-      const p = raw[i - 1]
-      const c = raw[i]
-      const dt = c.t - p.t
-      const far = Math.max(Math.abs(c.lo - p.lo), Math.abs(c.hi - p.hi))
-      if (far > dt * 1.5 + 1e-3) {
-        // Точка, що зникла на цьому кроці, — по ній і шукаємо межу.
-        const gone = Math.abs(c.lo - p.lo) > Math.abs(c.hi - p.hi) ? (p.lo + c.lo) / 2 : (p.hi + c.hi) / 2
-        let lo = p.t
-        let hi = c.t
-        for (let k = 0; k < 20; k++) {
-          const m = (lo + hi) / 2
-          if (owns(boxes, field, e, gone, m, covered)) lo = m
-          else hi = m
-        }
-        const before = span(Math.max(lo - 1e-4, p.t))
-        const after = span(Math.min(hi + 1e-4, c.t))
-        if (before) nodes.push({ t: lo, lo: before[0], hi: before[1] })
-        if (after) nodes.push({ t: lo, lo: after[0], hi: after[1] })
-      }
-      nodes.push(c)
+    for (const b of all) {
+      const steps = profileOf(boxes, field, e, b.raw, near, step, limit, covered)
+      if (steps) out.push({ edge: e, steps })
     }
-
-    // Верхівка: там, де смуга стягується в точку (кінець гребеня, вершина
-    // вальми). Остання вибірка не доходить до неї на частину кроку. Схил, що
-    // упирається в ФРОНТОН, лишається широким — його не добудовуємо.
-    const last = nodes[nodes.length - 1]
-    const prev = nodes[nodes.length - 2]
-    const gap = last.hi - last.lo
-    if (gap > 1e-3 && last.t < limit - EPS && last.t > prev.t + EPS) {
-      const dt = last.t - prev.t
-      const kLo = (last.lo - prev.lo) / dt
-      const kHi = (last.hi - prev.hi) / dt
-      // Сходяться лише якщо смуга справді звужується, і вістря поруч — інакше
-      // це не вістря, а схил, обрізаний фронтоном.
-      const extra = gap / (kLo - kHi)
-      if (kLo - kHi > 1e-6 && extra < 2.5 * step) {
-        const u = last.lo + kLo * extra
-        nodes.push({ t: last.t + extra, lo: u, hi: u })
-      }
-    }
-
-    // Злипання співлінійних вузлів. Пару з однаковим t не чіпаємо — це злам.
-    const steps: SkelStep[] = [nodes[0]]
-    for (let i = 1; i < nodes.length - 1; i++) {
-      const p = steps[steps.length - 1]
-      const c = nodes[i]
-      const q = nodes[i + 1]
-      const dt = q.t - p.t
-      if (dt < EPS || Math.abs(c.t - p.t) < EPS || Math.abs(q.t - c.t) < EPS) {
-        steps.push(c)
-        continue
-      }
-      const k = (c.t - p.t) / dt
-      if (Math.abs(c.lo - (p.lo + k * (q.lo - p.lo))) > 1e-3 || Math.abs(c.hi - (p.hi + k * (q.hi - p.hi))) > 1e-3)
-        steps.push(c)
-    }
-    steps.push(nodes[nodes.length - 1])
-    out.push({ edge: e, steps })
   }
   return out
 }

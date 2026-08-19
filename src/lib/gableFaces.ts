@@ -123,7 +123,7 @@ export function gablePanels(
   // ОДНОСХИЛИЙ сюди теж заходить, але зі своєю висотою: скелета під ним немає,
   // у нього одна похила площина на всю зону. Спільне в них те, що стіни йдуть
   // по КОНТУРУ, а не по габариту.
-  if (partRects(part).length > 1 || (plan && parts && cutByNeighbour(parts, part))) {
+  if (partRects(part).length > 1 || (plan && parts && cutByNeighbour(plan, parts, part))) {
     const boxes = partRects(part).map((r) => {
       const b = slopeBox(part, above, r, siblings)
       return { x0: b.x0, x1: b.x1, z0: b.z0, z1: b.z1 }

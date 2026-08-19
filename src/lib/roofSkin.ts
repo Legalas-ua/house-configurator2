@@ -306,14 +306,14 @@ function slopesOf(
   const rects = partRects(part)
   // Зона, що ВРІЗАЄТЬСЯ в сусідню, теж іде через скелет: інакше її нічим
   // підрізати по чужому скату.
-  if (rects.length <= 1 && !cutByNeighbour(parts, part))
+  if (rects.length <= 1 && !cutByNeighbour(plan, parts, part))
     return slopesOfRect(part, above, roofY, rects[0], siblings)
   // СКАТНИЙ І ВАЛЬМОВИЙ — один дах по прямому скелету: стільки схилів, скільки
   // карнизів у контуру, кожен підрізаний по своїй ділянці скелета.
   if (part.kind === 'gable' || part.kind === 'hip') return skeletonSlopes(part, roofY, zoneSkeleton(plan, parts, part))
   // Односхилий, який ріже сусід, теж іде через скелет — інакше покриття лягає
   // на всю площину, зокрема й на ту частину, якої вже немає.
-  if (part.kind === 'mono' && cutByNeighbour(parts, part))
+  if (part.kind === 'mono' && cutByNeighbour(plan, parts, part))
     return skeletonSlopes(part, roofY, zoneSkeleton(plan, parts, part))
   // ОДНОСХИЛИЙ — одна площина на всю зону, підрізана по її контуру. Скелет
   // йому не потрібен: у односхилого немає ні гребеня, ні єндов.
@@ -1028,7 +1028,7 @@ export function roofSkin(
     // окремий кожух, покладений ПО ребру — тобто теж під кутом.
     // Складена зона: усі ребра в неї похилі — і вальми, і єндови. Кожух
     // кладеться по самому ребру, як і на простій вальмі.
-    if (part.kind !== 'flat' && part.kind !== 'mono' && (partRects(part).length > 1 || cutByNeighbour(parts, part)))
+    if (part.kind !== 'flat' && part.kind !== 'mono' && (partRects(part).length > 1 || cutByNeighbour(plan, parts, part)))
       skeletonCaps(part, zoneSkeleton(plan, parts, part), roofY, spec.kind, gt.boxes, atWall)
     // Складений односхилий: карниз крила схил не бачить — його планку кладемо
     // окремо, по контуру зони.

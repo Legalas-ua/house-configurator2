@@ -1007,14 +1007,27 @@ function slopesOverlap(plan: HousePlan, parts: RoofPart[], a: RoofPart, b: RoofP
 // тож жодне себе підрізаним не вважало. На плані Г-подібного будинку так
 // накривалось двічі до 12% площі. Тепер у кожній точці лишається ВЕРХНЯ
 // площина, а нижня зрізається — незалежно від того, хто головний на стику.
-export function cutByNeighbour(parts: RoofPart[], part: RoofPart): boolean {
+export function cutByNeighbour(plan: HousePlan, parts: RoofPart[], part: RoofPart): boolean {
   if (part.kind === 'flat') return false
-  return roofRivals(parts, part).length > 0
+  return roofRivals(plan, parts, part).length > 0
 }
 
-// Сусіди, чиї схили справді накладаються на наші.
-export function roofRivals(parts: RoofPart[], part: RoofPart): RoofPart[] {
-  return zoneNeighbours(parts, part).filter((o) => o.kind !== 'flat')
+// Зони, чиї схили СПРАВДІ накладаються на наші, — тільки їх і треба підрізати.
+//
+// Раніше тут стояли `zoneNeighbours`, а вони вимагають СПІЛЬНОЇ ГРАНІ
+// (`touches`). Дві зони, покладені ХРЕСТОМ — а саме так їх і малює клієнт, —
+// спільної грані не мають: вони накладаються площею. Тому вони не вважались
+// сусідами взагалі, підрізка до них не доходила, і два дахи просто проходили
+// один крізь одного (52% площі під двома дахами на перевірці, і рівно це видно
+// на скріншоті Lev). Тепер вирішує сам факт накладання габаритів схилів.
+export function roofRivals(plan: HousePlan, parts: RoofPart[], part: RoofPart): RoofPart[] {
+  return parts.filter(
+    (o) =>
+      o.id !== part.id &&
+      o.level === part.level &&
+      o.kind !== 'flat' &&
+      slopesOverlap(plan, parts, part, o),
+  )
 }
 
 // Скелет зони З УРАХУВАННЯМ сусідів: усе, що опинилось під дахом вищої зони,
@@ -1026,7 +1039,7 @@ export function zoneSkeleton(
 ): ReturnType<typeof roofSkeleton> & { hidden: (x: number, z: number) => boolean } {
   const above = plan.floors[part.level + 1]?.slab ?? []
   const sibs = zoneRects(parts, part)
-  const rivals = roofRivals(parts, part).filter((o) => slopesOverlap(plan, parts, part, o))
+  const rivals = roofRivals(plan, parts, part)
   const none = () => false
   if (rivals.length === 0 || part.kind === 'flat')
     return { ...roofSkeleton(part, above, sibs), hidden: none }

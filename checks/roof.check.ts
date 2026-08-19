@@ -25,6 +25,7 @@ import {
   zoneRects,
   zoneSkeleton,
   normalizeRoof,
+  rectsBox,
   ridgeHeight,
   DEFAULTS,
   type RoofKind,
@@ -218,6 +219,23 @@ function scenarios(): { name: string; plan: HousePlan; parts: RoofPart[] }[] {
     if (base.length > 1) {
       const mix = base.map((p, i) => (i ? normalizeRoof({ ...p, kind: 'mono', pitch: 15 }) : p))
       out.push({ name: `${s.name} · двосхилий + односхиле крило`, plan, parts: mix })
+    }
+    // ХРЕСТ: дві зони, що НАКЛАДАЮТЬСЯ, а не просто торкаються. Саме так їх
+    // малює клієнт вручну — і саме тут дахи проходили один крізь одного.
+    const lvl = base[0]?.level ?? 0
+    const bb = rectsBox(generateRoof(plan, 'flat').filter((p) => p.level === lvl).flatMap(partRects))
+    if (bb.width > 4 && bb.depth > 4) {
+      for (const [nm, pitchB] of [['рівні коники', 35] as const, ['крило нижче', 20] as const]) {
+        const A = normalizeRoof({
+          id: 'x-main', level: lvl, kind: 'gable', ...DEFAULTS, pitch: 35, rotation: 0,
+          x: bb.x, z: bb.z, width: bb.width, depth: Math.max(3, bb.depth / 2),
+        })
+        const B = normalizeRoof({
+          id: 'x-wing', level: lvl, kind: 'gable', ...DEFAULTS, pitch: pitchB, rotation: 90,
+          x: bb.x, z: bb.z, width: Math.max(3, bb.width / 2), depth: bb.depth,
+        })
+        out.push({ name: `${s.name} · ХРЕСТ (${nm})`, plan, parts: [A, B] })
+      }
     }
   }
   return out
