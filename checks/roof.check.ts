@@ -9,7 +9,8 @@
 //   ДУБЛЬ   — точку накрили два схили однієї зони (розшарування покриття);
 //   ВИЛІТ   — схил лежить там, де зону вже підрізав сусідній дах (артефакт);
 //   ЧУЖИЙ   — точку накрили схили ДВОХ різних зон одразу (врізка не спрацювала);
-//   ПОВІТРЯ — елемент покриття висить там, де даху немає.
+//   ПОВІТРЯ — елемент покриття висить там, де даху немає;
+//   КОЖУХ   — планка чи кожух відлетіли від даху далі, ніж дозволяє звіс.
 //
 // Поріг падіння — у THRESHOLDS. Зростання будь-якого числа = регрес.
 // ============================================================
@@ -67,7 +68,9 @@ const inBoxes = (bs: { x0: number; x1: number; z0: number; z1: number }[], x: nu
 
 // Покрівля НАВМИСНО звішується за карниз (звіс матеріалу, крапельник), тож
 // «у повітрі» рахуємо лише те, що відійшло від живого даху далі за це.
-const EAVE_SLACK = 0.2
+const EAVE_SLACK = 0.35
+// Планка карниза стоїть іще далі за матеріал — але теж не в порожнечі.
+const TRIM_SLACK = 0.6
 
 // ---- Заміри ----
 
@@ -79,7 +82,9 @@ export interface Report {
   spill: number // % схилу там, де зону підрізано сусідом
   foreign: number // % накритої схилами двох різних зон
   airborne: number // % елементів покриття, що висять у повітрі
+  trimAir: number // % планок і кожухів, що відлетіли від даху
   elements: number
+  trims: number
 }
 
 function measure(name: string, plan: HousePlan, parts: RoofPart[]): Report {
@@ -135,22 +140,33 @@ function measure(name: string, plan: HousePlan, parts: RoofPart[]): Report {
   // Покриття: чи не висить воно в повітрі.
   let elements = 0
   let airborne = 0
+  let trims = 0
+  let trimAir = 0
   const groups = roofSkin(plan, parts, DEFAULT_ROOF_MAT, DEFAULT_ROOF_MAT, {}, FLOOR_H)
+  const live = (x: number, z: number, slack: number) =>
+    pitched.some(
+      (p) =>
+        inBoxes(box.get(p.id)!, x, z, slack) &&
+        !sk.get(p.id)!.hidden(x, z) &&
+        sk.get(p.id)!.faces.some((f) => faceCovers(f, x, z, slack)),
+    )
   for (const g of groups) {
-    if (g.trim) continue // планки й кожухи навмисно виходять за край
+    // Планки й кожухи НАВМИСНО виходять за край даху — але не на пів метра.
+    if (g.trim) {
+      for (const b of g.boxes) {
+        trims++
+        if (parts.some((p) => p.kind === 'flat')) continue
+        if (!live(b.x, b.z, TRIM_SLACK)) trimAir++
+      }
+      continue
+    }
     for (const b of g.boxes) {
       elements++
       if (parts.some((p) => p.kind === 'flat')) continue // плоский лежить по контуру
       // Під елементом має бути ЖИВА поверхня даху: усередині габариту зони,
       // не підрізана сусідом і справді накрита схилом. Питати треба всі зони —
       // габарити сусідів накладаються, і «власника» за координатою не вгадати.
-      const ok = pitched.some(
-        (p) =>
-          inBoxes(box.get(p.id)!, b.x, b.z, EAVE_SLACK) &&
-          !sk.get(p.id)!.hidden(b.x, b.z) &&
-          sk.get(p.id)!.faces.some((f) => faceCovers(f, b.x, b.z, EAVE_SLACK)),
-      )
-      if (!ok) airborne++
+      if (!live(b.x, b.z, EAVE_SLACK)) airborne++
     }
   }
 
@@ -164,6 +180,8 @@ function measure(name: string, plan: HousePlan, parts: RoofPart[]): Report {
     foreign: pct(foreign),
     elements,
     airborne: elements ? (airborne * 100) / elements : 0,
+    trims,
+    trimAir: trims ? (trimAir * 100) / trims : 0,
   }
 }
 
@@ -206,13 +224,13 @@ function scenarios(): { name: string; plan: HousePlan; parts: RoofPart[] }[] {
 }
 
 // Пороги: більше — регрес. Числа зафіксовані за фактом на момент правки.
-const THRESHOLDS = { holes: 2, doubles: 0.2, spill: 0.2, foreign: 0.3, airborne: 0.6 }
+const THRESHOLDS = { holes: 2, doubles: 0.2, spill: 0.2, foreign: 0.3, airborne: 0.6, trimAir: 2 }
 
 function main() {
   const rows = scenarios().map((s) => measure(s.name, s.plan, s.parts))
   const w = Math.max(...rows.map((r) => r.name.length))
   const f = (v: number) => v.toFixed(2).padStart(6)
-  console.log('сценарій'.padEnd(w), '  діра   дубль   виліт   чужий повітря  елем.')
+  console.log('сценарій'.padEnd(w), '  діра   дубль   виліт   чужий повітря  кожух  елем.')
   let bad = 0
   for (const r of rows) {
     const flags: string[] = []
@@ -221,6 +239,7 @@ function main() {
     if (r.spill > THRESHOLDS.spill) flags.push('ВИЛІТ')
     if (r.foreign > THRESHOLDS.foreign) flags.push('ЧУЖИЙ')
     if (r.airborne > THRESHOLDS.airborne) flags.push('ПОВІТРЯ')
+    if (r.trimAir > THRESHOLDS.trimAir) flags.push('КОЖУХ')
     if (flags.length) bad++
     console.log(
       r.name.padEnd(w),
@@ -229,6 +248,7 @@ function main() {
       f(r.spill),
       f(r.foreign),
       f(r.airborne),
+      f(r.trimAir),
       String(r.elements).padStart(6),
       flags.join(' '),
     )

@@ -67,6 +67,16 @@ export const FASCIA_W = 0.04 // ширина планки вздовж гран�
 export const CAP_OUT = 0.035 // звис кожуха за грань парапету
 export const CAP_H = 0.05 // висота кожуха
 const DRIP_T = 0.02 // товщина крапельниці по краю кожуха
+// Кожух КАРНИЗА (звісу). Правило Lev, з розрізу:
+//   • основний матеріал звішується за торець даху;
+//   • кожух іде від НИЖНЬОГО ребра торця до краю матеріалу і стикується з ним
+//     рівно під 90° — тільки так шов виходить чистий.
+// Звідси однозначна геометрія (H — висота торця, α — кут схилу):
+//   звіс матеріалу вздовж площини = H·sin α,   довжина кожуха = H·cos α.
+// Тобто чим крутіший дах, тим довший звіс і коротший кожух — самé собою.
+const EAVE_CAP_T = 0.03 // товщина кожуха звісу
+const EAVE_CAP_LAP = 0.015 // напуск кожуха на матеріал зверху
+const MONO_LEG = 0.14 // відворот кожуха вгору по стіні (верх односхилого)
 // Жолоб єндови: ширина по обидва боки від лінії стику й підйом над карнизом.
 const VALLEY_W = 0.36
 const VALLEY_UP = 0.075
@@ -109,6 +119,21 @@ interface Slope {
   // вздовж гребеня, а виріз буває й посеред схилу.
   hidden?: (x: number, z: number) => boolean
   cap?: number // довжина кожуха на ВЕРХНЬОМУ краї (0/undefined — кожуха немає)
+  // Наскільки матеріал звішується за карниз (уздовж площини схилу). Рахує
+  // `eaveCap`: рівно стільки, щоб кожух звісу підійшов до нього під 90°.
+  eaveExt?: number
+}
+
+// Розміри карнизного вузла для цього схилу. plateT — товщина плити даху.
+export function eaveCap(tilt: number, plateT: number, cover: number) {
+  const a = Math.abs(tilt)
+  // Висота торця по вертикалі — та сама, що в карнизної дошки.
+  const H = plateT / Math.max(Math.cos(a), 0.2) + cover + 0.03
+  return {
+    H,
+    ext: H * Math.sin(a), // звіс матеріалу за торець, уздовж площини
+    len: H * Math.cos(a) + cover, // довжина кожуха по нормалі до схилу
+  }
 }
 
 function layElements(sl: Slope, kind: RoofMatKind, out: SkinBox[], budget: number) {
@@ -149,8 +174,12 @@ function layElements(sl: Slope, kind: RoofMatKind, out: SkinBox[], budget: numbe
 
   const u0 = -sl.width / 2
   const u1 = sl.width / 2
-  const s0 = -sl.len / 2
-  const s1 = sl.len / 2
+  // Матеріал звішується за КАРНИЗ (нижній край), а не за обидва: угорі на нього
+  // сідає кожух гребеня, і зайвий сантиметр там лише задирає шов.
+  const ext = sl.eaveExt ?? 0
+  const low = sl.tilt > 0 ? -1 : 1
+  const s0 = -sl.len / 2 - (low < 0 ? ext : 0)
+  const s1 = sl.len / 2 + (low > 0 ? ext : 0)
 
   // Елемент, підрізаний ребром ВАЛЬМИ. Ребро йде по діагоналі, тож обрізати
   // цілий ряд однією шириною не можна — виходили зубці. Елемент, який ребро
@@ -599,6 +628,33 @@ function fasciaOf(
     })
   }
 
+  // КОЖУХ КАРНИЗА. Дошка вище закрила торець пирога, але сам стик із матеріалом
+  // лишався відкритим: матеріал звішується, і між його краєм та дошкою — щілина
+  // в товщину пирога. Кожух іде від нижнього ребра дошки під прямим кутом до
+  // площини матеріалу й накриває весь вузол одним рухом.
+  const ec = eaveCap(sl.tilt, plateT, cover)
+  // Стоїть рівно там, де закінчився матеріал: його звіс і кожух рахує один і
+  // той самий вузол, тож шов сходиться без підбору.
+  const capS = eaveOut + low * ec.ext
+  // Уздовж нормалі: від нижнього ребра торця (−H·cos α) до верху матеріалу.
+  const capN = (cover + EAVE_CAP_LAP - ec.H * Math.cos(sl.tilt)) / 2
+  const capLen = ec.len + EAVE_CAP_LAP
+  for (const [a, b] of eu1 - eu0 < 0.05 ? [] : freeRuns(eu0 - w, eu1 + w, (u) => at(u, capS))) {
+    const uc = (a + b) / 2
+    const ly = capS * sin + cos * capN
+    const lz = capS * cos - sin * capN
+    out.push({
+      x: sl.cx + uc * rc + lz * rs,
+      y: sl.cy + ly,
+      z: sl.cz - uc * rs + lz * rc,
+      dx: b - a,
+      dy: capLen,
+      dz: EAVE_CAP_T,
+      rotY: sl.rotY,
+      tilt: sl.tilt,
+    })
+  }
+
   // СКАТНІ КРАЇ. Тут навпаки: торець плити йде ПАРАЛЕЛЬНО схилу, тож дошка
   // теж нахилена — одним суцільним бруском. Набирати її вертикальними
   // відрізками не можна: край перетворювався на сходинки.
@@ -702,6 +758,38 @@ function ridgeCap(sl: Slope, kind: RoofMatKind, out: SkinBox[]) {
     rotY: sl.rotY,
     tilt: sl.tilt,
   })
+}
+
+// Кожух ВЕРХНЬОГО краю односхилого. Там дах упирається в стіну, і сам стик —
+// найвразливіше місце: вода з усієї площини йде саме сюди. Кожух складається з
+// двох частин (як на розрізі Lev): полиця лягає по площині схилу й накриває
+// верхній край матеріалу, а відворот піднімається по стіні.
+function monoTopCap(sl: Slope, kind: RoofMatKind, out: SkinBox[]) {
+  const cover = roofSkinHeight(kind)
+  const sin = Math.sin(sl.tilt)
+  const cos = Math.cos(sl.tilt)
+  const rc = Math.cos(sl.rotY)
+  const rs = Math.sin(sl.rotY)
+  const dir = sl.tilt > 0 ? 1 : -1 // куди вздовж s лежить ВЕРХНІЙ край
+  const hl = sl.len / 2
+  // Складена зона: угорі дах є не по всій ширині — беремо ту смугу, де він є.
+  let uc = 0
+  let along = sl.width
+  if (sl.clipU) {
+    const [lo, hi] = sl.clipU(dir * (hl - 0.05))
+    if (hi - lo < 0.05) return
+    uc = (lo + hi) / 2
+    along = hi - lo
+  }
+  const world = (s: number, n: number) => {
+    const ly = s * sin + cos * n
+    const lz = s * cos - sin * n
+    return { x: sl.cx + uc * rc + lz * rs, y: sl.cy + ly, z: sl.cz - uc * rs + lz * rc }
+  }
+  const shelf = world(dir * (hl - CAP_D / 2 + 0.04), cover + 0.012)
+  out.push({ x: shelf.x, y: shelf.y, z: shelf.z, dx: along, dy: 0.028, dz: CAP_D, rotY: sl.rotY, tilt: sl.tilt })
+  const up = world(dir * (hl + 0.02), cover + 0.012)
+  out.push({ x: up.x, y: up.y + MONO_LEG / 2, z: up.z, dx: along, dy: MONO_LEG, dz: 0.028, rotY: sl.rotY, tilt: 0 })
 }
 
 // Карнизні планки складеного ОДНОСХИЛОГО, яких не бачить схил. Схил у такої
@@ -911,10 +999,16 @@ export function roofSkin(
         g.top = Math.max(g.top, roofY + FLAT_T + 0.05)
         continue
       }
+      // Звіс матеріалу за карниз — рівно під кожух звісу. У внутрішнього
+      // (кутового) схилу карниза немає: там дах загортається сам у себе.
+      if (!sl.inner) sl.eaveExt = eaveCap(sl.tilt, ROOF_T, roofSkinHeight(spec.kind)).ext
       layElements(sl, spec.kind, g.boxes, MAX_ELEMENTS)
       if (!sl.inner) fasciaOf(sl, spec.kind, gt.boxes, ROOF_T, blockers)
       // Між схилами на гребені лишається щілина — накриваємо кожухом.
       if (part.kind !== 'mono') ridgeCap(sl, spec.kind, gt.boxes)
+      // В односхилого гребеня немає: угорі він примикає до стіни, і там свій
+      // вузол — полиця плюс відворот.
+      else if (!sl.inner) monoTopCap(sl, spec.kind, gt.boxes)
       // Найвища точка — щоб поява йшла зверху вниз, а не знизу вгору.
       const topY = sl.cy + (sl.len / 2) * Math.abs(Math.sin(sl.tilt)) + 0.2
       g.top = Math.max(g.top, topY)
