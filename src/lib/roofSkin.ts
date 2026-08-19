@@ -282,6 +282,10 @@ function slopesOf(
   // СКАТНИЙ І ВАЛЬМОВИЙ — один дах по прямому скелету: стільки схилів, скільки
   // карнизів у контуру, кожен підрізаний по своїй ділянці скелета.
   if (part.kind === 'gable' || part.kind === 'hip') return skeletonSlopes(part, roofY, zoneSkeleton(plan, parts, part))
+  // Односхилий, який ріже сусід, теж іде через скелет — інакше покриття лягає
+  // на всю площину, зокрема й на ту частину, якої вже немає.
+  if (part.kind === 'mono' && cutByNeighbour(parts, part))
+    return skeletonSlopes(part, roofY, zoneSkeleton(plan, parts, part))
   // ОДНОСХИЛИЙ — одна площина на всю зону, підрізана по її контуру. Скелет
   // йому не потрібен: у односхилого немає ні гребеня, ні єндов.
   if (part.kind === 'mono') {

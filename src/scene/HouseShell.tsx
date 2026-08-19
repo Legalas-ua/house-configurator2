@@ -1906,7 +1906,14 @@ export default function HouseShell() {
       // над вирізом контуру даху немає взагалі.
       // Скелетом будуємо не лише складену зону, а й ту, що ВРІЗАЄТЬСЯ в сусідню:
       // просту призму нічим підрізати по чужому скату.
-      if ((part.kind === 'gable' || part.kind === 'hip') && (partRects(part).length > 1 || cutByNeighbour(roof, part))) {
+      // Односхилий сюди потрапляє ЛИШЕ коли його ріже сусід: сама по собі його
+      // проста призма правильна, а от підрізати її нічим.
+      const bySkeleton =
+        part.kind === 'mono'
+          ? cutByNeighbour(roof, part)
+          : (part.kind === 'gable' || part.kind === 'hip') &&
+            (partRects(part).length > 1 || cutByNeighbour(roof, part))
+      if (bySkeleton) {
         const sk = zoneSkeleton(plan, roof, part)
         const tan = Math.tan((part.pitch * Math.PI) / 180)
         const skirt = ROOF_LIFT + TIER_LAP
@@ -1915,7 +1922,12 @@ export default function HouseShell() {
         // стіни (фронтон), а покрівля лягає окремою плитою поверх. Зі звісом
         // дах нависає, і збоку видно вже ТОРЕЦЬ даху, а не стіну.
         const wall = part.kind === 'gable' && part.overhang === 0
-        out.push({ ...b, geo: skeletonGeometry(sk, tan, skirt, sk.hidden), wallLike: wall, edge: part.kind === 'gable' && !wall })
+        out.push({
+          ...b,
+          geo: skeletonGeometry(sk, tan, skirt, sk.hidden),
+          wallLike: wall,
+          edge: (part.kind === 'gable' || part.kind === 'mono') && !wall,
+        })
         if (wall)
           out.push({
             ...b,

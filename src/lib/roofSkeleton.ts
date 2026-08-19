@@ -47,6 +47,10 @@ export interface SkelEdge {
   // будинку — карниза, планок і кожуха на ній немає.
   corner?: boolean
   parent?: SkelEdge // для кутової грані — карниз, ріг якого вона загортає
+  // Грань БЕЗ кінців: відстань до неї міряється лише впоперек. Так описано
+  // карниз односхилого даху — у нього ОДНА площина на всю зону, і за кінцем
+  // карниза вона не загортається, а просто триває далі тією ж площиною.
+  infinite?: boolean
 }
 
 // Профіль схилу: на відстані `t` від карниза скат займає [lo, hi] уздовж
@@ -175,7 +179,7 @@ export function unionCells(boxes: Box[]): Box[] {
 // за його рогом.
 export function edgeParts(e: SkelEdge, x: number, z: number): [number, number] {
   const [u, v] = e.horizontal ? [x, z] : [z, x]
-  return [Math.max(e.a - u, 0, u - e.b), Math.abs(v - e.line)]
+  return [e.infinite ? 0 : Math.max(e.a - u, 0, u - e.b), Math.abs(v - e.line)]
 }
 
 export function edgeDist(e: SkelEdge, x: number, z: number): number {
@@ -330,8 +334,15 @@ function spanAt(
   hint?: [number, number],
 ): [number, number] | null {
   if (hint) {
-    const near = scan(boxes, edges, e, t, Math.max(uMin, hint[0] - 0.35), Math.min(uMax, hint[1] + 0.35), covered)
-    if (near) return near
+    const lo = Math.max(uMin, hint[0] - 0.35)
+    const hi = Math.min(uMax, hint[1] + 0.35)
+    const near = scan(boxes, edges, e, t, lo, hi, covered)
+    // Підказці вірмо лише тоді, коли смуга ВМІСТИЛАСЬ у вікно. Якщо вона
+    // впирається в його край — смуга ширша за вікно, і повертати обрізок не
+    // можна: біля лінії врізки схил спершу звужується до сліду, а далі знову
+    // йде на всю ширину. Саме на цьому й лишалась незакрита смуга вздовж
+    // єндови — профіль назавжди застрягав у вузькому вікні.
+    if (near && near[0] > lo + 1e-3 && near[1] < hi - 1e-3) return near
   }
   return scan(boxes, edges, e, t, uMin, uMax, covered)
 }
@@ -392,8 +403,11 @@ export function roofFaces(
   const x1 = Math.max(...boxes.map((b) => b.x1))
   const z0 = Math.min(...boxes.map((b) => b.z0))
   const z1 = Math.max(...boxes.map((b) => b.z1))
-  // Далі за половину найбільшого габариту схил не підніметься.
-  const limit = Math.max(x1 - x0, z1 - z0) / 2 + step
+  // Далі за половину найбільшого габариту схил не підніметься — бо назустріч
+  // іде схил із протилежного карниза. Виняток — ОДНОСХИЛИЙ: у нього карниз
+  // один, і його площина тягнеться через увесь габарит.
+  const solo = edges.some((e) => e.infinite)
+  const limit = Math.max(x1 - x0, z1 - z0) / (solo ? 1 : 2) + step
 
   // Порівнюємо ЗАВЖДИ зі справжніми карнизами: висоту даху задають вони, а
   // кутові грані лише добирають те, що лишилось за кінцями карнизів.

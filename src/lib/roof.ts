@@ -869,6 +869,21 @@ export function roofSkeleton(
   return made
 }
 
+// Нижня (нульова) грань односхилого даху: до неї падає єдина площина.
+// `perp` — чи ця грань іде впоперек X (тобто лінія сталого x).
+function monoLow(part: RoofPart, boxes: { x0: number; x1: number; z0: number; z1: number }[]) {
+  if (part.kind !== 'mono' || boxes.length === 0) return null
+  const g = {
+    x0: Math.min(...boxes.map((b) => b.x0)),
+    x1: Math.max(...boxes.map((b) => b.x1)),
+    z0: Math.min(...boxes.map((b) => b.z0)),
+    z1: Math.max(...boxes.map((b) => b.z1)),
+  }
+  const alongZ = ridgeAlongZ(part)
+  const line = part.rotation < 180 ? (alongZ ? g.x0 : g.z1) : alongZ ? g.x1 : g.z0
+  return { line, perp: alongZ }
+}
+
 function buildSkeleton(
   part: RoofPart,
   above: PlanRect[],
@@ -894,7 +909,15 @@ function buildSkeleton(
   const along = (r: PlanRect) => (part.rotation % 180 === 0 ? r.depth >= r.width : r.depth < r.width)
   const mainAlongZ = along(own[main])
   const CROSS = 1.2
+  // ОДНОСХИЛИЙ — одна площина: карниз у нього рівно один (нижня грань), і
+  // висота в будь-якій точці = відстань УПОПЕРЕК до неї. Решта граней —
+  // фронтони: якби вони теж «піднімали» дах, площина зламалась би.
+  const lowEdge = monoLow(part, boxes)
   const edges: SkelEdge[] = outlineEdges(boxes, main).map((e) => {
+    if (part.kind === 'mono') {
+      const atLow = lowEdge !== null && lowEdge.perp === !e.horizontal && Math.abs(e.line - lowEdge.line) < 1e-3
+      return { ...e, rising: atLow, infinite: atLow }
+    }
     if (part.kind === 'hip') return { ...e, rising: true }
     const r = own[e.own]
     const ratio = r.depth / Math.max(r.width, 1e-6)
@@ -935,29 +958,63 @@ export function tiedNeighbours(parts: RoofPart[], part: RoofPart): RoofPart[] {
 
 // Висота даху зони в точці. Поза її схилами — нуль: там даху просто немає.
 // Це «чистий» дах сусіда, без підрізань: вищий ніколи не ріжеться.
+// Поза своїм габаритом даху зони НЕМАЄ — і це не «висота нуль», а «нічого».
+// Нуль там означав би, що на карнизі сусіда дах ніби є врівень із землею, і
+// точка на самому стику лишалась непідрізаною.
+export const NO_ROOF = -Infinity
+
 function zoneHeightField(plan: HousePlan, parts: RoofPart[], part: RoofPart): (x: number, z: number) => number {
   const above = plan.floors[part.level + 1]?.slab ?? []
   const sibs = zoneRects(parts, part)
   const boxes = partRects(part).map((r) => slopeBox(part, above, r, sibs))
   const inside = (x: number, z: number) =>
     boxes.some((q) => x > q.x0 - 1e-4 && x < q.x1 + 1e-4 && z > q.z0 - 1e-4 && z < q.z1 + 1e-4)
-  if (part.kind === 'flat') return () => 0
+  if (part.kind === 'flat') return (x, z) => (inside(x, z) ? 0 : NO_ROOF)
   const tan = Math.tan((part.pitch * Math.PI) / 180)
   if (part.kind === 'mono') {
-    const g = slopeBox(part, above, undefined, sibs)
-    const alongZ = ridgeAlongZ(part)
-    const low = part.rotation < 180 ? (alongZ ? g.x0 : g.z1) : alongZ ? g.x1 : g.z0
-    return (x, z) => (inside(x, z) ? Math.abs((alongZ ? x : z) - low) * tan : 0)
+    // Нижню грань беремо ТИМ САМИМ хелпером, що й скелет: інакше зона різала б
+    // сусіда по одній площині, а сама будувалась по іншій.
+    const lo = monoLow(part, boxes)
+    if (!lo) return () => NO_ROOF
+    return (x, z) => (inside(x, z) ? Math.abs((lo.perp ? x : z) - lo.line) * tan : NO_ROOF)
   }
   const sk = roofSkeleton(part, above, sibs)
-  return (x, z) => (inside(x, z) ? planRise(sk.edges, x, z) * tan : 0)
+  return (x, z) => (inside(x, z) ? planRise(sk.edges, x, z) * tan : NO_ROOF)
+}
+
+// Габарити двох зон РІЗАЛИСЬ би одна об одну: перетин має площу, а не спільну
+// грань. Тільки такі пари й треба підрізати; ті, що просто стоять поруч,
+// лишаються на швидкому шляху (проста призма).
+function slopesOverlap(plan: HousePlan, parts: RoofPart[], a: RoofPart, b: RoofPart): boolean {
+  const boxes = (p: RoofPart) => {
+    const above = plan.floors[p.level + 1]?.slab ?? []
+    const sibs = zoneRects(parts, p)
+    return partRects(p).map((r) => slopeBox(p, above, r, sibs))
+  }
+  const A = boxes(a)
+  const B = boxes(b)
+  return A.some((p) =>
+    B.some((q) => Math.min(p.x1, q.x1) - Math.max(p.x0, q.x0) > 0.02 && Math.min(p.z1, q.z1) - Math.max(p.z0, q.z0) > 0.02),
+  )
 }
 
 // Чи цю зону ріже сусідній дах — тоді її треба будувати скелетом, а не
 // простою призмою: підрізати призму нічим.
+//
+// Підрізка ВЗАЄМНА. Раніше різали лише «нижчого» — того, у кого нижчий коник, —
+// і два крила з ПАРАЛЕЛЬНИМИ гребенями просто проходили одне крізь одне: у
+// смузі між лінією перетину площин і карнизом сусіда кожне з них справді вище,
+// тож жодне себе підрізаним не вважало. На плані Г-подібного будинку так
+// накривалось двічі до 12% площі. Тепер у кожній точці лишається ВЕРХНЯ
+// площина, а нижня зрізається — незалежно від того, хто головний на стику.
 export function cutByNeighbour(parts: RoofPart[], part: RoofPart): boolean {
-  if (part.kind !== 'gable' && part.kind !== 'hip') return false
-  return zoneNeighbours(parts, part).some((o) => o.kind !== 'flat' && mainOfPair(part, o) === o)
+  if (part.kind === 'flat') return false
+  return roofRivals(parts, part).length > 0
+}
+
+// Сусіди, чиї схили справді накладаються на наші.
+export function roofRivals(parts: RoofPart[], part: RoofPart): RoofPart[] {
+  return zoneNeighbours(parts, part).filter((o) => o.kind !== 'flat')
 }
 
 // Скелет зони З УРАХУВАННЯМ сусідів: усе, що опинилось під дахом вищої зони,
@@ -969,17 +1026,28 @@ export function zoneSkeleton(
 ): ReturnType<typeof roofSkeleton> & { hidden: (x: number, z: number) => boolean } {
   const above = plan.floors[part.level + 1]?.slab ?? []
   const sibs = zoneRects(parts, part)
-  const higher = zoneNeighbours(parts, part).filter((o) => o.kind !== 'flat' && mainOfPair(part, o) === o)
+  const rivals = roofRivals(parts, part).filter((o) => slopesOverlap(plan, parts, part, o))
   const none = () => false
-  if (higher.length === 0 || (part.kind !== 'gable' && part.kind !== 'hip'))
+  if (rivals.length === 0 || part.kind === 'flat')
     return { ...roofSkeleton(part, above, sibs), hidden: none }
   const tan = Math.tan((part.pitch * Math.PI) / 180)
-  const fields = higher.map((o) => zoneHeightField(plan, parts, o))
+  // Площини сусіда — це і є ножі. Беремо його ЧИСТИЙ дах, без його власних
+  // підрізань: різати треба по зовнішній площині, а не по вже обрізаному краю,
+  // інакше на стику лишається недоріз.
+  const fields = rivals.map((o) => ({ at: zoneHeightField(plan, parts, o), main: mainOfPair(part, o) === o }))
   const covered = (x: number, z: number, t: number) => {
     const h = t * tan
-    return fields.some((f) => f(x, z) > h + 0.01)
+    return fields.some(({ at, main }) => {
+      const hn = at(x, z)
+      if (hn === NO_ROOF) return false
+      // Сусід вище — наша площина під його дахом, її немає.
+      if (hn > h + 1e-4) return true
+      // Рівно на лінії перетину двох площин виграє головний на стику: інакше
+      // обидві зони зрізали б себе (щілина) або жодна (шов у два шари).
+      return main && hn > h - 1e-4
+    })
   }
-  const key = higher.map((o) => `${o.id}:${o.x},${o.z},${o.width},${o.depth},${o.pitch},${o.rotation},${o.kind}`).join('|')
+  const key = rivals.map((o) => `${o.id}:${o.x},${o.z},${o.width},${o.depth},${o.pitch},${o.rotation},${o.kind}`).join('|')
   const sk = roofSkeleton(part, above, sibs, covered, key)
   // Чи наш дах у цій точці вже НАКРИТИЙ сусідським. Цим одним запитанням
   // підрізається все інше: стіни тіла даху, його дно й лінія, на якій треба
