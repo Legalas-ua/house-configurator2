@@ -72,6 +72,10 @@ const inBoxes = (bs: { x0: number; x1: number; z0: number; z1: number }[], x: nu
 const EAVE_SLACK = 0.35
 // Планка карниза стоїть іще далі за матеріал — але теж не в порожнечі.
 const TRIM_SLACK = 0.6
+// Межа схилу: точка рівно на ребрі належить обом сусіднім схилам.
+const EDGE_TOL = 0.002
+// «Глибоко всередині» — щоб накладання рахувалось лише справжнє, з площею.
+const DEEP_TOL = 0.02
 
 // ---- Заміри ----
 
@@ -112,28 +116,39 @@ function measure(name: string, plan: HousePlan, parts: RoofPart[]): Report {
     const x1 = Math.max(...bs.map((b) => b.x1))
     const z0 = Math.min(...bs.map((b) => b.z0))
     const z1 = Math.max(...bs.map((b) => b.z1))
-    for (let x = x0 + STEP / 2; x < x1; x += STEP) {
-      for (let z = z0 + STEP / 2; z < z1; z += STEP) {
+    // Сітка ГЛОБАЛЬНА (прив'язана до координат світу, а не до габариту зони):
+    // інакше кожна зона міряється у своїх точках, і те, що для однієї «виліт»,
+    // друга просто не помічає.
+    for (let x = Math.ceil(x0 / STEP) * STEP; x < x1; x += STEP) {
+      for (let z = Math.ceil(z0 / STEP) * STEP; z < z1; z += STEP) {
         if (!inBoxes(bs, x, z)) continue
-        const mine = faces.filter((f) => faceCovers(f, x, z)).length
+        // ДІРА рахується великодушно: точка рівно на межі двох схилів (ребро
+        // вальми, гребінь) належить обом, і вимагати «строго всередині» — це
+        // міряти власну сітку, а не дах.
+        const mine = faces.filter((f) => faceCovers(f, x, z, EDGE_TOL)).length
+        // ДУБЛЬ — навпаки, строго: справжнє накладання завжди має площу.
+        const deep = faces.filter((f) => faceCovers(f, x, z, -DEEP_TOL)).length
         const cut = hidden(x, z)
         if (cut) {
           samples++
-          if (mine > 0) spill++
+          if (deep > 0) spill++
           continue
         }
         samples++
         if (mine === 0) holes++
-        else if (mine > 1) doubles++
+        else if (deep > 1) doubles++
         // Чужа зона того ж рівня накрила ту саму точку.
         const others = pitched.filter(
           (o) =>
             o.id !== p.id &&
             o.level === p.level &&
             inBoxes(box.get(o.id)!, x, z) &&
-            sk.get(o.id)!.faces.some((f) => faceCovers(f, x, z)),
+            // Чужа зона має бути тут ЖИВОЮ. Якщо вона підрізана, а грань усе
+            // одно лежить — це виліт, і його ловить своя метрика.
+            !sk.get(o.id)!.hidden(x, z) &&
+            sk.get(o.id)!.faces.some((f) => faceCovers(f, x, z, -DEEP_TOL)),
         )
-        if (mine > 0 && others.length > 0) foreign++
+        if (deep > 0 && others.length > 0) foreign++
       }
     }
   }
@@ -242,7 +257,7 @@ function scenarios(): { name: string; plan: HousePlan; parts: RoofPart[] }[] {
 }
 
 // Пороги: більше — регрес. Числа зафіксовані за фактом на момент правки.
-const THRESHOLDS = { holes: 2, doubles: 0.2, spill: 0.2, foreign: 0.3, airborne: 0.6, trimAir: 2 }
+const THRESHOLDS = { holes: 0.4, doubles: 0.1, spill: 0.1, foreign: 0.1, airborne: 0.3, trimAir: 1 }
 
 function main() {
   const rows = scenarios().map((s) => measure(s.name, s.plan, s.parts))

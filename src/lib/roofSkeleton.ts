@@ -395,6 +395,9 @@ function profileOf(
   step: number,
   limit: number,
   covered?: (x: number, z: number, t: number) => boolean,
+  // Клапоть не скінчився, а ЗЛИВСЯ із сусіднім (той самий схил далі веде інший
+  // профіль). Продовжувати його не можна: обидва накриють ту саму ділянку.
+  merged = false,
 ): SkelStep[] | null {
   if (raw.length < 2) return null
 
@@ -410,7 +413,30 @@ function profileOf(
       else lo = m
     }
     const s = near(hi + 1e-4, hint) ?? hint
-    raw.unshift({ t: hi, lo: (s[0] + s[1]) / 2, hi: (s[0] + s[1]) / 2 })
+    // Вістря — лише якщо смуга ТАМ справді вузька (вершина вальми, кінець
+    // гребеня). Клапоть, що виринає з-під чужого даху, з'являється одразу на
+    // всю ширину — стягнути його в точку означає лишити замість початку
+    // трикутник, а решту без даху (смуга дірок уздовж лінії врізки).
+    const wide = s[1] - s[0] > 0.05
+    raw.unshift(wide ? { t: hi, lo: s[0], hi: s[1] } : { t: hi, lo: (s[0] + s[1]) / 2, hi: (s[0] + s[1]) / 2 })
+  }
+
+  // КІНЕЦЬ СМУГИ. Вибірка йде кроком 50 мм, а справжній край схилу — гребінь,
+  // ребро вальми чи лінія врізки — лежить МІЖ кроками. Обрив на останній вдалій
+  // пробі лишав уздовж усього гребеня щілину до 50 мм: на скріншоті Lev це
+  // чорна смуга по коньку. Уточнюємо край поділом навпіл і ставимо там вузол.
+  const tail = raw[raw.length - 1]
+  if (!merged && tail.t < limit - EPS) {
+    const hint: [number, number] = [tail.lo, tail.hi]
+    let lo = tail.t
+    let hi = tail.t + step
+    for (let k = 0; k < 12; k++) {
+      const m = (lo + hi) / 2
+      if (near(m, hint)) lo = m
+      else hi = m
+    }
+    const s = lo > tail.t + 1e-4 ? near(lo, hint) : null
+    if (s) raw.push({ t: lo, lo: s[0], hi: s[1] })
   }
 
   // СТРИБОК: край смуги впирається в гребінь сусіднього схилу й далі йде вже по
@@ -424,13 +450,18 @@ function profileOf(
     const dt = c.t - p.t
     const far = Math.max(Math.abs(c.lo - p.lo), Math.abs(c.hi - p.hi))
     if (far > dt * 1.5 + 1e-3) {
-      // Точка, що зникла на цьому кроці, — по ній і шукаємо межу.
+      // Точка, що змінила стан на цьому кроці, — по ній і шукаємо межу.
       const gone = Math.abs(c.lo - p.lo) > Math.abs(c.hi - p.hi) ? (p.lo + c.lo) / 2 : (p.hi + c.hi) / 2
+      // Смуга могла і ЗНИКНУТИ (кінець схилу під чужим дахом), і РОЗШИРИТИСЬ
+      // (виринула з-під нього). Раніше межу шукали лише за першим випадком, і
+      // на другому вона з'їжджала на цілий крок угору — уздовж лінії врізки
+      // лишався рядок дірок. Тепер бік визначає сам стан на початку відрізка.
+      const was = owns(boxes, field, e, gone, p.t, covered)
       let lo = p.t
       let hi = c.t
       for (let k = 0; k < 20; k++) {
         const m = (lo + hi) / 2
-        if (owns(boxes, field, e, gone, m, covered)) lo = m
+        if (owns(boxes, field, e, gone, m, covered) === was) lo = m
         else hi = m
       }
       const before = near(Math.max(lo - 1e-4, p.t), [p.lo, p.hi])
@@ -522,6 +553,7 @@ export function roofFaces(
       raw: SkelStep[]
       last: [number, number]
       alive: boolean
+      merged?: boolean // помер не сам — його смугу забрав сусідній клапоть
       // На якому кроці клапоть обірвався. Підказку від нього тримаємо ще
       // кілька кроків: смуга спершу зникає зовсім (її цілком накрив чужий дах),
       // а трохи вище виринає знову вузенькою — і без підказки її вже не знайти.
@@ -529,7 +561,6 @@ export function roofFaces(
     }
     const SEED_HOLD = 6
     const all: Branch[] = []
-    let blank = 0
     for (let i = 0; ; i++) {
       const t = Math.min(i * step, limit)
       // Підказки — краї та середини смуг із попередньої глибини.
@@ -543,17 +574,21 @@ export function roofFaces(
         if (!b.alive) continue
         let pick = -1
         let bestOv = 1e-9
+        let stolen = false
         rs.forEach((r, j) => {
-          if (taken.has(j)) return
           const ov = overlapOf(r, b.last)
-          if (ov > bestOv) {
-            bestOv = ov
-            pick = j
+          if (ov <= bestOv) return
+          if (taken.has(j)) {
+            stolen = true // смуга є, але її вже веде інший клапоть
+            return
           }
+          bestOv = ov
+          pick = j
         })
         if (pick < 0) {
           b.alive = false
           b.diedAt = i
+          b.merged = stolen
           continue
         }
         taken.add(pick)
@@ -565,17 +600,15 @@ export function roofFaces(
       rs.forEach((r, j) => {
         if (!taken.has(j)) all.push({ raw: [{ t, lo: r[0], hi: r[1] }], last: r, alive: true })
       })
-      // Порожньо — ще не кінець: вище схил може виринути знову (саме так і
-      // буває, коли його підтискає чужий дах). Терпимо стільки ж кроків,
-      // скільки живе підказка.
-      if (rs.length === 0 && all.length > 0) {
-        if (++blank > SEED_HOLD) break
-      } else blank = 0
+      // Раннього виходу тут НЕМАЄ навмисно. Схил, який чужий дах накрив
+      // цілком, виринає знову вище — біля самого коника лишається тонка
+      // смужка, і саме вона світилась дірою на скріншоті. Проходимо всю
+      // глибину: скелет кешується, а перебудова пари зон коштує ~5 мс.
       if (t >= limit) break
     }
 
     for (const b of all) {
-      const steps = profileOf(boxes, field, e, b.raw, near, step, limit, covered)
+      const steps = profileOf(boxes, field, e, b.raw, near, step, limit, covered, b.merged)
       if (steps) out.push({ edge: e, steps })
     }
   }
