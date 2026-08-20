@@ -10,7 +10,11 @@
 //   ВИЛІТ   — схил лежить там, де зону вже підрізав сусідній дах (артефакт);
 //   ЧУЖИЙ   — точку накрили схили ДВОХ різних зон одразу (врізка не спрацювала);
 //   ПОВІТРЯ — елемент покриття висить там, де даху немає;
-//   КОЖУХ   — планка чи кожух відлетіли від даху далі, ніж дозволяє звіс.
+//   КОЖУХ   — планка чи кожух відлетіли від даху далі, ніж дозволяє звіс;
+//   СТУП    — вертикальний РОЗРИВ між площинами двох зон на лінії їхньої
+//             врізки, у сантиметрах. Саме він читається як «провалля по
+//             контуру підрізки» й «щілина від кута схилу»: у плані все
+//             зійшлось, а по висоті площини не зустрілись.
 //
 // Поріг падіння — у THRESHOLDS. Зростання будь-якого числа = регрес.
 // ============================================================
@@ -27,11 +31,12 @@ import {
   normalizeRoof,
   rectsBox,
   ridgeHeight,
+  roofTopLift,
   DEFAULTS,
   type RoofKind,
   type RoofPart,
 } from '../src/lib/roof'
-import { faceSpan, type SkelFace } from '../src/lib/roofSkeleton'
+import { faceSpan, planRise, type SkelFace } from '../src/lib/roofSkeleton'
 import { roofSkin } from '../src/lib/roofSkin'
 import { DEFAULT_ROOF_MAT } from '../src/config/roofMaterial'
 
@@ -88,9 +93,27 @@ export interface Report {
   foreign: number // % накритої схилами двох різних зон
   airborne: number // % елементів покриття, що висять у повітрі
   trimAir: number // % планок і кожухів, що відлетіли від даху
+  step: number // найбільший вертикальний розрив на лінії врізки, СМ
   elements: number
   trims: number
 }
+
+const FINE = 0.05 // крок сітки для лінії врізки
+
+// Чи близько точка до краю габариту зони.
+const nearEdge = (
+  bs: { x0: number; x1: number; z0: number; z1: number }[],
+  x: number,
+  z: number,
+  pad: number,
+) =>
+  bs.some(
+    (b) =>
+      Math.abs(x - b.x0) < pad ||
+      Math.abs(x - b.x1) < pad ||
+      Math.abs(z - b.z0) < pad ||
+      Math.abs(z - b.z1) < pad,
+  )
 
 function measure(name: string, plan: HousePlan, parts: RoofPart[]): Report {
   const pitched = parts.filter((p) => p.kind !== 'flat')
@@ -186,6 +209,58 @@ function measure(name: string, plan: HousePlan, parts: RoofPart[]): Report {
     }
   }
 
+  // ---- СТУП: чи зустрічаються площини двох зон на лінії врізки ----
+  //
+  // Ідемо дрібною сіткою по спільній ділянці габаритів. Там, де сусідні точки
+  // належать РІЗНИМ зонам (одна жива в А, друга в Б), проходить лінія врізки —
+  // і саме там висоти обох площин мають збігтися.
+  const heightAt = (p: RoofPart, x: number, z: number) =>
+    planRise(sk.get(p.id)!.edges, x, z) * Math.tan((p.pitch * Math.PI) / 180) + roofTopLift(p)
+  const liveIn = (p: RoofPart, x: number, z: number) =>
+    inBoxes(box.get(p.id)!, x, z) &&
+    !sk.get(p.id)!.hidden(x, z) &&
+    sk.get(p.id)!.faces.some((f) => faceCovers(f, x, z, EDGE_TOL))
+  let step = 0
+  for (let i = 0; i < pitched.length; i++)
+    for (let j = i + 1; j < pitched.length; j++) {
+      const a = pitched[i]
+      const b = pitched[j]
+      if (a.level !== b.level) continue
+      const A = box.get(a.id)!
+      const B = box.get(b.id)!
+      const x0 = Math.max(Math.min(...A.map((q) => q.x0)), Math.min(...B.map((q) => q.x0)))
+      const x1 = Math.min(Math.max(...A.map((q) => q.x1)), Math.max(...B.map((q) => q.x1)))
+      const z0 = Math.max(Math.min(...A.map((q) => q.z0)), Math.min(...B.map((q) => q.z0)))
+      const z1 = Math.min(Math.max(...A.map((q) => q.z1)), Math.max(...B.map((q) => q.z1)))
+      for (let x = Math.ceil(x0 / FINE) * FINE; x < x1; x += FINE)
+        for (let z = Math.ceil(z0 / FINE) * FINE; z < z1; z += FINE) {
+          if (!liveIn(a, x, z)) continue
+          for (const [dx, dz] of [
+            [FINE, 0],
+            [0, FINE],
+            [-FINE, 0],
+            [0, -FINE],
+          ]) {
+            const nx = x + dx
+            const nz = z + dz
+            // Межа має бути саме ВРІЗКОЮ: А тут не просто скінчилась (габарит),
+            // а її ПІДРІЗАЛА зона Б, і Б у цій точці жива. Звичайний стик двох
+            // зон боками сюди не рахується — там різна висота законна.
+            if (liveIn(a, nx, nz)) continue
+            if (!inBoxes(box.get(a.id)!, nx, nz) || !sk.get(a.id)!.hidden(nx, nz)) continue
+            if (!liveIn(b, nx, nz)) continue
+            const mx = x + dx / 2
+            const mz = z + dz / 2
+            // Уступ біля КРАЮ зони Б законний: там стоїть її власний торець
+            // (фронтон, карнизна дошка) — саме він і закриває різницю висот.
+            // Питаємо лише про справжню єндову — лінію перетину площин
+            // ПОСЕРЕДИНІ обох зон: там площини мусять зійтись.
+            if (nearEdge(box.get(b.id)!, mx, mz, 0.08)) continue
+            step = Math.max(step, Math.abs(heightAt(a, mx, mz) - heightAt(b, mx, mz)))
+          }
+        }
+    }
+
   const pct = (n: number) => (samples ? (n * 100) / samples : 0)
   return {
     name,
@@ -198,6 +273,7 @@ function measure(name: string, plan: HousePlan, parts: RoofPart[]): Report {
     airborne: elements ? (airborne * 100) / elements : 0,
     trims,
     trimAir: trims ? (trimAir * 100) / trims : 0,
+    step: step * 100,
   }
 }
 
@@ -235,19 +311,33 @@ function scenarios(): { name: string; plan: HousePlan; parts: RoofPart[] }[] {
       const mix = base.map((p, i) => (i ? normalizeRoof({ ...p, kind: 'mono', pitch: 15 }) : p))
       out.push({ name: `${s.name} · двосхилий + односхиле крило`, plan, parts: mix })
     }
+    // Сусідні зони з РІЗНИМ звісом: у однієї зверху плита, у другої ні.
+    if (base.length > 1) {
+      const mixOv = base.map((p, i) => normalizeRoof({ ...p, overhang: i ? 0 : DEFAULTS.overhang }))
+      out.push({ name: `${s.name} · різний звіс`, plan, parts: mixOv })
+    }
     // ХРЕСТ: дві зони, що НАКЛАДАЮТЬСЯ, а не просто торкаються. Саме так їх
     // малює клієнт вручну — і саме тут дахи проходили один крізь одного.
     const lvl = base[0]?.level ?? 0
     const bb = rectsBox(generateRoof(plan, 'flat').filter((p) => p.level === lvl).flatMap(partRects))
     if (bb.width > 4 && bb.depth > 4) {
-      for (const [nm, pitchB] of [['рівні коники', 35] as const, ['крило нижче', 20] as const]) {
+      for (const [nm, pitchB, ovB] of [
+        ['рівні коники', 35, DEFAULTS.overhang] as const,
+        ['крило нижче', 20, DEFAULTS.overhang] as const,
+        // Крило БЕЗ звісу: його тіло — продовження стіни, і зверху лежить ще
+        // плита. Верхні площини сусідів стоять на різній висоті, і саме тут
+        // вилазить провалля по контуру врізки.
+        ['крило без звісу', 30, 0] as const,
+      ]) {
         const A = normalizeRoof({
           id: 'x-main', level: lvl, kind: 'gable', ...DEFAULTS, pitch: 35, rotation: 0,
           x: bb.x, z: bb.z, width: bb.width, depth: Math.max(3, bb.depth / 2),
         })
+        // Крило ВУЖЧЕ, ніж глибоке — тоді його гребінь іде впоперек головного,
+        // і виходить справжній хрест (а не два паралельні дахи один в одному).
         const B = normalizeRoof({
-          id: 'x-wing', level: lvl, kind: 'gable', ...DEFAULTS, pitch: pitchB, rotation: 90,
-          x: bb.x, z: bb.z, width: Math.max(3, bb.width / 2), depth: bb.depth,
+          id: 'x-wing', level: lvl, kind: 'gable', ...DEFAULTS, pitch: pitchB, overhang: ovB, rotation: 0,
+          x: bb.x, z: bb.z, width: Math.max(3, bb.width / 4), depth: bb.depth,
         })
         out.push({ name: `${s.name} · ХРЕСТ (${nm})`, plan, parts: [A, B] })
       }
@@ -257,13 +347,13 @@ function scenarios(): { name: string; plan: HousePlan; parts: RoofPart[] }[] {
 }
 
 // Пороги: більше — регрес. Числа зафіксовані за фактом на момент правки.
-const THRESHOLDS = { holes: 0.4, doubles: 0.1, spill: 0.1, foreign: 0.1, airborne: 0.3, trimAir: 1 }
+const THRESHOLDS = { holes: 0.4, doubles: 0.1, spill: 0.1, foreign: 0.1, airborne: 0.3, trimAir: 1, step: 3 }
 
 function main() {
   const rows = scenarios().map((s) => measure(s.name, s.plan, s.parts))
   const w = Math.max(...rows.map((r) => r.name.length))
   const f = (v: number) => v.toFixed(2).padStart(6)
-  console.log('сценарій'.padEnd(w), '  діра   дубль   виліт   чужий повітря  кожух  елем.')
+  console.log('сценарій'.padEnd(w), '  діра   дубль   виліт   чужий повітря  кожух  ступ,см  елем.')
   let bad = 0
   for (const r of rows) {
     const flags: string[] = []
@@ -273,6 +363,7 @@ function main() {
     if (r.foreign > THRESHOLDS.foreign) flags.push('ЧУЖИЙ')
     if (r.airborne > THRESHOLDS.airborne) flags.push('ПОВІТРЯ')
     if (r.trimAir > THRESHOLDS.trimAir) flags.push('КОЖУХ')
+    if (r.step > THRESHOLDS.step) flags.push('СТУП')
     if (flags.length) bad++
     console.log(
       r.name.padEnd(w),
@@ -282,6 +373,7 @@ function main() {
       f(r.foreign),
       f(r.airborne),
       f(r.trimAir),
+      f(r.step),
       String(r.elements).padStart(6),
       flags.join(' '),
     )

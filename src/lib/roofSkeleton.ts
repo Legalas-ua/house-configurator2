@@ -333,7 +333,11 @@ function scanRuns(
   // лишався недобудованим на всю висоту (11% дірок на хресті).
   seeds: number[] = [],
 ): [number, number][] {
-  const n = 96
+  // Крок вибірки тримаємо близько до 10 см незалежно від розміру зони: вузька
+  // смужка біля рогу (там, де сусідній дах щойно скінчився) буває сантиметрів
+  // тридцять, і на грубій сітці великої зони вона просто не траплялась під
+  // пробу — на даху лишався порожній трикутник біля стику.
+  const n = Math.min(384, Math.max(96, Math.ceil((uMax - uMin) / 0.1)))
   const du = (uMax - uMin) / n
   const at = (i: number) => uMin + du * i
   const has = (u: number) => owns(boxes, edges, e, u, t, covered)
@@ -589,6 +593,27 @@ export function roofFaces(
           b.alive = false
           b.diedAt = i
           b.merged = stolen
+          // ЗЛИТТЯ. Смуга не скінчилась — її просто повів далі сусідній клапоть.
+          // Обірвати її на останній пробі не можна: сусід підхоплює ширину на
+          // уточненій глибині, трохи вище, і між ними лишається тонка щілина
+          // вздовж площини даху (та сама «щілина від кута схилу» зі скріншота).
+          // Доводимо смугу рівно до глибини, на якій розрив між клаптями
+          // закрився.
+          if (stolen) {
+            const own = b.last[1] - b.last[0]
+            const from = b.raw[b.raw.length - 1].t
+            let lo = from
+            let hi = t
+            for (let k = 0; k < 16; k++) {
+              const m = (lo + hi) / 2
+              const r = near(m, b.last)
+              // Поки смуга не поглинула сусідню, її ширина лишається своєю.
+              if (r && r[1] - r[0] < own + 0.1) lo = m
+              else hi = m
+            }
+            const r = near(lo, b.last)
+            if (r && lo > from + 1e-4) b.raw.push({ t: lo, lo: r[0], hi: r[1] })
+          }
           continue
         }
         taken.add(pick)

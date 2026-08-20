@@ -36,7 +36,7 @@ import {
   type ResolvedWindow,
   type Side,
 } from '../lib/windows'
-import { cornerStop, cutByNeighbour, parapetEdges, partRects, slopeBox, zoneRects, zoneRise, zoneSkeleton, ROOF_LIFT } from '../lib/roof'
+import { cornerStop, cutByNeighbour, parapetEdges, partRects, slopeBox, zoneRects, zoneRise, zoneSkeleton, roofTopLift, ROOF_LIFT, ROOF_T } from '../lib/roof'
 import { edgeProfile, facePoint, planRise, unionCells, type Box as SkelBox, type SkelEdge, type SkelFace } from '../lib/roofSkeleton'
 import { roofSkin } from '../lib/roofSkin'
 import { terraceSkin, terraceSurfaces, TERRACE_UP_STACK } from '../lib/terraceSkin'
@@ -93,7 +93,7 @@ const FOUND_COLOR = '#bdb6a7' // цоколь темніший за плиту �
 const FOUND_OUT = WALL_T / 2 + 0.04 // виступ цоколя за зовнішню грань стіни
 const RISE_EASE = 0.5
 const ROOF_EASE = 0.42 // дах виростає трохи жвавіше за коробку
-const ROOF_T = 0.22 // товщина похилої плити односхилого даху
+// Товщина плити — з lib/roof.ts: її знає й підрізка між зонами.
 const ROOF_COLOR = WALL_COLOR // ТИМЧАСОВО в колір стін — покриття ще не обране
 
 // ---- Вікна (розміри й правила — у lib/windows.ts) ----
@@ -1921,7 +1921,10 @@ export default function HouseShell() {
         // БЕЗ звісу схили спиняються рівно на стіні, тож тіло — це продовження
         // стіни (фронтон), а покрівля лягає окремою плитою поверх. Зі звісом
         // дах нависає, і збоку видно вже ТОРЕЦЬ даху, а не стіну.
-        const wall = part.kind === 'gable' && part.overhang === 0
+        // Односхилий — завжди похила плита на стінах, і в скелетному шляху це
+        // має бути так само, як у простій призмі (`monoGeometry`).
+        const lift = roofTopLift(part)
+        const wall = lift > 0
         out.push({
           ...b,
           geo: skeletonGeometry(sk, tan, skirt, sk.hidden),
@@ -1931,7 +1934,7 @@ export default function HouseShell() {
         if (wall)
           out.push({
             ...b,
-            geo: skeletonPlateGeometry(sk, tan, ROOF_T / Math.cos(Math.atan(tan)), sk.hidden),
+            geo: skeletonPlateGeometry(sk, tan, lift, sk.hidden),
             wallLike: false,
             edge: true,
           })

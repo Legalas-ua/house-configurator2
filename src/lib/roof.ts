@@ -504,6 +504,27 @@ export function cornerStop(
 // На скільки скат виходить за грань зони ще ДО звісу — рівно на пів стіни
 // (плюс мікрозапас, щоб грані не збігались). Мусить збігатися з HouseShell.
 export const EAVE_BASE = WALL_T / 2 + 0.002
+// Товщина похилої плити даху. ОДНЕ джерело на весь проєкт: її знають і тіло
+// даху (HouseShell), і покриття (roofSkin), і підрізка між зонами.
+export const ROOF_T = 0.22
+
+// Наскільки ВИДИМА верхня площина даху стоїть вище за розрахункову площину
+// скелета.
+//
+// Там, де тіло даху — це продовження стіни (односхилий завжди; двосхилий без
+// звісу), зверху лежить ще похила плита, і саме її верх видно. Де дах нависає
+// звісом, тілом даху є сам дах, і верх збігається з площиною скелета.
+//
+// Це НЕ косметика: підрізка між зонами міряє висоти, і якщо в сусідів різний
+// підйом (різний звіс або просто різний кут — плита ж нахилена), лінія
+// перетину «голих» площин не збігається з лінією перетину ВИДИМИХ. На даху це
+// читається як провалля по контуру врізки й тонка щілина від кута схилу.
+export function roofTopLift(part: RoofPart): number {
+  if (part.kind === 'flat' || part.kind === 'hip') return 0
+  if (part.kind === 'gable' && part.overhang > 0) return 0
+  return ROOF_T / Math.cos(Math.atan(Math.tan((part.pitch * Math.PI) / 180)))
+}
+
 // На скільки схили підняті над верхом стіни. Теж спільне з HouseShell: без
 // цього перевірка колізій рахувала б дах на 90 мм нижче, ніж він насправді.
 export const ROOF_LIFT = 0.09
@@ -971,15 +992,17 @@ function zoneHeightField(plan: HousePlan, parts: RoofPart[], part: RoofPart): (x
     boxes.some((q) => x > q.x0 - 1e-4 && x < q.x1 + 1e-4 && z > q.z0 - 1e-4 && z < q.z1 + 1e-4)
   if (part.kind === 'flat') return (x, z) => (inside(x, z) ? 0 : NO_ROOF)
   const tan = Math.tan((part.pitch * Math.PI) / 180)
+  // Міряємо ВИДИМУ площину, а не голий скелет: різати треба по тому, що видно.
+  const lift = roofTopLift(part)
   if (part.kind === 'mono') {
     // Нижню грань беремо ТИМ САМИМ хелпером, що й скелет: інакше зона різала б
     // сусіда по одній площині, а сама будувалась по іншій.
     const lo = monoLow(part, boxes)
     if (!lo) return () => NO_ROOF
-    return (x, z) => (inside(x, z) ? Math.abs((lo.perp ? x : z) - lo.line) * tan : NO_ROOF)
+    return (x, z) => (inside(x, z) ? Math.abs((lo.perp ? x : z) - lo.line) * tan + lift : NO_ROOF)
   }
   const sk = roofSkeleton(part, above, sibs)
-  return (x, z) => (inside(x, z) ? planRise(sk.edges, x, z) * tan : NO_ROOF)
+  return (x, z) => (inside(x, z) ? planRise(sk.edges, x, z) * tan + lift : NO_ROOF)
 }
 
 // Габарити двох зон РІЗАЛИСЬ би одна об одну: перетин має площу, а не спільну
@@ -1048,8 +1071,9 @@ export function zoneSkeleton(
   // підрізань: різати треба по зовнішній площині, а не по вже обрізаному краю,
   // інакше на стику лишається недоріз.
   const fields = rivals.map((o) => ({ at: zoneHeightField(plan, parts, o), main: mainOfPair(part, o) === o }))
+  const lift = roofTopLift(part)
   const covered = (x: number, z: number, t: number) => {
-    const h = t * tan
+    const h = t * tan + lift
     return fields.some(({ at, main }) => {
       const hn = at(x, z)
       if (hn === NO_ROOF) return false

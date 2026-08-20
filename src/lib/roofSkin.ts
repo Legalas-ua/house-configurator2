@@ -10,7 +10,9 @@ import {
   slopeBox,
   zoneRects,
   zoneRise,
+  roofTopLift,
   ROOF_LIFT,
+  ROOF_T,
   type RoofPart,
   type SideKey,
 } from './roof'
@@ -92,7 +94,7 @@ export interface Blocker {
 }
 
 // Товщини покрівельних плит з HouseShell — покриття лягає ПОВЕРХ них.
-const ROOF_T = 0.22
+// Товщина плити — спільна з тілом даху й підрізкою (lib/roof.ts).
 const FLAT_T = 0.02 // плоский дах: рулон, без розкладки
 const MAX_ELEMENTS = 60_000
 
@@ -335,7 +337,8 @@ function skeletonSlopes(part: RoofPart, roofY: number, sk: ReturnType<typeof zon
   const tan = Math.tan((part.pitch * Math.PI) / 180)
   const ang = Math.atan(tan)
   // Зі звісом покрівля лягає просто на тіло даху; без звісу зверху ще плита.
-  const tv = part.kind === 'gable' && part.overhang === 0 ? ROOF_T / Math.cos(ang) : 0
+  // Підйом видимої площини — той самий, що й у тіла даху та в підрізки.
+  const tv = roofTopLift(part)
   return sk.faces.map((f) => {
     const e = f.edge
     let uMin = Infinity
