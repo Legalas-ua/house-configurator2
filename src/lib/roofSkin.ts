@@ -179,6 +179,13 @@ function layElements(sl: Slope, kind: RoofMatKind, out: SkinBox[], budget: numbe
     })
   }
 
+  // Точка (u, s) на площині -> чи вона під чужим дахом.
+  const hiddenAt = (u: number, s: number) => {
+    if (!sl.hidden) return false
+    const lz = s * cos
+    return sl.hidden(sl.cx + u * rc + lz * rs, sl.cz - u * rs + lz * rc)
+  }
+
   const u0 = -sl.width / 2
   const u1 = sl.width / 2
   // Матеріал звішується за КАРНИЗ (нижній край), а не за обидва: угорі на нього
@@ -196,7 +203,31 @@ function layElements(sl: Slope, kind: RoofMatKind, out: SkinBox[], budget: numbe
     const emit = (a: number, b: number, p: number, q: number) => {
       if (b - a < 0.01 || q - p < 0.005 || out.length >= budget) return
       // Верхній край елемента лишається на площині, нижній — задирається.
-      place((a + b) / 2, (p + q) / 2, b - a, q - p, L.t, 0, lapLift(q - p))
+      const lay = (a2: number, b2: number) => {
+        if (b2 - a2 < 0.01) return
+        place((a2 + b2) / 2, (p + q) / 2, b2 - a2, q - p, L.t, 0, lapLift(q - p))
+      }
+      if (!sl.hidden) {
+        lay(a, b)
+        return
+      }
+      // Під чужим дахом покриття не кладемо — але й ЦІЛИЙ елемент викидати не
+      // можна: по лінії врізки лишалась рвана кайма з порожніми обрізками
+      // (скріншот Lev, ґонт). Ділимо елемент і кладемо лише видиму частину.
+      const sc = (p + q) / 2
+      const n = Math.max(1, Math.ceil((b - a) / 0.06))
+      let from: number | null = null
+      for (let i = 0; i <= n; i++) {
+        const ua = a + ((b - a) * i) / n
+        const mid = ua + (b - a) / (2 * n)
+        const vis = i < n && !hiddenAt(mid, sc)
+        if (vis && from === null) from = ua
+        if (!vis && from !== null) {
+          lay(from, ua)
+          from = null
+        }
+      }
+      if (from !== null) lay(from, b)
     }
     if (!sl.clipU) {
       emit(Math.max(ea, u0), Math.min(eb, u1), sa, sb)
@@ -239,23 +270,29 @@ function layElements(sl: Slope, kind: RoofMatKind, out: SkinBox[], budget: numbe
     }
   }
 
-  // Стоячі фальці / гофра — тонкі бруски на всю довжину падіння.
+  // Стоячі фальці / гофра — тонкі бруски на всю довжину падіння. Довжину
+  // беремо ТУ САМУ, що й у листів (зі звісом за карниз): інакше фальці
+  // обриваються вище за край матеріалу, і низ схилу лишається гладким.
   if (L.rib) {
+    const sLen = s1 - s0
+    const sMid = (s0 + s1) / 2
     const n = Math.floor(sl.width / L.rib.pitch)
     for (let k = 0; k <= n && out.length < budget; k++) {
       const u = u0 + k * L.rib.pitch
-      if (!sl.clipU) {
-        place(u, 0, L.rib.w, sl.len, L.rib.h, L.t)
+      if (!sl.clipU && !sl.hidden) {
+        place(u, sMid, L.rib.w, sLen, L.rib.h, L.t)
         continue
       }
       // На вальмі ребро обрізається там, де схил закінчився. Крок дрібний —
       // інакше кінець фальцу закінчувався б помітною сходинкою.
-      const steps = Math.max(2, Math.ceil(sl.len / 0.06))
+      const steps = Math.max(2, Math.ceil(sLen / 0.06))
       for (let i = 0; i < steps; i++) {
-        const sc = -sl.len / 2 + (sl.len * (i + 0.5)) / steps
-        const [a, b] = sl.clipU(sc)
-        if (u < a - 0.01 || u > b + 0.01) continue
-        place(u, sc, L.rib.w, sl.len / steps + 0.01, L.rib.h, L.t)
+        const sc = s0 + (sLen * (i + 0.5)) / steps
+        if (sl.clipU) {
+          const [a, b] = sl.clipU(sc)
+          if (u < a - 0.01 || u > b + 0.01) continue
+        }
+        place(u, sc, L.rib.w, sLen / steps + 0.01, L.rib.h, L.t)
       }
     }
   }
@@ -707,12 +744,12 @@ function fasciaOf(
   // сусіднім, тож обидві дошки вилітали в повітря й перехрещувались (той самий
   // «хрест» на зламі). Кут між ними накриває кожух гребеня, розширений на
   // товщину самих дощок.
-  // Дошка спиняється рівно на КАРНИЗІ, а не виходить за нього на свою ширину:
-  // ріг за неї бере карнизна планка, вона й так загортається на ширину скатної.
-  // Раніше обидві виходили одна за одну, і на кожному розі стирчав хрестик —
-  // «бакенбарди» на скріншоті Lev.
-  const s0 = -hl
-  const s1 = hl
+  // Кінці торцевого кожуха. Знизу він має ДОХОДИТИ до карнизного — вони
+  // стикуються рогом; зверху, навпаки, спинятись ПЕРЕД гребеневим, щоб вийшла
+  // буква «Г», а не «Х» (кожухи не мають вилазити один з одного).
+  const ridgeStop = sl.cap ? -low * Math.max(hl - CAP_D + 0.06, 0) : -low * hl
+  const s0 = Math.min(capS, ridgeStop)
+  const s1 = Math.max(capS, ridgeStop)
   // Скатний край СКЛАДЕНОЇ зони йде сходинками: на різних ділянках падіння він
   // стоїть у різних місцях. Тому спершу ділимо падіння на ділянки зі спільним
   // краєм, а вже на кожній кладемо суцільний брусок — інакше дошка йшла б по
@@ -928,6 +965,11 @@ function skeletonCaps(
   kind: RoofMatKind,
   out: SkinBox[],
   skip: (x: number, z: number) => boolean,
+  // Стіна ПОВЕРХУ ВИЩЕ — окремо від сусідніх зон даху. Лінія врізки завжди
+  // проходить по сусідній зоні, і спільний `skip` глушив на ній кожух зовсім
+  // (скріншот Lev: на стику кожуха немає). Об стіну кожух справді впирається,
+  // а об сусідній дах — ні, там єндова.
+  atUpper: (x: number, z: number) => boolean = skip,
 ) {
   const tan = Math.tan((part.pitch * Math.PI) / 180)
   const tv = part.kind === 'gable' && part.overhang === 0 ? ROOF_T / Math.cos(Math.atan(tan)) : 0
@@ -942,7 +984,9 @@ function skeletonCaps(
         if (Math.abs(u1 - u0) < 0.05) continue // ребро вздовж падіння — не похиле
         const [x0, z0] = facePoint(f.edge, u0, s0.t)
         const [x1, z1] = facePoint(f.edge, u1, s1.t)
-        if (skip(x0, z0) || skip(x1, z1)) continue
+        const onCut = sk.hidden(x0, z0) || sk.hidden(x1, z1) || false
+        const blocked = onCut ? atUpper : skip
+        if (blocked(x0, z0) || blocked(x1, z1)) continue
         // Перегин донизу (вальма) чи догори (єндова)? Пробуємо трохи вбік від
         // середини ребра поперек нього.
         const mx = (x0 + x1) / 2
@@ -1056,6 +1100,16 @@ export function roofSkin(
     }))
     const atWall = (x: number, z: number) =>
       blockers.some((r) => x > r.x0 && x < r.x1 && z > r.z0 && z < r.z1)
+    // Те саме, але БЕЗ сусідніх зон даху: об них кожух не впирається — там
+    // єндова, і її якраз і треба накрити.
+    const upper: Blocker[] = above.map((r) => ({
+      x0: r.x - r.width / 2 - out,
+      x1: r.x + r.width / 2 + out,
+      z0: r.z - r.depth / 2 - out,
+      z1: r.z + r.depth / 2 + out,
+    }))
+    const atUpperWall = (x: number, z: number) =>
+      upper.some((r) => x > r.x0 && x < r.x1 && z > r.z0 && z < r.z1)
 
     for (const sl of slopesOf(part, above, roofY, siblings, plan, parts)) {
       if (flat) {
@@ -1102,7 +1156,7 @@ export function roofSkin(
     // Складена зона: усі ребра в неї похилі — і вальми, і єндови. Кожух
     // кладеться по самому ребру, як і на простій вальмі.
     if (part.kind !== 'flat' && part.kind !== 'mono' && (partRects(part).length > 1 || cutByNeighbour(plan, parts, part)))
-      skeletonCaps(part, zoneSkeleton(plan, parts, part), roofY, spec.kind, gt.boxes, atWall)
+      skeletonCaps(part, zoneSkeleton(plan, parts, part), roofY, spec.kind, gt.boxes, atWall, atUpperWall)
     // Складений односхилий: карниз крила схил не бачить — його планку кладемо
     // окремо, по контуру зони.
     if (part.kind === 'mono' && partRects(part).length > 1)
