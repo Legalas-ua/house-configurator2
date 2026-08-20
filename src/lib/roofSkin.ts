@@ -1,6 +1,6 @@
 import type { HousePlan, PlanRect, RoofMatKind, RoofMatSpec } from '../config/types'
 import { cutByNeighbour, zoneSkeleton } from './roof'
-import { facePoint, faceSpan, outlineEdges, planRise } from './roofSkeleton'
+import { facePoint, faceSpan, insideBoxes, outlineEdges, planRise, type SkelFace } from './roofSkeleton'
 import {
   cornerStop,
   parapetCorner,
@@ -79,6 +79,7 @@ const DRIP_T = 0.02 // товщина крапельниці по краю ко�
 const EAVE_CAP_T = 0.03 // товщина кожуха звісу
 const EAVE_CAP_LAP = 0.015 // напуск кожуха на матеріал зверху
 const MONO_LEG = 0.14 // відворот кожуха вгору по стіні (верх односхилого)
+const RAKE_CAP_W = 0.16 // полиця торцевого кожуха, поверх матеріалу
 // Жолоб єндови: ширина по обидва боки від лінії стику й підйом над карнизом.
 const VALLEY_W = 0.36
 const VALLEY_UP = 0.075
@@ -121,6 +122,10 @@ interface Slope {
   // вздовж гребеня, а виріз буває й посеред схилу.
   hidden?: (x: number, z: number) => boolean
   cap?: number // довжина кожуха на ВЕРХНЬОМУ краї (0/undefined — кожуха немає)
+  // Чи точка ще всередині зони. Потрібне торцевому кожуху: бік схилу буває або
+  // справжнім КРАЄМ даху (фронтон — там кожух потрібен), або лінією єндови чи
+  // вальми всередині зони — там він стирчав би поперек даху.
+  insideZone?: (x: number, z: number) => boolean
   // Наскільки матеріал звішується за карниз (уздовж площини схилу). Рахує
   // `eaveCap`: рівно стільки, щоб кожух звісу підійшов до нього під 90°.
   eaveExt?: number
@@ -339,15 +344,29 @@ function skeletonSlopes(part: RoofPart, roofY: number, sk: ReturnType<typeof zon
   // Зі звісом покрівля лягає просто на тіло даху; без звісу зверху ще плита.
   // Підйом видимої площини — той самий, що й у тіла даху та в підрізки.
   const tv = roofTopLift(part)
-  return sk.faces.map((f) => {
+  // Схил — ОДИН на карниз, навіть якщо чужий дах розрізав його на кілька
+  // клаптів. Інакше кожен клапоть отримує власну розкладку: фальці й ряди в
+  // сусідніх клаптях не збігаються, і по лінії розрізу через увесь схил іде
+  // видимий шов (скріншот Lev). Виріз у покритті робить `hidden`, а не поділ
+  // на схили. Кожух гребеня теж рахується на всю грань — раніше він обривався
+  // по краю клаптя, не доходячи до краю матеріалу.
+  const groups = new Map<string, SkelFace[]>()
+  for (const f of sk.faces) {
+    const e = f.edge
+    const key = `${e.horizontal}|${e.line.toFixed(4)}|${e.n}|${e.corner ? 1 : 0}`
+    groups.set(key, [...(groups.get(key) ?? []), f])
+  }
+  return [...groups.values()].map((fs) => {
+    const f = fs[0]
     const e = f.edge
     let uMin = Infinity
     let uMax = -Infinity
-    for (const s of f.steps) {
-      uMin = Math.min(uMin, s.lo)
-      uMax = Math.max(uMax, s.hi)
-    }
-    const tMax = f.steps[f.steps.length - 1].t
+    for (const g of fs)
+      for (const s of g.steps) {
+        uMin = Math.min(uMin, s.lo)
+        uMax = Math.max(uMax, s.hi)
+      }
+    const tMax = Math.max(...fs.map((g) => g.steps[g.steps.length - 1].t))
     const rise = tMax * tan
     const len = Math.hypot(tMax, rise)
     const uc = (uMin + uMax) / 2
@@ -366,7 +385,19 @@ function skeletonSlopes(part: RoofPart, roofY: number, sk: ReturnType<typeof zon
       width: uMax - uMin,
       len,
       clipU: (s: number): [number, number] => {
-        const [lo, hi] = faceSpan(f, Math.min(Math.max((s + len / 2) * cos, 0), tMax))
+        const t = Math.min(Math.max((s + len / 2) * cos, 0), tMax)
+        // Смуга на цій глибині — ОБОЛОНКА всіх клаптів: між ними покриття
+        // просто зріже `hidden`, а розкладка лишиться суцільною.
+        let lo = Infinity
+        let hi = -Infinity
+        for (const g of fs) {
+          const last = g.steps[g.steps.length - 1].t
+          if (t < g.steps[0].t - 1e-6 || t > last + 1e-6) continue
+          const [a0, b0] = faceSpan(g, t)
+          lo = Math.min(lo, a0)
+          hi = Math.max(hi, b0)
+        }
+        if (lo > hi) return [0, 0]
         const a = (lo - uc) * sign
         const b = (hi - uc) * sign
         return [Math.min(a, b), Math.max(a, b)]
@@ -374,9 +405,12 @@ function skeletonSlopes(part: RoofPart, roofY: number, sk: ReturnType<typeof zon
       // Кожух — по верхньому краю; де там не гребінь, а вальма, підрізання
       // стягує його в нуль і він сам зникає.
       cap: e.corner ? 0 : uMax - uMin,
-      // Боки схилу тут — не фронтони, а лінії єндов і вальм: вертикальна
-      // дошка на них стирчала б поперек даху.
-      noRake: true,
+      // Бік схилу тут буває і фронтоном (край даху), і єндовою чи вальмою
+      // всередині зони. Відрізняє їх `insideZone`: за краєм даху зони вже
+      // немає. Раніше торцевий кожух вимикався для всієї зони одразу, і
+      // двосхилий, що врізається в сусіда, лишався з голими боками.
+      noRake: false,
+      insideZone: (x: number, z: number) => insideBoxes(sk.boxes, x, z),
       inner: e.corner,
       hidden: sk.hidden,
     }
@@ -711,18 +745,31 @@ function fasciaOf(
       visibleRuns(sl, p, q, (s) => at(u, s)),
     )) {
       const sc = (a + b) / 2
-      const ly = sc * sin + cos * nRake
-      const lz = sc * cos - sin * nRake
-      out.push({
-        x: sl.cx + u * rc + lz * rs,
-        y: sl.cy + ly,
-        z: sl.cz - u * rs + lz * rc,
-        dx: w,
-        dy: hRake,
-        dz: b - a,
-        rotY: sl.rotY,
-        tilt: sl.tilt,
-      })
+      // Це справді КРАЙ даху? За фронтоном зони вже немає, а за єндовою чи
+      // вальмою — є, і там кожух стирчав би поперек схилу.
+      if (sl.insideZone) {
+        const outside = at(u + side * 0.12, sc)
+        if (sl.insideZone(outside.x, outside.z)) continue
+      }
+      const box = (n: number, du: number, dy: number, uc: number) => {
+        const ly = sc * sin + cos * n
+        const lz = sc * cos - sin * n
+        out.push({
+          x: sl.cx + uc * rc + lz * rs,
+          y: sl.cy + ly,
+          z: sl.cz - uc * rs + lz * rc,
+          dx: du,
+          dy,
+          dz: b - a,
+          rotY: sl.rotY,
+          tilt: sl.tilt,
+        })
+      }
+      // Торець пирога — вертикальна частина вузла…
+      box(nRake, w, hRake, u)
+      // …і полиця поверх матеріалу: разом вони й дають кожух, що накриває
+      // бічну сторону даху (розріз Lev — фото з червоним контуром).
+      box(cover + 0.012, RAKE_CAP_W, 0.028, u - side * (RAKE_CAP_W / 2 - w / 2))
       }
     }
 }
@@ -751,24 +798,34 @@ function ridgeCap(sl: Slope, kind: RoofMatKind, out: SkinBox[]) {
   const overRake = sl.noRake ? 0 : 2 * (FASCIA_W + 0.01)
   // Складена зона: гребінь існує лише там, де під ним справді є дах. Без
   // підрізання кожух вилітав у повітря над вирізом Г-подібного контуру.
-  let uc = 0
-  let along = sl.cap
+  let u0 = -sl.cap / 2
+  let u1 = sl.cap / 2
   if (sl.clipU) {
     const [lo, hi] = sl.clipU(s)
     if (hi - lo < 0.05) return
-    uc = (lo + hi) / 2
-    along = hi - lo
+    u0 = lo
+    u1 = hi
   }
-  out.push({
-    x: sl.cx + uc * rc + lz * rs,
-    y: sl.cy + ly,
-    z: sl.cz - uc * rs + lz * rc,
-    dx: along + overRake,
-    dy: 0.028,
-    dz: CAP_D,
-    rotY: sl.rotY,
-    tilt: sl.tilt,
+  // Гребінь рахується на ВСЮ грань (щоб доходив до краю матеріалу), тож може
+  // перетнути ділянку, вирізану сусіднім дахом, — там його треба розірвати.
+  const world = (u: number) => ({
+    x: sl.cx + u * rc + lz * rs,
+    z: sl.cz - u * rs + lz * rc,
   })
+  for (const [a, b] of visibleRuns(sl, u0, u1, world)) {
+    const uc = (a + b) / 2
+    const p = world(uc)
+    out.push({
+      x: p.x,
+      y: sl.cy + ly,
+      z: p.z,
+      dx: b - a + (Math.abs(b - a - (u1 - u0)) < 1e-6 ? overRake : 0),
+      dy: 0.028,
+      dz: CAP_D,
+      rotY: sl.rotY,
+      tilt: sl.tilt,
+    })
+  }
 }
 
 // Кожух ВЕРХНЬОГО краю односхилого. Там дах упирається в стіну, і сам стик —
@@ -898,13 +955,18 @@ function skeletonCaps(
         const px = (-(z1 - z0) / len) * 0.2
         const pz = ((x1 - x0) / len) * 0.2
         const h = planRise(sk.edges, mx, mz)
-        // Під сусідським дахом — це лінія ВРІЗКИ, теж єндова.
-        const up = planRise(sk.edges, mx + px, mz + pz) > h + 0.01 || sk.hidden(mx + px, mz + pz)
-        const down = planRise(sk.edges, mx - px, mz - pz) > h + 0.01 || sk.hidden(mx - px, mz - pz)
+        // ЛІНІЯ ВРІЗКИ: з одного боку наш дах, з другого — вже чужий, вищий.
+        // Раніше цей випадок відкидався як «звичайний край схилу», і на стику
+        // двох частин даху кожуха не було зовсім (скріншот Lev).
+        const hidA = sk.hidden(mx + px, mz + pz)
+        const hidB = sk.hidden(mx - px, mz - pz)
+        const cut = hidA !== hidB
+        const up = planRise(sk.edges, mx + px, mz + pz) > h + 0.01 || hidA
+        const down = planRise(sk.edges, mx - px, mz - pz) > h + 0.01 || hidB
         // Обабіч НИЖЧЕ — це вальма: перегин донизу, шов накриває кожух зверху.
         // Обабіч ВИЩЕ — єндова: шов лягає в саму складку, ширшою планкою.
-        if (up !== down) continue // не ребро, а звичайний край схилу
-        const valley = up && down
+        if (!cut && up !== down) continue // не ребро, а звичайний край схилу
+        const valley = cut || (up && down)
         hipCap(
           [x0, y(s0.t), z0],
           [x1, y(s1.t), z1],
