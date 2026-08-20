@@ -87,6 +87,8 @@ const CAP_LIFT = 0.012
 const CAP_T = 0.03 // товщина самої пластини кожуха
 // Наскільки торцевий кожух заходить під сусідній дах на стику.
 const RAKE_INTO_CUT = 0.14
+// Напуск сусідніх ланок кожуха вальми/єндови одна на одну.
+const CAP_JOIN = 0.05
 // Жолоб єндови: ширина по обидва боки від лінії стику й підйом над карнизом.
 const VALLEY_W = 0.36
 const VALLEY_UP = 0.075
@@ -993,16 +995,18 @@ function skeletonCaps(
   atUpper: (x: number, z: number) => boolean = skip,
 ) {
   const tan = Math.tan((part.pitch * Math.PI) / 180)
-  const tv = part.kind === 'gable' && part.overhang === 0 ? ROOF_T / Math.cos(Math.atan(tan)) : 0
+  // Підйом видимої площини — той самий, що й у тіла даху, покриття та підрізки.
+  // Тут лишалось старе правило, і на стику кожух провалювався в матеріал.
+  const tv = roofTopLift(part)
   const y = (t: number) => roofY + ROOF_LIFT + t * tan + tv
   for (const f of sk.faces) {
     for (let i = 0; i + 1 < f.steps.length; i++) {
       const s0 = f.steps[i]
       const s1 = f.steps[i + 1]
-      if (s1.t - s0.t < 0.05) continue
+      if (s1.t - s0.t < 0.02) continue
       for (const side of ['lo', 'hi'] as const) {
         const [u0, u1] = [s0[side], s1[side]]
-        if (Math.abs(u1 - u0) < 0.05) continue // ребро вздовж падіння — не похиле
+        if (Math.abs(u1 - u0) < 0.02) continue // ребро вздовж падіння — не похиле
         const [x0, z0] = facePoint(f.edge, u0, s0.t)
         const [x1, z1] = facePoint(f.edge, u1, s1.t)
         const onCut = sk.hidden(x0, z0) || sk.hidden(x1, z1) || false
@@ -1016,7 +1020,9 @@ function skeletonCaps(
         // Короткий відрізок — це не ребро, а похибка розкрою: справжня вальма
         // чи єндова завжди довга. Інакше на даху з'являвся зайвий шматочок
         // кожуха завдовжки кілька сантиметрів.
-        if (len < 0.3) continue
+        // Раніше тут стояло 0.3 м, і довга єндова, нарізана профілем на дрібні
+        // ланки, лишалась дірявою — кожух ішов пунктиром (скріншот Lev).
+        if (len < 0.12) continue
         const px = (-(z1 - z0) / len) * 0.2
         const pz = ((x1 - x0) / len) * 0.2
         const h = planRise(sk.edges, mx, mz)
@@ -1035,7 +1041,10 @@ function skeletonCaps(
         hipCap(
           [x0, y(s0.t), z0],
           [x1, y(s1.t), z1],
-          roofSkinHeight(kind) + CAP_LIFT + CAP_T / 2,
+          // Підйом відкладається по ВЕРТИКАЛІ, а товщина покриття міряється по
+          // нормалі до схилу — на нахилі вертикального запасу треба більше,
+          // інакше кожух сідає в матеріал (скріншот Lev).
+          (roofSkinHeight(kind) + CAP_LIFT + CAP_T / 2) / Math.max(Math.cos(Math.atan(tan)), 0.3),
           out,
           valley ? 0.3 : 0.16,
           seen,
@@ -1059,18 +1068,24 @@ function hipCap(
   seen?: Set<string>,
 ) {
   if (seen) {
-    const key = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2]
-      .map((v) => Math.round(v / 0.08))
-      .join('|')
-    if (seen.has(key)) return
-    seen.add(key)
+    // Ключ по ОБОХ кінцях: дві зони кладуть на єндову той самий відрізок, а от
+    // сусідні ланки однієї й тієї ж єндови мають різні кінці й лишаються.
+    // (Ключ по середині зрізав і їх — кожух ішов пунктиром.)
+    const pt = (q: [number, number, number]) => q.map((v) => Math.round(v / 0.05)).join(',')
+    const ends = [pt(a), pt(b)].sort().join('|')
+    if (seen.has(ends)) return
+    seen.add(ends)
   }
   const dx = b[0] - a[0]
   const dy = b[1] - a[1]
   const dz = b[2] - a[2]
   const flat = Math.hypot(dx, dz)
-  const len = Math.hypot(flat, dy)
-  if (len < 0.05) return
+  const len0 = Math.hypot(flat, dy)
+  if (len0 < 0.05) return
+  // Ланки трохи НАКЛАДАЮТЬСЯ одна на одну: інакше на кожному зламі профілю між
+  // ними лишається шов, а на кінці — недохід до рогу. Накладання на одній лінії
+  // не видно, а пунктир зникає.
+  const len = len0 + 2 * CAP_JOIN
   const rotY = Math.atan2(dx, dz)
   const tilt = Math.atan2(dy, flat)
   out.push({
