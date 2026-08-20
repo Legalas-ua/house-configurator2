@@ -514,6 +514,34 @@ export interface RoofSkinGroup {
   trim?: boolean // група торцевих планок / кожуха: свій колір, не покриття
 }
 
+// Ділянки грані, де дах СПРАВДІ є: там, де зону підрізав сусідній дах, планки
+// й кожуха бути не може — він тягнувся б уздовж уявного карниза далі за сам
+// дах (на скріншоті Lev кожух звісу йшов повз кінець даху).
+function visibleRuns(
+  sl: Slope,
+  a: number,
+  b: number,
+  world: (u: number) => { x: number; z: number },
+): [number, number][] {
+  const hidden = sl.hidden
+  if (!hidden || b - a < 0.05) return [[a, b]]
+  const n = Math.max(2, Math.ceil((b - a) / 0.1))
+  const out: [number, number][] = []
+  let from: number | null = null
+  for (let i = 0; i <= n; i++) {
+    const u = a + ((b - a) * i) / n
+    const p = world(u)
+    const vis = !hidden(p.x, p.z)
+    if (vis && from === null) from = u
+    if (!vis && from !== null) {
+      if (u - from > 0.05) out.push([from, u])
+      from = null
+    }
+  }
+  if (from !== null && b - from > 0.05) out.push([from, b])
+  return out
+}
+
 // Торцеві планки. Дошка стоїть ВЕРТИКАЛЬНО — не перпендикулярно до схилу.
 // Перпендикулярна смуга при будь-якому куті лишала торець плити відкритим:
 // торець плити вертикальний, а смуга нахилена. Уздовж скату вертикальну
@@ -532,8 +560,6 @@ function fasciaOf(
   const sin = Math.sin(sl.tilt)
   const rc = Math.cos(sl.rotY)
   const rs = Math.sin(sl.rotY)
-  // Вертикальна товщина пирога: перпендикулярна плита при нахилі «розтягується».
-  const H = plateT / Math.max(Math.abs(cos), 0.2) + cover + 0.03
   const w = FASCIA_W
   const lap = 0.005
 
@@ -598,38 +624,17 @@ function fasciaOf(
   const hRake = plateT + cover + 0.02
   const nRake = cover + 0.004 - hRake / 2
 
-  // КАРНИЗ. Торець плити тут вертикальний, тож і дошка вертикальна — при
-  // будь-якому куті вона закриває всю товщину пирога.
-  //
-  // УГЛИБ (під схил) вона йде далі за свою ширину — рівно на стільки, на
-  // скільки «відступає» низ скатної дошки. Та нахилена, тож її нижній край
-  // зсунутий угору по схилу, і на розі між ними лишався трикутний просвіт.
-  // Назовні цього не видно: додана частина ховається під самим схилом.
-  const eaveOut = low * (hl + w - lap) // зовнішня грань дошки — вона не рухається
-  const eaveDeep = w + hRake * Math.abs(sin)
-  const eaveS = eaveOut - low * (eaveDeep / 2)
-  // СКЛАДЕНА зона: планка є лише там, де під нею СПРАВДІ є дах. Схил у неї
-  // будується на габариті зони, і без цього карнизна дошка вилітала в повітря
-  // над вирізом Г-подібного контуру.
+  // КАРНИЗ. Вертикальної дошки тут БІЛЬШЕ НЕМАЄ: увесь вузол закриває кожух —
+  // він іде від нижнього ребра торця до краю матеріалу (див. нижче). Дошка
+  // лишалась від попереднього формату і стирчала на розі окремим прямокутником
+  // (скріншот Lev).
+  const eaveOut = low * (hl + w - lap)
+  // СКЛАДЕНА зона: кожух є лише там, де під ним СПРАВДІ є дах. Схил у неї
+  // будується на габариті зони, і без цього він вилітав у повітря над вирізом
+  // Г-подібного контуру.
   const clipAt = (s: number): [number, number] =>
     sl.clipU ? sl.clipU(Math.max(-hl, Math.min(hl, s))) : [-hw, hw]
   const [eu0, eu1] = clipAt(low * hl)
-  for (const [a, b] of eu1 - eu0 < 0.05 ? [] : freeRuns(eu0 - w, eu1 + w, (u) => at(u, eaveS))) {
-    const mid = at((a + b) / 2, eaveS)
-    // Висоту беремо по ЗОВНІШНІЙ грані: якби брали по центру, дошка стирчала б
-    // над покриттям — усередину схил підіймається.
-    const top = at((a + b) / 2, eaveOut).y
-    out.push({
-      x: mid.x,
-      y: top + 0.004 - H / 2,
-      z: mid.z,
-      dx: b - a,
-      dy: H,
-      dz: eaveDeep,
-      rotY: sl.rotY,
-      tilt: 0,
-    })
-  }
 
   // КОЖУХ КАРНИЗА. Дошка вище закрила торець пирога, але сам стик із матеріалом
   // лишався відкритим: матеріал звішується, і між його краєм та дошкою — щілина
@@ -642,7 +647,8 @@ function fasciaOf(
   // Уздовж нормалі: від нижнього ребра торця (−H·cos α) до верху матеріалу.
   const capN = (cover + EAVE_CAP_LAP - ec.H * Math.cos(sl.tilt)) / 2
   const capLen = ec.len + EAVE_CAP_LAP
-  for (const [a, b] of eu1 - eu0 < 0.05 ? [] : freeRuns(eu0 - w, eu1 + w, (u) => at(u, capS))) {
+  const eaveRuns = eu1 - eu0 < 0.05 ? [] : freeRuns(eu0 - w, eu1 + w, (u) => at(u, capS))
+  for (const [a, b] of eaveRuns.flatMap(([p, q]) => visibleRuns(sl, p, q, (u) => at(u, capS)))) {
     const uc = (a + b) / 2
     const ly = capS * sin + cos * capN
     const lz = capS * cos - sin * capN
@@ -701,7 +707,9 @@ function fasciaOf(
   }
   for (const side of [-1, 1] as const)
     for (const [u, ra, rb] of rakeRuns(side)) {
-    for (const [a, b] of freeRuns(ra, rb, (s) => at(u, s))) {
+    for (const [a, b] of freeRuns(ra, rb, (s) => at(u, s)).flatMap(([p, q]) =>
+      visibleRuns(sl, p, q, (s) => at(u, s)),
+    )) {
       const sc = (a + b) / 2
       const ly = sc * sin + cos * nRake
       const lz = sc * cos - sin * nRake

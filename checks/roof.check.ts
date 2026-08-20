@@ -11,6 +11,8 @@
 //   ЧУЖИЙ   — точку накрили схили ДВОХ різних зон одразу (врізка не спрацювала);
 //   ПОВІТРЯ — елемент покриття висить там, де даху немає;
 //   КОЖУХ   — планка чи кожух відлетіли від даху далі, ніж дозволяє звіс;
+//   ШОВ     — розрив між сусідніми клаптями ОДНОГО схилу, у міліметрах: там,
+//             де схил розрізав чужий дах, клапті мусять зійтися впритул;
 //   СТУП    — вертикальний РОЗРИВ між площинами двох зон на лінії їхньої
 //             врізки, у сантиметрах. Саме він читається як «провалля по
 //             контуру підрізки» й «щілина від кута схилу»: у плані все
@@ -36,7 +38,7 @@ import {
   type RoofKind,
   type RoofPart,
 } from '../src/lib/roof'
-import { faceSpan, planRise, type SkelFace } from '../src/lib/roofSkeleton'
+import { faceSpan, facePoint, planRise, type SkelFace } from '../src/lib/roofSkeleton'
 import { roofSkin } from '../src/lib/roofSkin'
 import { DEFAULT_ROOF_MAT } from '../src/config/roofMaterial'
 
@@ -94,6 +96,7 @@ export interface Report {
   airborne: number // % елементів покриття, що висять у повітрі
   trimAir: number // % планок і кожухів, що відлетіли від даху
   step: number // найбільший вертикальний розрив на лінії врізки, СМ
+  seam: number // найширший розрив між клаптями одного схилу, ММ
   elements: number
   trims: number
 }
@@ -261,6 +264,44 @@ function measure(name: string, plan: HousePlan, parts: RoofPart[]): Report {
         }
     }
 
+  // ---- ШОВ: чи сходяться клапті одного схилу ----
+  //
+  // Один карниз дає стільки схилів, на скільки клаптів його розрізав чужий дах.
+  // Між сусідніми клаптями не має бути НІЧОГО: якщо в проміжку дах усе-таки є
+  // (та сама висота, не підрізано) — це щілина, і саме вона світиться тонкою
+  // лінією на скріншотах.
+  let seam = 0
+  for (const p of pitched) {
+    const skp = sk.get(p.id)!
+    const tan = Math.tan((p.pitch * Math.PI) / 180)
+    const byEdge = new Map<string, SkelFace[]>()
+    for (const f of skp.faces) {
+      const k = `${f.edge.horizontal}|${f.edge.line}|${f.edge.n}|${f.edge.corner ? 1 : 0}`
+      byEdge.set(k, [...(byEdge.get(k) ?? []), f])
+    }
+    for (const group of byEdge.values()) {
+      if (group.length < 2) continue
+      const tMax = Math.max(...group.map((f) => f.steps[f.steps.length - 1].t))
+      for (let t = 0.02; t < tMax; t += 0.02) {
+        const spans = group
+          .filter((f) => t >= f.steps[0].t - 1e-6 && t <= f.steps[f.steps.length - 1].t + 1e-6)
+          .map((f) => faceSpan(f, t))
+          .sort((a, b) => a[0] - b[0])
+        for (let k = 1; k < spans.length; k++) {
+          const gap = spans[k][0] - spans[k - 1][1]
+          if (gap <= 1e-4) continue
+          const u = (spans[k - 1][1] + spans[k][0]) / 2
+          const [x, z] = facePoint(group[0].edge, u, t)
+          if (!inBoxes(box.get(p.id)!, x, z)) continue
+          if (skp.hidden(x, z)) continue
+          // Дах у проміжку є лише тоді, коли висота тут задана ЦИМ схилом.
+          if (Math.abs(planRise(skp.edges, x, z) - t) > 1e-3) continue
+          seam = Math.max(seam, gap)
+        }
+      }
+    }
+  }
+
   const pct = (n: number) => (samples ? (n * 100) / samples : 0)
   return {
     name,
@@ -274,6 +315,7 @@ function measure(name: string, plan: HousePlan, parts: RoofPart[]): Report {
     trims,
     trimAir: trims ? (trimAir * 100) / trims : 0,
     step: step * 100,
+    seam: seam * 1000,
   }
 }
 
@@ -347,13 +389,13 @@ function scenarios(): { name: string; plan: HousePlan; parts: RoofPart[] }[] {
 }
 
 // Пороги: більше — регрес. Числа зафіксовані за фактом на момент правки.
-const THRESHOLDS = { holes: 0.4, doubles: 0.1, spill: 0.1, foreign: 0.1, airborne: 0.3, trimAir: 1, step: 3 }
+const THRESHOLDS = { holes: 0.4, doubles: 0.1, spill: 0.1, foreign: 0.1, airborne: 0.3, trimAir: 1, step: 3, seam: 2 }
 
 function main() {
   const rows = scenarios().map((s) => measure(s.name, s.plan, s.parts))
   const w = Math.max(...rows.map((r) => r.name.length))
   const f = (v: number) => v.toFixed(2).padStart(6)
-  console.log('сценарій'.padEnd(w), '  діра   дубль   виліт   чужий повітря  кожух  ступ,см  елем.')
+  console.log('сценарій'.padEnd(w), '  діра   дубль   виліт   чужий повітря  кожух  ступ,см  шов,мм  елем.')
   let bad = 0
   for (const r of rows) {
     const flags: string[] = []
@@ -364,6 +406,7 @@ function main() {
     if (r.airborne > THRESHOLDS.airborne) flags.push('ПОВІТРЯ')
     if (r.trimAir > THRESHOLDS.trimAir) flags.push('КОЖУХ')
     if (r.step > THRESHOLDS.step) flags.push('СТУП')
+    if (r.seam > THRESHOLDS.seam) flags.push('ШОВ')
     if (flags.length) bad++
     console.log(
       r.name.padEnd(w),
@@ -374,6 +417,7 @@ function main() {
       f(r.airborne),
       f(r.trimAir),
       f(r.step),
+      f(r.seam),
       String(r.elements).padStart(6),
       flags.join(' '),
     )

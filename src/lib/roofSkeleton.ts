@@ -453,7 +453,9 @@ function profileOf(
     const c = raw[i]
     const dt = c.t - p.t
     const far = Math.max(Math.abs(c.lo - p.lo), Math.abs(c.hi - p.hi))
-    if (far > dt * 1.5 + 1e-3) {
+    // Пара вузлів на ОДНІЙ глибині — це вже готовий злам (його поставило
+    // злиття клаптів). Уточнювати нічого.
+    if (dt > EPS && far > dt * 1.5 + 1e-3) {
       // Точка, що змінила стан на цьому кроці, — по ній і шукаємо межу.
       const gone = Math.abs(c.lo - p.lo) > Math.abs(c.hi - p.hi) ? (p.lo + c.lo) / 2 : (p.hi + c.hi) / 2
       // Смуга могла і ЗНИКНУТИ (кінець схилу під чужим дахом), і РОЗШИРИТИСЬ
@@ -574,16 +576,21 @@ export function roofFaces(
           seeds.push(b.last[0] + 1e-3, (b.last[0] + b.last[1]) / 2, b.last[1] - 1e-3)
       const rs = runsAt(t, seeds)
       const taken = new Set<number>()
+      // Хто веде яку смугу на цьому кроці й з якою смугою прийшов — це потрібно
+      // нижче, щоб ЗЛИТТЯ двох клаптів сталося в обох рівно на одній глибині.
+      const owner = new Map<number, Branch>()
+      const came = new Map<Branch, [number, number]>()
+      const merges: { b: Branch; run: number }[] = []
       for (const b of all) {
         if (!b.alive) continue
         let pick = -1
         let bestOv = 1e-9
-        let stolen = false
+        let stolen = -1
         rs.forEach((r, j) => {
           const ov = overlapOf(r, b.last)
           if (ov <= bestOv) return
           if (taken.has(j)) {
-            stolen = true // смуга є, але її вже веде інший клапоть
+            stolen = j // смуга є, але її вже веде інший клапоть
             return
           }
           bestOv = ov
@@ -592,33 +599,47 @@ export function roofFaces(
         if (pick < 0) {
           b.alive = false
           b.diedAt = i
-          b.merged = stolen
-          // ЗЛИТТЯ. Смуга не скінчилась — її просто повів далі сусідній клапоть.
-          // Обірвати її на останній пробі не можна: сусід підхоплює ширину на
-          // уточненій глибині, трохи вище, і між ними лишається тонка щілина
-          // вздовж площини даху (та сама «щілина від кута схилу» зі скріншота).
-          // Доводимо смугу рівно до глибини, на якій розрив між клаптями
-          // закрився.
-          if (stolen) {
-            const own = b.last[1] - b.last[0]
-            const from = b.raw[b.raw.length - 1].t
-            let lo = from
-            let hi = t
-            for (let k = 0; k < 16; k++) {
-              const m = (lo + hi) / 2
-              const r = near(m, b.last)
-              // Поки смуга не поглинула сусідню, її ширина лишається своєю.
-              if (r && r[1] - r[0] < own + 0.1) lo = m
-              else hi = m
-            }
-            const r = near(lo, b.last)
-            if (r && lo > from + 1e-4) b.raw.push({ t: lo, lo: r[0], hi: r[1] })
-          }
+          b.merged = stolen >= 0
+          if (stolen >= 0) merges.push({ b, run: stolen })
           continue
         }
         taken.add(pick)
+        owner.set(pick, b)
+        came.set(b, b.last)
         b.raw.push({ t, lo: rs[pick][0], hi: rs[pick][1] })
         b.last = rs[pick]
+      }
+
+      // ЗЛИТТЯ. Смуга не скінчилась — її просто повів далі сусідній клапоть.
+      // Обидва мусять зійтися на ОДНІЙ глибині: якщо один обірвати на пробі, а
+      // другий розширити на уточненій, між ними лишиться тонка щілина вздовж
+      // площини даху — та сама «щілина від кута скату» зі скріншота Lev.
+      for (const { b, run } of merges) {
+        const own = b.last[1] - b.last[0]
+        const from = b.raw[b.raw.length - 1].t
+        let lo = from
+        let hi = t
+        for (let k = 0; k < 16; k++) {
+          const m = (lo + hi) / 2
+          const r = near(m, b.last)
+          // Поки смуга не поглинула сусідню, її ширина лишається своєю.
+          if (r && r[1] - r[0] < own + 0.1) lo = m
+          else hi = m
+        }
+        if (lo <= from + 1e-4) continue
+        const mine = near(lo, b.last)
+        if (mine) b.raw.push({ t: lo, lo: mine[0], hi: mine[1] })
+        // …і той самий злам у клаптя, що забрав смугу: спершу його ВЛАСНА
+        // ширина на тій самій глибині, одразу за нею — вже спільна.
+        const s = owner.get(run)
+        const before = s && came.get(s)
+        if (!s || !before) continue
+        const own2 = near(lo, before)
+        const both = near(Math.min(hi, t), rs[run]) ?? rs[run]
+        const tail = s.raw.pop()
+        if (own2) s.raw.push({ t: lo, lo: own2[0], hi: own2[1] })
+        s.raw.push({ t: lo, lo: both[0], hi: both[1] })
+        if (tail) s.raw.push(tail)
       }
       // Смуга, яку не підхопив жоден клапоть, — або вістря схилу, або новий
       // клапоть, що відділився за чужим дахом.
