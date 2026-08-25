@@ -85,8 +85,6 @@ const RAKE_CAP_W = 0.16 // полиця торцевого кожуха, пов�
 // черепиці плитки задираються рядами, і 2 мм запасу не вистачало.
 const CAP_LIFT = 0.012
 const CAP_T = 0.03 // товщина самої пластини кожуха
-// Наскільки торцевий кожух заходить під сусідній дах на стику.
-const RAKE_INTO_CUT = 0.14
 // Напуск сусідніх ланок кожуха вальми/єндови одна на одну.
 const CAP_JOIN = 0.05
 // Жолоб єндови: ширина по обидва боки від лінії стику й підйом над карнизом.
@@ -798,18 +796,43 @@ function fasciaOf(
     close(s1)
     return out
   }
+  // Де цей край — СПРАВЖНІЙ край даху (фронтон), а де лінія єндови всередині
+  // зони. За фронтоном зони вже немає; за єндовою вона триває, і кожух там
+  // стирчав би поперек схилу.
+  const realEdge = (u: number, sc: number, side: -1 | 1) => {
+    if (!sl.insideZone) return true
+    const outside = at(u + side * 0.12, sc)
+    return !sl.insideZone(outside.x, outside.z)
+  }
+  // Ділянки, де край справжній. Ділити треба ДРІБНО, а не питати по середині
+  // всього прогону: біля стику фронтон переходить у єндову, і саме останній
+  // його шматок лишався без кожуха — трикутник фронтону світив назовні
+  // (скріншот Lev).
+  const edgeRuns = (u: number, a: number, b: number, side: -1 | 1): [number, number][] => {
+    if (!sl.insideZone || b - a < 0.05) return [[a, b]]
+    const n = Math.max(2, Math.ceil((b - a) / 0.1))
+    const out2: [number, number][] = []
+    let from: number | null = null
+    for (let i = 0; i <= n; i++) {
+      const sc = a + ((b - a) * i) / n
+      const ok = i < n && realEdge(u, sc + (b - a) / (2 * n), side)
+      if (ok && from === null) from = sc
+      if (!ok && from !== null) {
+        if (sc - from > 0.05) out2.push([from, sc])
+        from = null
+      }
+    }
+    if (from !== null && b - from > 0.05) out2.push([from, b])
+    return out2
+  }
+
   for (const side of [-1, 1] as const)
     for (const [u, ra, rb] of rakeRuns(side)) {
-    for (const [a, b] of rakeFree(ra, rb, (s) => at(u, s)).flatMap(([p, q]) =>
-      visibleRuns(sl, p, q, (s) => at(u, s), RAKE_INTO_CUT),
-    )) {
+    // ПІДРІЗКА тут НЕ застосовується навмисно: під сусіднім дахом кожух просто
+    // ховається всередині, зате фронтон закритий до самого стику. Коли ж його
+    // різали по врізці, на розі лишалась смужка голої стіни.
+    for (const [a, b] of rakeFree(ra, rb, (s) => at(u, s)).flatMap(([p, q]) => edgeRuns(u, p, q, side))) {
       const sc = (a + b) / 2
-      // Це справді КРАЙ даху? За фронтоном зони вже немає, а за єндовою чи
-      // вальмою — є, і там кожух стирчав би поперек схилу.
-      if (sl.insideZone) {
-        const outside = at(u + side * 0.12, sc)
-        if (sl.insideZone(outside.x, outside.z)) continue
-      }
       const box = (n: number, du: number, dy: number, uc: number) => {
         const ly = sc * sin + cos * n
         const lz = sc * cos - sin * n
