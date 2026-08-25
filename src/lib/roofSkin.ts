@@ -1006,9 +1006,29 @@ function skeletonCaps(
       if (s1.t - s0.t < 0.02) continue
       for (const side of ['lo', 'hi'] as const) {
         const [u0, u1] = [s0[side], s1[side]]
-        if (Math.abs(u1 - u0) < 0.02) continue // ребро вздовж падіння — не похиле
         const [x0, z0] = facePoint(f.edge, u0, s0.t)
         const [x1, z1] = facePoint(f.edge, u1, s1.t)
+        // Ребро ВЗДОВЖ ПАДІННЯ (u майже не міняється) — зазвичай це просто край
+        // схилу, і кожуха там не буває. Але на стику двох частин двосхилого
+        // даху саме таким ребром іде остання ділянка єндови — вертикальна лінія
+        // від точки сходження до карниза (зелена лінія на скріншоті Lev). Її
+        // теж треба накрити: перевіряємо, чи за ребром уже чужий дах.
+        if (Math.abs(u1 - u0) < 0.02) {
+          const outward = side === 'lo' ? -0.12 : 0.12
+          const [ox, oz] = facePoint(f.edge, (u0 + u1) / 2 + outward, (s0.t + s1.t) / 2)
+          if (!sk.hidden(ox, oz)) continue
+          if (atUpper(x0, z0) || atUpper(x1, z1)) continue
+          if (s1.t - s0.t < 0.12) continue
+          hipCap(
+            [x0, y(s0.t), z0],
+            [x1, y(s1.t), z1],
+            (roofSkinHeight(kind) + CAP_LIFT + CAP_T / 2) / Math.max(Math.cos(Math.atan(tan)), 0.3),
+            out,
+            0.3,
+            seen,
+          )
+          continue
+        }
         const onCut = sk.hidden(x0, z0) || sk.hidden(x1, z1) || false
         const blocked = onCut ? atUpper : skip
         if (blocked(x0, z0) || blocked(x1, z1)) continue
