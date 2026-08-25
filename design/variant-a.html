@@ -1,0 +1,431 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Варіант A · Ательє</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Playfair+Display:wght@500;600&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   ВАРІАНТ A — «АТЕЛЬЄ»
+   Світлий, редакційний. Багато повітря, тонкі лінії, великі числа.
+   Відчуття: архітектурне бюро, а не магазин.
+   ============================================================ */
+:root{
+  /* Колір */
+  --paper:#FAFAF8;      /* тло сторінки — тепла крейда */
+  --surface:#FFFFFF;    /* панелі, картки */
+  --ink:#16130F;        /* основний текст */
+  --ink-2:#6F6862;      /* другорядний текст */
+  --line:#E6E1DA;       /* лінії, рамки */
+  --line-2:#F0ECE6;     /* найтонші розділювачі */
+  --accent:#C4552D;     /* теракота — акцент бренду */
+  --accent-soft:#F6EBE5;/* заливка вибраного */
+  --sand:#EDE7DE;       /* заглушка сцени */
+  --danger:#B3261E;
+
+  /* Типографіка */
+  --font-display:'Playfair Display',Georgia,serif;
+  --font-ui:'Inter',system-ui,-apple-system,'Segoe UI',sans-serif;
+
+  /* Ритм: 4/8 */
+  --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px; --s6:32px; --s7:48px; --s8:64px;
+  --r-sm:6px; --r-md:10px; --r-lg:16px;
+
+  /* Рух */
+  --fast:150ms; --base:220ms; --slow:320ms;
+  --ease-out:cubic-bezier(.22,1,.36,1);
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;background:var(--paper);color:var(--ink);
+  font-family:var(--font-ui);font-size:15px;line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+}
+button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
+h1,h2,h3{margin:0;font-weight:500}
+
+/* ---------- Каркас ---------- */
+.app{display:grid;grid-template-columns:76px 1fr 400px;height:100dvh}
+
+/* ---------- Ліва рейка: степер ---------- */
+.rail{
+  border-right:1px solid var(--line);background:var(--surface);
+  display:flex;flex-direction:column;align-items:center;padding:var(--s5) 0;gap:var(--s5);
+}
+.brand{
+  writing-mode:vertical-rl;transform:rotate(180deg);
+  font-family:var(--font-display);font-size:15px;letter-spacing:.14em;
+  color:var(--ink);margin-bottom:var(--s4);
+}
+.steps{display:flex;flex-direction:column;gap:2px;align-items:center;flex:1}
+.step{
+  width:40px;height:40px;border-radius:50%;display:grid;place-items:center;
+  font-size:12px;font-variant-numeric:tabular-nums;color:var(--ink-2);
+  position:relative;transition:color var(--base) var(--ease-out),background var(--base) var(--ease-out);
+}
+.step::after{ /* з'єднувальна лінія */
+  content:'';position:absolute;top:40px;left:50%;width:1px;height:2px;background:var(--line);
+}
+.step:last-child::after{display:none}
+.step:hover{color:var(--ink)}
+.step[aria-current="true"]{background:var(--ink);color:#fff;font-weight:500}
+.step.done{color:var(--accent)}
+.rail-foot{font-size:11px;color:var(--ink-2);letter-spacing:.08em;text-transform:uppercase}
+
+/* ---------- Сцена ---------- */
+.stage{position:relative;display:flex;flex-direction:column}
+.stage-top{
+  display:flex;align-items:baseline;justify-content:space-between;
+  padding:var(--s6) var(--s7) var(--s4);
+}
+.eyebrow{
+  font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-2);
+}
+.stage-title{font-family:var(--font-display);font-size:34px;line-height:1.15;margin-top:var(--s2)}
+.stage-sub{color:var(--ink-2);font-size:14px;margin-top:var(--s2);max-width:46ch}
+.step-num{
+  font-family:var(--font-display);font-size:96px;line-height:1;color:var(--line);
+  font-variant-numeric:tabular-nums;user-select:none;
+}
+/* Порожнє поле під 3D */
+.viewport{
+  flex:1;margin:0 var(--s7) var(--s7);border:1px solid var(--line);border-radius:var(--r-lg);
+  background:
+    linear-gradient(var(--sand),var(--sand)) padding-box,
+    repeating-linear-gradient(0deg,transparent 0 39px,rgba(0,0,0,.035) 39px 40px),
+    repeating-linear-gradient(90deg,transparent 0 39px,rgba(0,0,0,.035) 39px 40px);
+  display:grid;place-items:center;position:relative;overflow:hidden;
+}
+.viewport-hint{
+  font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:#A99E90;
+}
+.viewport-tools{
+  position:absolute;left:var(--s5);bottom:var(--s5);display:flex;gap:var(--s2);
+}
+.tool{
+  height:36px;padding:0 var(--s4);border:1px solid var(--line);border-radius:999px;
+  background:rgba(255,255,255,.85);font-size:13px;color:var(--ink-2);
+  transition:border-color var(--fast) var(--ease-out),color var(--fast) var(--ease-out);
+}
+.tool:hover{border-color:var(--ink);color:var(--ink)}
+
+/* ---------- Панель ---------- */
+.panel{
+  border-left:1px solid var(--line);background:var(--surface);
+  display:flex;flex-direction:column;overflow:hidden;
+}
+.panel-body{padding:var(--s6) var(--s5);overflow-y:auto;flex:1}
+.group{margin-bottom:var(--s6)}
+.group:last-child{margin-bottom:0}
+.label{
+  font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-2);
+  margin-bottom:var(--s3);display:block;
+}
+
+/* Картки вибору */
+.cards{display:grid;gap:var(--s2)}
+.cards.two{grid-template-columns:1fr 1fr}
+.card{
+  text-align:left;border:1px solid var(--line);border-radius:var(--r-md);
+  padding:var(--s4);background:var(--surface);position:relative;
+  transition:border-color var(--base) var(--ease-out),background var(--base) var(--ease-out),transform var(--base) var(--ease-out);
+}
+.card:hover{border-color:#CFC7BC;transform:translateY(-1px)}
+.card[aria-pressed="true"]{border-color:var(--accent);background:var(--accent-soft)}
+.card[aria-pressed="true"]::before{
+  content:'';position:absolute;left:-1px;top:12px;bottom:12px;width:2px;background:var(--accent);border-radius:2px;
+}
+.card h3{font-size:15px;font-weight:500}
+.card p{margin:2px 0 0;font-size:13px;color:var(--ink-2)}
+
+/* Чипси */
+.chips{display:flex;flex-wrap:wrap;gap:var(--s2)}
+.chip{
+  border:1px solid var(--line);border-radius:999px;padding:7px var(--s4);font-size:13px;
+  transition:border-color var(--fast) var(--ease-out),background var(--fast) var(--ease-out);
+}
+.chip:hover{border-color:#CFC7BC}
+.chip[aria-pressed="true"]{background:var(--ink);color:#fff;border-color:var(--ink)}
+
+/* Лічильник */
+.counter{display:flex;align-items:center;justify-content:space-between;
+  border:1px solid var(--line);border-radius:var(--r-md);padding:var(--s2) var(--s3)}
+.counter-val{font-size:20px;font-variant-numeric:tabular-nums}
+.round{width:34px;height:34px;border-radius:50%;border:1px solid var(--line);display:grid;place-items:center;
+  transition:border-color var(--fast) var(--ease-out),background var(--fast) var(--ease-out)}
+.round:hover{border-color:var(--ink);background:var(--paper)}
+
+/* Повзунок */
+.range{width:100%;-webkit-appearance:none;height:2px;background:var(--line);border-radius:2px;margin:var(--s4) 0}
+.range::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;border-radius:50%;
+  background:var(--surface);border:1.5px solid var(--ink);cursor:grab;transition:transform var(--fast) var(--ease-out)}
+.range::-webkit-slider-thumb:active{transform:scale(1.12);cursor:grabbing}
+.range-val{font-family:var(--font-display);font-size:30px;font-variant-numeric:tabular-nums}
+
+/* Матеріали */
+.swatches{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--s2)}
+.swatch{aspect-ratio:1;border-radius:var(--r-sm);border:1px solid var(--line);position:relative;
+  transition:transform var(--base) var(--ease-out),box-shadow var(--base) var(--ease-out)}
+.swatch:hover{transform:translateY(-2px)}
+.swatch[aria-pressed="true"]{box-shadow:0 0 0 2px var(--surface),0 0 0 3.5px var(--accent)}
+.swatch span{position:absolute;left:0;right:0;bottom:-18px;font-size:11px;color:var(--ink-2);text-align:center}
+.mat-row{display:flex;justify-content:space-between;align-items:center;padding:var(--s3) 0;border-bottom:1px solid var(--line-2);font-size:14px}
+.mat-row:last-child{border-bottom:0}
+.mat-row b{font-weight:500;font-variant-numeric:tabular-nums}
+
+/* Підвал панелі */
+.panel-foot{border-top:1px solid var(--line);padding:var(--s4) var(--s5);background:var(--surface)}
+.price-row{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:var(--s4)}
+.price{font-family:var(--font-display);font-size:28px;font-variant-numeric:tabular-nums;line-height:1}
+.price small{display:block;font-family:var(--font-ui);font-size:11px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--ink-2);margin-bottom:6px}
+.actions{display:flex;gap:var(--s2)}
+.btn{height:48px;border-radius:var(--r-md);padding:0 var(--s5);font-size:14px;font-weight:500;
+  transition:background var(--base) var(--ease-out),transform var(--fast) var(--ease-out),border-color var(--base) var(--ease-out)}
+.btn:active{transform:scale(.985)}
+.btn-primary{background:var(--ink);color:#fff;flex:1}
+.btn-primary:hover{background:#2A241E}
+.btn-ghost{border:1px solid var(--line);color:var(--ink-2)}
+.btn-ghost:hover{border-color:var(--ink);color:var(--ink)}
+
+/* Поява вмісту кроку */
+.enter{animation:enter var(--slow) var(--ease-out) both}
+@keyframes enter{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+.enter:nth-child(2){animation-delay:40ms}
+.enter:nth-child(3){animation-delay:80ms}
+.enter:nth-child(4){animation-delay:120ms}
+
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+/* ---------- Телефон ---------- */
+@media (max-width:900px){
+  .app{grid-template-columns:1fr;grid-template-rows:auto 45vh 1fr}
+  .rail{flex-direction:row;border-right:0;border-bottom:1px solid var(--line);padding:var(--s3) var(--s4);gap:var(--s3);overflow-x:auto}
+  .brand{writing-mode:horizontal-tb;transform:none;margin:0}
+  .steps{flex-direction:row;flex:1}
+  .step::after{top:50%;left:40px;width:2px;height:1px}
+  .rail-foot{display:none}
+  .stage-top{padding:var(--s4) var(--s4) var(--s2)}
+  .stage-title{font-size:24px}.step-num{font-size:52px}
+  .viewport{margin:0 var(--s4) var(--s4)}
+  .panel{border-left:0;border-top:1px solid var(--line)}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- Степер -->
+  <nav class="rail" aria-label="Кроки">
+    <div class="brand">ДІМ</div>
+    <div class="steps" id="steps"></div>
+    <div class="rail-foot" id="rail-foot">1/10</div>
+  </nav>
+
+  <!-- Сцена -->
+  <main class="stage">
+    <div class="stage-top">
+      <div>
+        <div class="eyebrow" id="eyebrow">Крок 1</div>
+        <h1 class="stage-title" id="title">Бюджет</h1>
+        <p class="stage-sub" id="sub"></p>
+      </div>
+      <div class="step-num" id="bignum">01</div>
+    </div>
+    <div class="viewport">
+      <div class="viewport-hint">3D сцена</div>
+      <div class="viewport-tools">
+        <button class="tool">Вид зверху</button>
+        <button class="tool">Скинути камеру</button>
+        <button class="tool">Розміри</button>
+      </div>
+    </div>
+  </main>
+
+  <!-- Панель -->
+  <aside class="panel">
+    <div class="panel-body" id="panel"></div>
+    <div class="panel-foot">
+      <div class="price-row">
+        <div class="price"><small>Орієнтовно</small>3 240 000 ₴</div>
+        <div class="eyebrow">184 м²</div>
+      </div>
+      <div class="actions">
+        <button class="btn btn-ghost" onclick="go(-1)">Назад</button>
+        <button class="btn btn-primary" onclick="go(1)">Далі</button>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<script>
+/* Кроки: реорганізовано — матеріал живе поруч зі своїм елементом */
+const STEPS = [
+  { t:'Бюджет', s:'З якої суми починаємо. Це не обмеження — орієнтир, щоб показувати доречні варіанти.', body:`
+    <div class="group enter"><span class="label">Орієнтовний бюджет</span>
+      <div class="range-val">3 200 000 ₴</div>
+      <input class="range" type="range" min="1" max="10" value="4">
+      <div class="eyebrow">від 1 000 000 до 10 000 000 ₴</div></div>` },
+
+  { t:'Форма й поверхи', s:'Габарит будинку. Далі всі кроки спираються на нього.', body:`
+    <div class="group enter"><span class="label">Форма</span>
+      <div class="cards">
+        <button class="card" aria-pressed="true"><h3>Прямокутник</h3><p>Найпростіший і найдешевший у будівництві</p></button>
+        <button class="card"><h3>Квадрат</h3><p>Компактний, менше зовнішніх стін</p></button>
+        <button class="card"><h3>Г-подібний</h3><p>Внутрішній двір, зонування день/ніч</p></button>
+      </div></div>
+    <div class="group enter"><span class="label">Поверхи</span>
+      <div class="chips"><button class="chip" aria-pressed="true">Один</button><button class="chip">Два</button></div></div>` },
+
+  { t:'Планування', s:'Кімнати на плиті. Можна взяти готове планування або посунути стіни самому.', body:`
+    <div class="group enter"><span class="label">Спальні</span>
+      <div class="counter"><button class="round">−</button><span class="counter-val">3</span><button class="round">+</button></div></div>
+    <div class="group enter"><span class="label">Санвузли</span>
+      <div class="counter"><button class="round">−</button><span class="counter-val">2</span><button class="round">+</button></div></div>
+    <div class="group enter"><span class="label">Додатково</span>
+      <div class="chips">
+        <button class="chip" aria-pressed="true">Кабінет</button><button class="chip">Гардеробна</button>
+        <button class="chip" aria-pressed="true">Комора</button><button class="chip">Тераса</button></div></div>
+    <div class="group enter"><span class="label">Режим</span>
+      <div class="cards two">
+        <button class="card" aria-pressed="true"><h3>Готове</h3><p>З каталогу</p></button>
+        <button class="card"><h3>Своє</h3><p>Малюю сам</p></button>
+      </div></div>` },
+
+  { t:'Вікна й двері', s:'Розміри, розташування, тип скління. Вхідні двері — частина склопакета.', body:`
+    <div class="group enter"><span class="label">Тип вікон</span>
+      <div class="cards">
+        <button class="card" aria-pressed="true"><h3>Звичайні</h3><p>Підвіконня 900 мм</p></button>
+        <button class="card"><h3>Панорамні</h3><p>У підлогу, до 2700 мм</p></button>
+      </div></div>
+    <div class="group enter"><span class="label">Обране вікно</span>
+      <div class="mat-row"><span>Ширина</span><b>2 400 мм</b></div>
+      <div class="mat-row"><span>Висота</span><b>1 800 мм</b></div>
+      <div class="mat-row"><span>Низ від підлоги</span><b>900 мм</b></div>
+      <div class="mat-row"><span>Імпости</span><b>2</b></div></div>` },
+
+  { t:'Дах — форма', s:'Зони даху, тип кожної, кут і звіс. Найважливіший крок для вигляду будинку.', body:`
+    <div class="group enter"><span class="label">Тип зони</span>
+      <div class="cards two">
+        <button class="card" aria-pressed="true"><h3>Двосхилий</h3></button>
+        <button class="card"><h3>Вальмовий</h3></button>
+        <button class="card"><h3>Односхилий</h3></button>
+        <button class="card"><h3>Плоский</h3></button>
+      </div></div>
+    <div class="group enter"><span class="label">Кут нахилу</span>
+      <div class="range-val">35°</div><input class="range" type="range" min="10" max="60" value="35"></div>
+    <div class="group enter"><span class="label">Звіс</span>
+      <div class="chips"><button class="chip">Без звісу</button><button class="chip" aria-pressed="true">300 мм</button>
+        <button class="chip">500 мм</button><button class="chip">800 мм</button></div></div>` },
+
+  { t:'Покрівля', s:'Матеріал даху й колір планок.', body:`
+    <div class="group enter"><span class="label">Матеріал</span>
+      <div class="cards two">
+        <button class="card" aria-pressed="true"><h3>Фальц</h3><p>Метал, стоячий шов</p></button>
+        <button class="card"><h3>Черепиця</h3><p>Натуральна, глина</p></button>
+        <button class="card"><h3>Металочерепиця</h3><p>Профіль під черепицю</p></button>
+        <button class="card"><h3>Ґонт</h3><p>Бітумний, тихий</p></button>
+      </div></div>
+    <div class="group enter" style="margin-bottom:44px"><span class="label">Колір</span>
+      <div class="swatches">
+        <button class="swatch" style="background:#1D1F22" aria-pressed="true"><span>графіт</span></button>
+        <button class="swatch" style="background:#6B4A3A"><span>теракота</span></button>
+        <button class="swatch" style="background:#3E4A45"><span>хвоя</span></button>
+        <button class="swatch" style="background:#8A8F94"><span>срібло</span></button>
+      </div></div>` },
+
+  { t:'Фасад', s:'Оздоблення стін. Можна задати на весь будинок або на окрему грань.', body:`
+    <div class="group enter"><span class="label">Матеріал</span>
+      <div class="cards two">
+        <button class="card" aria-pressed="true"><h3>Клінкер</h3><p>Цегла</p></button>
+        <button class="card"><h3>Штукатурка</h3><p>Гладка</p></button>
+        <button class="card"><h3>Термодерево</h3><p>Планкен</p></button>
+        <button class="card"><h3>Панелі</h3><p>Фіброцемент</p></button>
+      </div></div>
+    <div class="group enter"><span class="label">Розкладка</span>
+      <div class="mat-row"><span>Розмір елемента</span><b>240 × 71 мм</b></div>
+      <div class="mat-row"><span>Шов</span><b>10 мм</b></div>
+      <div class="mat-row"><span>Напрям</span><b>горизонтально</b></div></div>
+    <div class="group enter" style="margin-bottom:44px"><span class="label">Колір</span>
+      <div class="swatches">
+        <button class="swatch" style="background:#D8C7A8" aria-pressed="true"><span>пісок</span></button>
+        <button class="swatch" style="background:#9E5B42"><span>цегла</span></button>
+        <button class="swatch" style="background:#EDEAE4"><span>крейда</span></button>
+        <button class="swatch" style="background:#4A4A48"><span>антрацит</span></button>
+      </div></div>` },
+
+  { t:'Тераса', s:'Зони настилу, покриття й паркан.', body:`
+    <div class="group enter"><span class="label">Покриття</span>
+      <div class="cards two">
+        <button class="card" aria-pressed="true"><h3>Дошка</h3><p>Термодерево</p></button>
+        <button class="card"><h3>Керамограніт</h3><p>На опорах</p></button>
+        <button class="card"><h3>Камінь</h3><p>Натуральний</p></button>
+      </div></div>
+    <div class="group enter"><span class="label">Паркан</span>
+      <div class="chips"><button class="chip">Немає</button><button class="chip" aria-pressed="true">Скло</button>
+        <button class="chip">Рейки</button></div></div>` },
+
+  { t:'Інтер’єр', s:'Підлоги в кімнатах, міжкімнатні двері й арки.', body:`
+    <div class="group enter"><span class="label">Підлога</span>
+      <div class="cards two">
+        <button class="card" aria-pressed="true"><h3>Дошка</h3></button>
+        <button class="card"><h3>Плитка</h3></button>
+        <button class="card"><h3>Камінь</h3></button>
+        <button class="card"><h3>Килим</h3></button>
+      </div></div>
+    <div class="group enter"><span class="label">Прорізи</span>
+      <div class="chips"><button class="chip" aria-pressed="true">Двері</button><button class="chip">Арка</button>
+        <button class="chip">Відкритий прохід</button></div></div>` },
+
+  { t:'Підсумок', s:'Що вийшло і скільки це орієнтовно коштує.', body:`
+    <div class="group enter"><span class="label">Конфігурація</span>
+      <div class="mat-row"><span>Форма</span><b>Г-подібний, 1 поверх</b></div>
+      <div class="mat-row"><span>Площа</span><b>184 м²</b></div>
+      <div class="mat-row"><span>Спальні</span><b>3</b></div>
+      <div class="mat-row"><span>Дах</span><b>Двосхилий, 35°, фальц</b></div>
+      <div class="mat-row"><span>Фасад</span><b>Клінкер, пісок</b></div>
+      <div class="mat-row"><span>Тераса</span><b>28 м², термодерево</b></div></div>
+    <div class="group enter"><span class="label">Залишити заявку</span>
+      <div class="cards"><button class="card"><h3>Отримати прорахунок</h3><p>Менеджер зателефонує протягом дня</p></button></div></div>` },
+]
+
+let cur = 0
+const stepsEl = document.getElementById('steps')
+STEPS.forEach((s,i)=>{
+  const b = document.createElement('button')
+  b.className='step'; b.textContent=String(i+1).padStart(2,'0'); b.title=s.t
+  b.onclick=()=>show(i); stepsEl.appendChild(b)
+})
+function show(i){
+  cur = Math.max(0, Math.min(STEPS.length-1, i))
+  const s = STEPS[cur]
+  document.getElementById('eyebrow').textContent = 'Крок ' + (cur+1)
+  document.getElementById('title').textContent = s.t
+  document.getElementById('sub').textContent = s.s
+  document.getElementById('bignum').textContent = String(cur+1).padStart(2,'0')
+  document.getElementById('rail-foot').textContent = (cur+1)+'/'+STEPS.length
+  document.getElementById('panel').innerHTML = s.body
+  ;[...stepsEl.children].forEach((b,j)=>{
+    b.setAttribute('aria-current', j===cur ? 'true':'false')
+    b.classList.toggle('done', j<cur)
+  })
+}
+function go(d){ show(cur+d) }
+/* Демонстрація вибору */
+document.addEventListener('click', e=>{
+  const el = e.target.closest('.card,.chip,.swatch')
+  if(!el) return
+  const box = el.parentElement
+  if(el.classList.contains('chip') && box.children.length>3){ // чипси-мультивибір
+    el.setAttribute('aria-pressed', el.getAttribute('aria-pressed')==='true'?'false':'true'); return
+  }
+  ;[...box.children].forEach(c=>c.setAttribute('aria-pressed','false'))
+  el.setAttribute('aria-pressed','true')
+})
+show(0)
+</script>
+</body>
+</html>

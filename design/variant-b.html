@@ -1,0 +1,444 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Варіант B · Студія</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   ВАРІАНТ B — «СТУДІЯ»
+   Темний, інструментальний. Сцена на весь екран, панель — скляна
+   картка поверх неї. Усі числа моноширинні. Відчуття: робочий
+   інструмент, у якому будинок — головний і єдиний герой.
+   ============================================================ */
+:root{
+  /* Колір */
+  --bg:#0F1113;         /* не чистий чорний — на OLED не «пливе» */
+  --bg-2:#15181B;
+  --glass:rgba(23,26,30,.82);
+  --line:rgba(255,255,255,.09);
+  --line-2:rgba(255,255,255,.05);
+  --text:#ECEFF2;
+  --text-2:#8D959E;
+  --accent:#F97316;     /* будівельний помаранчевий */
+  --accent-dim:rgba(249,115,22,.14);
+  --ok:#4ADE80;
+  --danger:#F87171;
+
+  /* Типографіка */
+  --font-ui:'Inter',system-ui,-apple-system,'Segoe UI',sans-serif;
+  --font-mono:'JetBrains Mono',ui-monospace,'SF Mono',Consolas,monospace;
+
+  /* Ритм: щільніший за варіант A */
+  --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:20px; --s6:28px; --s7:40px;
+  --r-sm:6px; --r-md:10px; --r-lg:14px;
+
+  /* Рух: коротший і пружніший */
+  --fast:120ms; --base:180ms; --slow:260ms;
+  --spring:cubic-bezier(.16,1,.3,1);
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;background:var(--bg);color:var(--text);
+  font-family:var(--font-ui);font-size:14px;line-height:1.45;
+  -webkit-font-smoothing:antialiased;
+}
+button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
+h1,h2,h3{margin:0;font-weight:500}
+.mono{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+
+/* ---------- Каркас: сцена на весь екран ---------- */
+.app{position:relative;height:100dvh;overflow:hidden}
+
+/* Порожнє поле під 3D */
+.viewport{
+  position:absolute;inset:0;
+  background:
+    radial-gradient(120% 90% at 50% 0%,#1B2026 0%,#0F1113 60%),
+    repeating-linear-gradient(0deg,transparent 0 47px,rgba(255,255,255,.022) 47px 48px),
+    repeating-linear-gradient(90deg,transparent 0 47px,rgba(255,255,255,.022) 47px 48px);
+  display:grid;place-items:center;
+}
+.viewport-hint{font-family:var(--font-mono);font-size:12px;letter-spacing:.18em;color:#3E464E;text-transform:uppercase}
+
+/* ---------- Верхня смуга ---------- */
+.topbar{
+  position:absolute;top:0;left:0;right:0;height:56px;display:flex;align-items:center;gap:var(--s5);
+  padding:0 var(--s5);background:linear-gradient(var(--bg) 40%,transparent);z-index:5;
+}
+.logo{font-weight:600;letter-spacing:.02em}
+.logo span{color:var(--accent)}
+.tabs{display:flex;gap:2px;overflow-x:auto;flex:1;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tab{
+  position:relative;white-space:nowrap;padding:8px var(--s3);border-radius:var(--r-sm);
+  font-size:13px;color:var(--text-2);transition:color var(--base) var(--spring),background var(--base) var(--spring);
+}
+.tab:hover{color:var(--text);background:rgba(255,255,255,.04)}
+.tab[aria-current="true"]{color:var(--text)}
+.tab[aria-current="true"]::after{
+  content:'';position:absolute;left:var(--s3);right:var(--s3);bottom:2px;height:2px;
+  background:var(--accent);border-radius:2px;animation:slide var(--slow) var(--spring)}
+@keyframes slide{from{transform:scaleX(.2);opacity:0}to{transform:none;opacity:1}}
+.tab.done{color:#6E7780}
+.tab.done::before{content:'';display:inline-block;width:5px;height:5px;border-radius:50%;
+  background:var(--ok);margin-right:6px;vertical-align:middle;opacity:.7}
+.top-meta{font-family:var(--font-mono);font-size:12px;color:var(--text-2);white-space:nowrap}
+
+/* ---------- Інструменти сцени ---------- */
+.tools{position:absolute;left:var(--s5);bottom:var(--s5);display:flex;flex-direction:column;gap:var(--s2);z-index:4}
+.tool{
+  width:40px;height:40px;border-radius:var(--r-sm);border:1px solid var(--line);
+  background:var(--glass);backdrop-filter:blur(12px);display:grid;place-items:center;
+  font-family:var(--font-mono);font-size:11px;color:var(--text-2);
+  transition:border-color var(--fast) var(--spring),color var(--fast) var(--spring),transform var(--fast) var(--spring);
+}
+.tool:hover{border-color:rgba(255,255,255,.22);color:var(--text)}
+.tool:active{transform:scale(.94)}
+
+/* ---------- Панель: скляна картка ---------- */
+.panel{
+  position:absolute;top:68px;right:var(--s5);bottom:76px;width:352px;z-index:5;
+  background:var(--glass);backdrop-filter:blur(18px);
+  border:1px solid var(--line);border-radius:var(--r-lg);
+  display:flex;flex-direction:column;overflow:hidden;
+  box-shadow:0 24px 60px rgba(0,0,0,.45);
+}
+.panel-head{padding:var(--s5) var(--s5) var(--s4);border-bottom:1px solid var(--line-2)}
+.kicker{font-family:var(--font-mono);font-size:11px;letter-spacing:.12em;color:var(--accent);text-transform:uppercase}
+.panel-head h1{font-size:19px;margin-top:6px}
+.panel-head p{margin:6px 0 0;font-size:13px;color:var(--text-2)}
+.panel-body{padding:var(--s5);overflow-y:auto;flex:1}
+.panel-body::-webkit-scrollbar{width:8px}
+.panel-body::-webkit-scrollbar-thumb{background:rgba(255,255,255,.1);border-radius:8px}
+
+.group{margin-bottom:var(--s6)}
+.group:last-child{margin-bottom:0}
+.label{display:flex;justify-content:space-between;align-items:center;
+  font-family:var(--font-mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--text-2);margin-bottom:var(--s3)}
+.label b{color:var(--text);font-weight:500}
+
+/* Опції списком */
+.opts{display:grid;gap:var(--s1)}
+.opt{
+  display:flex;align-items:center;gap:var(--s3);text-align:left;
+  padding:var(--s3);border-radius:var(--r-sm);border:1px solid transparent;
+  transition:background var(--base) var(--spring),border-color var(--base) var(--spring);
+}
+.opt:hover{background:rgba(255,255,255,.04)}
+.opt[aria-pressed="true"]{background:var(--accent-dim);border-color:rgba(249,115,22,.35)}
+.opt .dot{width:8px;height:8px;border-radius:50%;border:1.5px solid var(--text-2);flex:none;
+  transition:border-color var(--base) var(--spring),background var(--base) var(--spring)}
+.opt[aria-pressed="true"] .dot{background:var(--accent);border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-dim)}
+.opt h3{font-size:14px;font-weight:500}
+.opt p{margin:1px 0 0;font-size:12px;color:var(--text-2)}
+
+/* Сітка плиток */
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:var(--s2)}
+.tile{
+  padding:var(--s3);border:1px solid var(--line);border-radius:var(--r-sm);text-align:left;
+  transition:border-color var(--base) var(--spring),background var(--base) var(--spring),transform var(--fast) var(--spring);
+}
+.tile:hover{border-color:rgba(255,255,255,.2)}
+.tile:active{transform:scale(.98)}
+.tile[aria-pressed="true"]{border-color:var(--accent);background:var(--accent-dim)}
+.tile h3{font-size:13px;font-weight:500}
+.tile span{font-family:var(--font-mono);font-size:11px;color:var(--text-2)}
+
+/* Числове поле */
+.num{display:flex;align-items:center;justify-content:space-between;gap:var(--s2);
+  border:1px solid var(--line);border-radius:var(--r-sm);padding:var(--s2) var(--s3)}
+.num b{font-family:var(--font-mono);font-size:16px;font-weight:500}
+.step-btn{width:28px;height:28px;border-radius:var(--r-sm);border:1px solid var(--line);
+  display:grid;place-items:center;color:var(--text-2);
+  transition:border-color var(--fast) var(--spring),color var(--fast) var(--spring)}
+.step-btn:hover{border-color:var(--accent);color:var(--accent)}
+
+/* Повзунок */
+.range{width:100%;-webkit-appearance:none;height:3px;border-radius:3px;
+  background:linear-gradient(90deg,var(--accent) 0 45%,rgba(255,255,255,.12) 45%);margin:var(--s3) 0}
+.range::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;border-radius:50%;
+  background:var(--accent);border:3px solid var(--bg-2);cursor:grab;
+  box-shadow:0 0 0 1px var(--accent);transition:transform var(--fast) var(--spring)}
+.range::-webkit-slider-thumb:active{transform:scale(1.15);cursor:grabbing}
+.big{font-family:var(--font-mono);font-size:26px;font-weight:500}
+
+/* Зразки матеріалів */
+.swatches{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--s2)}
+.swatch{aspect-ratio:1;border-radius:var(--r-sm);border:1px solid var(--line);position:relative;
+  transition:transform var(--base) var(--spring),box-shadow var(--base) var(--spring)}
+.swatch:hover{transform:translateY(-2px)}
+.swatch[aria-pressed="true"]{box-shadow:0 0 0 2px var(--bg),0 0 0 3px var(--accent)}
+.swatch em{position:absolute;left:0;right:0;bottom:-16px;font-family:var(--font-mono);font-size:10px;
+  font-style:normal;color:var(--text-2);text-align:center}
+
+/* Рядки параметрів */
+.rows{border-top:1px solid var(--line-2)}
+.row{display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--line-2)}
+.row span{color:var(--text-2);font-size:13px}
+.row b{font-family:var(--font-mono);font-size:13px;font-weight:500}
+
+/* ---------- Нижня смуга ---------- */
+.bottombar{
+  position:absolute;left:0;right:0;bottom:0;height:64px;z-index:5;
+  display:flex;align-items:center;gap:var(--s4);padding:0 var(--s5);
+  background:linear-gradient(transparent,var(--bg) 55%);
+}
+.progress{flex:1;height:2px;background:rgba(255,255,255,.08);border-radius:2px;overflow:hidden;max-width:280px}
+.progress i{display:block;height:100%;background:var(--accent);border-radius:2px;
+  transition:width var(--slow) var(--spring)}
+.price{margin-left:auto;text-align:right}
+.price small{display:block;font-family:var(--font-mono);font-size:10px;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--text-2)}
+.price b{font-family:var(--font-mono);font-size:19px;font-weight:500}
+.btn{height:40px;padding:0 var(--s5);border-radius:var(--r-sm);font-size:13px;font-weight:500;
+  transition:background var(--base) var(--spring),transform var(--fast) var(--spring),border-color var(--base) var(--spring)}
+.btn:active{transform:scale(.97)}
+.btn-primary{background:var(--accent);color:#141414}
+.btn-primary:hover{background:#FB8B3C}
+.btn-ghost{border:1px solid var(--line);color:var(--text-2)}
+.btn-ghost:hover{border-color:rgba(255,255,255,.24);color:var(--text)}
+
+/* Поява вмісту */
+.enter{animation:enter var(--slow) var(--spring) both}
+@keyframes enter{from{opacity:0;transform:translateX(10px)}to{opacity:1;transform:none}}
+.enter:nth-child(2){animation-delay:35ms}
+.enter:nth-child(3){animation-delay:70ms}
+.enter:nth-child(4){animation-delay:105ms}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+/* ---------- Телефон ---------- */
+@media (max-width:900px){
+  .panel{top:auto;left:0;right:0;bottom:0;width:auto;height:58vh;border-radius:var(--r-lg) var(--r-lg) 0 0;border-bottom:0}
+  .bottombar{bottom:58vh;background:none;height:52px}
+  .tools{flex-direction:row;bottom:calc(58vh + 60px)}
+  .price small{display:none}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="viewport"><div class="viewport-hint">3D сцена</div></div>
+
+  <header class="topbar">
+    <div class="logo">ДІМ<span>.</span></div>
+    <nav class="tabs" id="tabs" aria-label="Кроки"></nav>
+    <div class="top-meta" id="meta">184 м² · Г-подібний</div>
+  </header>
+
+  <div class="tools">
+    <button class="tool" title="Вид зверху">ВЗ</button>
+    <button class="tool" title="Скинути камеру">⟲</button>
+    <button class="tool" title="Розміри">мм</button>
+  </div>
+
+  <aside class="panel">
+    <div class="panel-head">
+      <div class="kicker" id="kicker">крок 01 / 10</div>
+      <h1 id="title">Бюджет</h1>
+      <p id="sub"></p>
+    </div>
+    <div class="panel-body" id="panel"></div>
+  </aside>
+
+  <footer class="bottombar">
+    <button class="btn btn-ghost" onclick="go(-1)">Назад</button>
+    <button class="btn btn-primary" onclick="go(1)">Далі</button>
+    <div class="progress"><i id="bar" style="width:10%"></i></div>
+    <div class="price"><small>орієнтовно</small><b>3 240 000 ₴</b></div>
+  </footer>
+</div>
+
+<script>
+const STEPS = [
+  { t:'Бюджет', s:'Орієнтир, а не обмеження — щоб показувати доречні варіанти.', body:`
+    <div class="group enter"><div class="label">сума <b>3 200 000 ₴</b></div>
+      <div class="big">3 200 000</div>
+      <input class="range" type="range" min="1" max="10" value="4">
+      <div class="label" style="margin:0"><span>1 млн</span><span>10 млн</span></div></div>` },
+
+  { t:'Форма й поверхи', s:'Габарит будинку. На нього спираються всі наступні кроки.', body:`
+    <div class="group enter"><div class="label">форма</div>
+      <div class="opts">
+        <button class="opt" aria-pressed="true"><i class="dot"></i><div><h3>Прямокутник</h3><p>Найпростіший у будівництві</p></div></button>
+        <button class="opt"><i class="dot"></i><div><h3>Квадрат</h3><p>Менше зовнішніх стін</p></div></button>
+        <button class="opt"><i class="dot"></i><div><h3>Г-подібний</h3><p>Двір, зонування день/ніч</p></div></button>
+      </div></div>
+    <div class="group enter"><div class="label">поверхи</div>
+      <div class="grid">
+        <button class="tile" aria-pressed="true"><h3>Один</h3><span>184 м²</span></button>
+        <button class="tile"><h3>Два</h3><span>268 м²</span></button>
+      </div></div>` },
+
+  { t:'Планування', s:'Кімнати на плиті: готове планування або своє.', body:`
+    <div class="group enter"><div class="label">спальні</div>
+      <div class="num"><button class="step-btn">−</button><b>3</b><button class="step-btn">+</button></div></div>
+    <div class="group enter"><div class="label">санвузли</div>
+      <div class="num"><button class="step-btn">−</button><b>2</b><button class="step-btn">+</button></div></div>
+    <div class="group enter"><div class="label">додатково</div>
+      <div class="grid">
+        <button class="tile" aria-pressed="true"><h3>Кабінет</h3><span>+12 м²</span></button>
+        <button class="tile"><h3>Гардеробна</h3><span>+7 м²</span></button>
+        <button class="tile" aria-pressed="true"><h3>Комора</h3><span>+5 м²</span></button>
+        <button class="tile"><h3>Тераса</h3><span>+28 м²</span></button>
+      </div></div>
+    <div class="group enter"><div class="label">режим</div>
+      <div class="grid">
+        <button class="tile" aria-pressed="true"><h3>Готове</h3><span>з каталогу</span></button>
+        <button class="tile"><h3>Своє</h3><span>малюю сам</span></button>
+      </div></div>` },
+
+  { t:'Вікна й двері', s:'Розмір, положення, скління. Вхідні двері — частина склопакета.', body:`
+    <div class="group enter"><div class="label">тип</div>
+      <div class="opts">
+        <button class="opt" aria-pressed="true"><i class="dot"></i><div><h3>Звичайні</h3><p>Підвіконня 900 мм</p></div></button>
+        <button class="opt"><i class="dot"></i><div><h3>Панорамні</h3><p>У підлогу, до 2700 мм</p></div></button>
+      </div></div>
+    <div class="group enter"><div class="label">обране вікно <b>W-04</b></div>
+      <div class="rows">
+        <div class="row"><span>ширина</span><b>2400 мм</b></div>
+        <div class="row"><span>висота</span><b>1800 мм</b></div>
+        <div class="row"><span>низ від підлоги</span><b>900 мм</b></div>
+        <div class="row"><span>імпости</span><b>2</b></div>
+      </div></div>` },
+
+  { t:'Дах — форма', s:'Зони, тип, кут і звіс. Найважливіший крок для вигляду.', body:`
+    <div class="group enter"><div class="label">тип зони <b>R-01</b></div>
+      <div class="grid">
+        <button class="tile" aria-pressed="true"><h3>Двосхилий</h3><span>2 схили</span></button>
+        <button class="tile"><h3>Вальмовий</h3><span>4 схили</span></button>
+        <button class="tile"><h3>Односхилий</h3><span>1 схил</span></button>
+        <button class="tile"><h3>Плоский</h3><span>парапет</span></button>
+      </div></div>
+    <div class="group enter"><div class="label">кут нахилу <b>35°</b></div>
+      <div class="big">35°</div><input class="range" type="range" min="10" max="60" value="35">
+      <div class="label" style="margin:0"><span>10°</span><span>60°</span></div></div>
+    <div class="group enter"><div class="label">звіс</div>
+      <div class="grid">
+        <button class="tile"><h3>Без звісу</h3><span>0 мм</span></button>
+        <button class="tile" aria-pressed="true"><h3>Стандарт</h3><span>300 мм</span></button>
+        <button class="tile"><h3>Широкий</h3><span>500 мм</span></button>
+        <button class="tile"><h3>Максимум</h3><span>800 мм</span></button>
+      </div></div>` },
+
+  { t:'Покрівля', s:'Матеріал даху й колір планок.', body:`
+    <div class="group enter"><div class="label">матеріал</div>
+      <div class="opts">
+        <button class="opt" aria-pressed="true"><i class="dot"></i><div><h3>Фальц</h3><p>Метал, стоячий шов 500 мм</p></div></button>
+        <button class="opt"><i class="dot"></i><div><h3>Черепиця</h3><p>Натуральна, глина</p></div></button>
+        <button class="opt"><i class="dot"></i><div><h3>Металочерепиця</h3><p>Профіль під черепицю</p></div></button>
+        <button class="opt"><i class="dot"></i><div><h3>Ґонт</h3><p>Бітумний, тихий</p></div></button>
+      </div></div>
+    <div class="group enter" style="margin-bottom:38px"><div class="label">колір</div>
+      <div class="swatches">
+        <button class="swatch" style="background:#1D1F22" aria-pressed="true"><em>RAL 7016</em></button>
+        <button class="swatch" style="background:#6B4A3A"><em>RAL 8004</em></button>
+        <button class="swatch" style="background:#3E4A45"><em>RAL 6009</em></button>
+        <button class="swatch" style="background:#8A8F94"><em>RAL 9006</em></button>
+      </div></div>` },
+
+  { t:'Фасад', s:'Оздоблення стін: на весь будинок, на поверх або на грань.', body:`
+    <div class="group enter"><div class="label">матеріал</div>
+      <div class="grid">
+        <button class="tile" aria-pressed="true"><h3>Клінкер</h3><span>240×71</span></button>
+        <button class="tile"><h3>Штукатурка</h3><span>гладка</span></button>
+        <button class="tile"><h3>Термодерево</h3><span>планкен</span></button>
+        <button class="tile"><h3>Панелі</h3><span>фіброцемент</span></button>
+      </div></div>
+    <div class="group enter"><div class="label">розкладка</div>
+      <div class="rows">
+        <div class="row"><span>елемент</span><b>240 × 71 мм</b></div>
+        <div class="row"><span>шов</span><b>10 мм</b></div>
+        <div class="row"><span>напрям</span><b>горизонт</b></div>
+      </div></div>
+    <div class="group enter" style="margin-bottom:38px"><div class="label">колір</div>
+      <div class="swatches">
+        <button class="swatch" style="background:#D8C7A8" aria-pressed="true"><em>пісок</em></button>
+        <button class="swatch" style="background:#9E5B42"><em>цегла</em></button>
+        <button class="swatch" style="background:#EDEAE4"><em>крейда</em></button>
+        <button class="swatch" style="background:#4A4A48"><em>антрацит</em></button>
+      </div></div>` },
+
+  { t:'Тераса', s:'Зони настилу, покриття й паркан.', body:`
+    <div class="group enter"><div class="label">покриття</div>
+      <div class="opts">
+        <button class="opt" aria-pressed="true"><i class="dot"></i><div><h3>Дошка</h3><p>Термодерево, 140 мм</p></div></button>
+        <button class="opt"><i class="dot"></i><div><h3>Керамограніт</h3><p>На регульованих опорах</p></div></button>
+        <button class="opt"><i class="dot"></i><div><h3>Камінь</h3><p>Натуральний</p></div></button>
+      </div></div>
+    <div class="group enter"><div class="label">паркан</div>
+      <div class="grid">
+        <button class="tile"><h3>Немає</h3><span>—</span></button>
+        <button class="tile" aria-pressed="true"><h3>Скло</h3><span>1100 мм</span></button>
+        <button class="tile"><h3>Рейки</h3><span>крок 60</span></button>
+        <button class="tile"><h3>Суцільний</h3><span>1200 мм</span></button>
+      </div></div>` },
+
+  { t:'Інтер’єр', s:'Підлоги, міжкімнатні двері й арки.', body:`
+    <div class="group enter"><div class="label">підлога</div>
+      <div class="grid">
+        <button class="tile" aria-pressed="true"><h3>Дошка</h3><span>190 мм</span></button>
+        <button class="tile"><h3>Плитка</h3><span>600×600</span></button>
+        <button class="tile"><h3>Камінь</h3><span>натуральний</span></button>
+        <button class="tile"><h3>Килим</h3><span>ворс</span></button>
+      </div></div>
+    <div class="group enter"><div class="label">прорізи</div>
+      <div class="opts">
+        <button class="opt" aria-pressed="true"><i class="dot"></i><div><h3>Двері</h3><p>800 × 2100 мм</p></div></button>
+        <button class="opt"><i class="dot"></i><div><h3>Арка</h3><p>Без полотна</p></div></button>
+        <button class="opt"><i class="dot"></i><div><h3>Відкритий прохід</h3><p>На всю висоту</p></div></button>
+      </div></div>` },
+
+  { t:'Підсумок', s:'Що вийшло і скільки це орієнтовно коштує.', body:`
+    <div class="group enter"><div class="label">конфігурація</div>
+      <div class="rows">
+        <div class="row"><span>форма</span><b>Г-подібний · 1 пов</b></div>
+        <div class="row"><span>площа</span><b>184 м²</b></div>
+        <div class="row"><span>спальні</span><b>3</b></div>
+        <div class="row"><span>дах</span><b>двосхилий 35°</b></div>
+        <div class="row"><span>покрівля</span><b>фальц RAL 7016</b></div>
+        <div class="row"><span>фасад</span><b>клінкер пісок</b></div>
+        <div class="row"><span>тераса</span><b>28 м²</b></div>
+      </div></div>
+    <div class="group enter"><div class="label">заявка</div>
+      <div class="opts"><button class="opt" aria-pressed="true"><i class="dot"></i>
+        <div><h3>Отримати прорахунок</h3><p>Менеджер зателефонує протягом дня</p></div></button></div></div>` },
+]
+
+let cur=0
+const tabsEl=document.getElementById('tabs')
+STEPS.forEach((s,i)=>{
+  const b=document.createElement('button');b.className='tab';b.textContent=s.t
+  b.onclick=()=>show(i);tabsEl.appendChild(b)
+})
+function show(i){
+  cur=Math.max(0,Math.min(STEPS.length-1,i))
+  const s=STEPS[cur]
+  document.getElementById('kicker').textContent='крок '+String(cur+1).padStart(2,'0')+' / '+STEPS.length
+  document.getElementById('title').textContent=s.t
+  document.getElementById('sub').textContent=s.s
+  document.getElementById('panel').innerHTML=s.body
+  document.getElementById('bar').style.width=((cur+1)/STEPS.length*100)+'%'
+  ;[...tabsEl.children].forEach((b,j)=>{
+    b.setAttribute('aria-current',j===cur?'true':'false')
+    b.classList.toggle('done',j<cur)
+  })
+  tabsEl.children[cur].scrollIntoView({block:'nearest',inline:'center',behavior:'smooth'})
+}
+function go(d){show(cur+d)}
+document.addEventListener('click',e=>{
+  const el=e.target.closest('.opt,.tile,.swatch')
+  if(!el)return
+  const box=el.parentElement
+  ;[...box.children].forEach(c=>c.setAttribute('aria-pressed','false'))
+  el.setAttribute('aria-pressed','true')
+})
+show(0)
+</script>
+</body>
+</html>
