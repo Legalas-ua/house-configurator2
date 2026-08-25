@@ -1,6 +1,6 @@
 import type { HousePlan, PlanRect } from '../config/types'
 import type { HeightAt } from './cladding'
-import { cutByNeighbour, parapetEdges, partRects, roofSkeleton, slopeBox, zoneSkeleton, ROOF_LIFT, type RoofPart } from './roof'
+import { cutByNeighbour, parapetEdges, partRects, roofSkeleton, roofTopLift, slopeBox, zoneRects, zoneSkeleton, ROOF_LIFT, type RoofPart } from './roof'
 import { edgeProfile, facePoint, insideBoxes, outlineEdges, planRise } from './roofSkeleton'
 import { WALL_T } from './windows'
 import type { WallFace } from './wallFaces'
@@ -97,6 +97,36 @@ export function parapetPanels(part: RoofPart, above: PlanRect[], roofY: number, 
   return out
 }
 
+// Висота ЧУЖОГО даху над точкою — у «планових» одиницях цієї зони (тобто вже
+// поділена на її tan), щоб її можна було порівнювати з власним підйомом.
+function roofTopAt(plan: HousePlan, parts: RoofPart[], part: RoofPart) {
+  const tan = Math.tan((part.pitch * Math.PI) / 180)
+  if (tan < 1e-6) return null
+  const lift = roofTopLift(part)
+  const others = parts.filter((o) => o.id !== part.id && o.level === part.level && o.kind !== 'flat')
+  if (others.length === 0) return null
+  const fields = others.map((o) => {
+    const sk = zoneSkeleton(plan, parts, o)
+    const oTan = Math.tan((o.pitch * Math.PI) / 180)
+    const oLift = roofTopLift(o)
+    const boxes = partRects(o).map((r) => slopeBox(o, plan.floors[o.level + 1]?.slab ?? [], r, zoneRects(parts, o)))
+    return (x: number, z: number): number | null => {
+      if (!boxes.some((b) => x > b.x0 - 1e-4 && x < b.x1 + 1e-4 && z > b.z0 - 1e-4 && z < b.z1 + 1e-4)) return null
+      if (sk.hidden(x, z)) return null
+      return planRise(sk.edges, x, z) * oTan + oLift
+    }
+  })
+  return (x: number, z: number): number | null => {
+    let best: number | null = null
+    for (const f of fields) {
+      const h = f(x, z)
+      if (h !== null && (best === null || h > best)) best = h
+    }
+    // Назад у «планові» одиниці нашої зони.
+    return best === null ? null : (best - lift) / tan
+  }
+}
+
 export function gablePanels(
   part: RoofPart,
   above: PlanRect[],
@@ -128,9 +158,20 @@ export function gablePanels(
       const b = slopeBox(part, above, r, siblings)
       return { x0: b.x0, x1: b.x1, z0: b.z0, z1: b.z1 }
     })
-    const sk = plan && parts ? zoneSkeleton(plan, parts, part) : roofSkeleton(part, above, siblings)
+    const cutSk = plan && parts ? zoneSkeleton(plan, parts, part) : null
+    const sk = cutSk ?? roofSkeleton(part, above, siblings)
     let edges = sk.edges
-    let hplan = (x: number, z: number) => planRise(sk.edges, x, z)
+    // Там, де зону підрізав сусідній дах, СВОЄЇ площини вже немає — стіна під
+    // нею мусить іти до ЧУЖОГО схилу, а не до власного (інакше фронтон
+    // пробивається трикутником крізь сусідній дах). Коментар вище обіцяв
+    // «підрізаний скелет», але сама підрізка тут не застосовувалась.
+    const covering = plan && parts ? roofTopAt(plan, parts, part) : null
+    let hplan = (x: number, z: number) => {
+      const own = planRise(sk.edges, x, z)
+      if (!covering || !cutSk?.hidden(x, z)) return own
+      const other = covering(x, z)
+      return other === null ? own : Math.min(own, other)
+    }
     if (part.kind === 'mono') {
       const g = slopeBox(part, above, undefined, siblings)
       const w = g.x1 - g.x0
